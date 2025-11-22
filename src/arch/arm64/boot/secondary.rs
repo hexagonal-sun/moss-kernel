@@ -104,7 +104,7 @@ fn find_enable_method(node: &fdt_parser::Node<'static>) -> Result<EntryMethod> {
 fn prepare_for_secondary_entry() -> Result<(PA, PA)> {
     static mut SECONDARY_BOOT_CTX: MaybeUninit<SecondaryBootInfo> = MaybeUninit::uninit();
 
-    let entry_fn = kfunc_pa!(do_secondary_start as usize);
+    let entry_fn = kfunc_pa!(do_secondary_start as *const () as usize);
     let boot_stack = ksym_pa!(__boot_stack);
     let ctx = ksym_pa!(SECONDARY_BOOT_CTX);
 
