@@ -83,8 +83,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
     /// Resizes the program break (the heap).
     ///
     /// This function implements the semantics of the `brk` system call. It can
-    /// either grow or shrink the heap area. The new end address is always
-    /// aligned up to the nearest page boundary.
+    /// either grow or shrink the heap area.
     ///
     /// # Arguments
     /// * `new_end_addr`: The desired new end address for the program break.
@@ -94,7 +93,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
     /// * `Err(KernelError)` on failure. This can happen if the requested memory
     ///   region conflicts with an existing mapping, or if the request is invalid
     ///   (e.g., shrinking the break below its initial start address).
-    pub fn resize_brk(&mut self, mut new_end_addr: VA) -> Result<VA> {
+    pub fn resize_brk(&mut self, new_end_addr: VA) -> Result<VA> {
         let brk_start = self.brk.start_address();
         let current_end = self.brk.end_address();
 
@@ -104,18 +103,20 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
             return Err(KernelError::InvalidValue);
         }
 
-        new_end_addr = new_end_addr.align_up(PAGE_SIZE);
-        let new_brk_region = VirtMemoryRegion::from_start_end_address(brk_start, new_end_addr);
+        let new_end_addr_aligned = new_end_addr.align_up(PAGE_SIZE);
 
-        if new_end_addr == current_end {
-            // The requested break is the same as the current one. This is a
-            // no-op.
+        let new_brk_region =
+            VirtMemoryRegion::from_start_end_address(brk_start, new_end_addr_aligned);
+
+        if new_end_addr_aligned == current_end {
+            // The requested break is the same as the current one, or it is
+            // within the same page as the existing allocation. This is a no-op.
             return Ok(new_end_addr);
         }
 
         // Grow the break
-        if new_end_addr > current_end {
-            let growth_size = new_end_addr.value() - current_end.value();
+        if new_end_addr_aligned > current_end {
+            let growth_size = new_end_addr_aligned.value() - current_end.value();
 
             self.mm.mmap(
                 AddressRequest::Fixed {
@@ -134,7 +135,8 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
 
         // Shrink the break
         // At this point, we know `new_end_aligned < current_end`.
-        let unmap_region = VirtMemoryRegion::from_start_end_address(new_end_addr, current_end);
+        let unmap_region =
+            VirtMemoryRegion::from_start_end_address(new_end_addr_aligned, current_end);
         self.mm.munmap(unmap_region)?;
 
         self.brk = new_brk_region;
@@ -191,7 +193,7 @@ mod tests {
 
         // The new break should be page-aligned
         let expected_brk_end = brk_addr.align_up(PAGE_SIZE);
-        assert_eq!(new_brk, expected_brk_end);
+        assert_eq!(new_brk, brk_addr);
         assert_eq!(vm.current_brk(), expected_brk_end);
         assert_eq!(vm.brk.size(), PAGE_SIZE);
 
