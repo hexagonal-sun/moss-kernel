@@ -10,7 +10,7 @@ use crate::{
 };
 use alloc::{string::String, vec};
 use alloc::{string::ToString, sync::Arc, vec::Vec};
-use auxv::{AT_NULL, AT_PAGESZ};
+use auxv::{AT_NULL, AT_PAGESZ, AT_RANDOM};
 use core::{ffi::c_char, mem, slice};
 use libkernel::{
     UserAddressSpace, VirtualMemory,
@@ -159,6 +159,9 @@ fn setup_user_stack(
     // Add auxiliary vectors
     info_block.push(AT_PAGESZ);
     info_block.push(PAGE_SIZE as u64);
+    info_block.push(AT_RANDOM);
+    // TODO: SECURITY: Actually make this a random value.
+    info_block.push(STACK_END as u64 - 0x10);
     info_block.push(AT_NULL);
     info_block.push(0);
 
