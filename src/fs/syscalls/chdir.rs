@@ -1,7 +1,15 @@
-use crate::{fs::VFS, memory::uaccess::{copy_to_user_slice, cstr::UserCStr}, sched::current_task};
-use core::{ffi::c_char, str::FromStr};
+use crate::{
+    fs::VFS,
+    memory::uaccess::{copy_to_user_slice, cstr::UserCStr},
+    sched::current_task,
+};
 use alloc::{ffi::CString, string::ToString};
-use libkernel::{error::{KernelError, Result}, fs::path::Path, memory::address::{TUA, UA}};
+use core::{ffi::c_char, str::FromStr};
+use libkernel::{
+    error::{KernelError, Result},
+    fs::path::Path,
+    memory::address::{TUA, UA},
+};
 
 pub async fn sys_getcwd(buf: UA, len: usize) -> Result<usize> {
     let task = current_task();

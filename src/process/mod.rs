@@ -10,11 +10,14 @@ use alloc::{
 use creds::Credentials;
 use ctx::{Context, UserCtx};
 use fd_table::FileDescriptorTable;
-use libkernel::{fs::pathbuf::PathBuf, memory::{
-    address::VA,
-    proc_vm::{ProcessVM, vmarea::VMArea},
-}};
 use libkernel::{VirtualMemory, fs::Inode};
+use libkernel::{
+    fs::pathbuf::PathBuf,
+    memory::{
+        address::VA,
+        proc_vm::{ProcessVM, vmarea::VMArea},
+    },
+};
 use thread_group::{
     Tgid, ThreadGroup,
     builder::ThreadGroupBuilder,

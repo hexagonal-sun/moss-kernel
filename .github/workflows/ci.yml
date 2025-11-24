@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Use the toolchain from rust-toolchain.toml
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Verify installed toolchain and targets
+        run: |
+          rustc --version
+          rustup show
+          rustup target list --installed
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+      - name: Run unit tests for libkernel
+        run: cargo test -p libkernel --target x86_64-unknown-linux-gnu --all-features

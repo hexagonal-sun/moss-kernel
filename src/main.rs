@@ -44,7 +44,7 @@ fn on_panic(info: &PanicInfo) -> ! {
 
     let panic_msg = info.message();
 
-    error!("Kernel Panic: {panic_msg}");
+    error!("Kernel panic - not syncing: {panic_msg}");
 
     ArchImpl::halt();
 }

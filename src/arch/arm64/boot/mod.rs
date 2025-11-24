@@ -9,7 +9,10 @@ use crate::{
         fdt_prober::{probe_for_fdt_devices, set_fdt_va},
         init::run_initcalls,
     },
-    interrupts::{cpu_messenger::cpu_messenger_init, get_interrupt_root},
+    interrupts::{
+        cpu_messenger::{Message, cpu_messenger_init, message_cpu},
+        get_interrupt_root,
+    },
     kmain,
     memory::{INITAL_ALLOCATOR, PAGE_ALLOC},
     sched::{sched_init_secondary, uspc_ret::dispatch_userspace_task},
@@ -133,6 +136,9 @@ fn arch_init_stage2(frame: *mut ExceptionState) -> *mut ExceptionState {
     // );
 
     boot_secondaries();
+
+    // Prove that we can send IPIs through the messenger.
+    let _ = message_cpu(1, Message::Ping(ArchImpl::id() as _));
 
     frame
 }

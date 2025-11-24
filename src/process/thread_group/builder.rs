@@ -38,11 +38,6 @@ impl ThreadGroupBuilder {
         self
     }
 
-    pub fn with_umask(mut self, umask: u32) -> Self {
-        self.umask = Some(umask);
-        self
-    }
-
     /// Sets the signal state of the thread group.
     pub fn with_sigstate(mut self, sigstate: Arc<SpinLock<SignalState>>) -> Self {
         self.sigstate = Some(sigstate);

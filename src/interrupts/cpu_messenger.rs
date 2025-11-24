@@ -4,8 +4,6 @@ use crate::{
     arch::ArchImpl,
     drivers::Driver,
     kernel::kpipe::KBuf,
-    process::Task,
-    sched,
     sync::{OnceLock, SpinLock},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -13,7 +11,7 @@ use libkernel::{
     CpuOps,
     error::{KernelError, Result},
 };
-use log::warn;
+use log::{info, warn};
 
 use super::{
     ClaimedInterrupt, InterruptConfig, InterruptDescriptor, InterruptHandler, get_interrupt_root,
@@ -21,13 +19,14 @@ use super::{
 
 #[derive(Clone)]
 pub enum Message {
-    Reschedule,
-    PutTask(Arc<Task>),
+    // Reschedule,
+    // PutTask(Arc<Task>),
+    Ping(u32),
 }
 
 struct CpuMessenger {
     mailboxes: SpinLock<Vec<KBuf<Message>>>,
-    irq: ClaimedInterrupt,
+    _irq: ClaimedInterrupt,
 }
 
 impl Driver for CpuMessenger {
@@ -48,8 +47,11 @@ impl InterruptHandler for CpuMessenger {
             .try_pop();
 
         match message {
-            Some(Message::Reschedule) => return, // We reschedule when returning from an IRQ.
-            Some(Message::PutTask(task)) => sched::insert_task(task),
+            // Some(Message::Reschedule) => return, // We reschedule when returning from an IRQ.
+            // Some(Message::PutTask(task)) => sched::insert_task(task),
+            Some(Message::Ping(cpu_id)) => {
+                info!("CPU {} recieved ping from CPU {}", ArchImpl::id(), cpu_id)
+            }
             None => warn!("Spurious CPU IPI"),
         }
     }
@@ -74,7 +76,7 @@ pub fn cpu_messenger_init(num_cpus: usize) {
 
                 CpuMessenger {
                     mailboxes: SpinLock::new(mailboxes),
-                    irq,
+                    _irq: irq,
                 }
             },
         )

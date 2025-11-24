@@ -50,6 +50,7 @@ impl PartialEq for WakeupEvent {
 
 impl Eq for WakeupEvent {}
 
+#[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd for WakeupEvent {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.when.cmp(&other.when).reverse())
@@ -93,6 +94,7 @@ impl Sub<Instant> for Instant {
     }
 }
 
+#[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd for Instant {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.ticks.partial_cmp(&other.ticks)
