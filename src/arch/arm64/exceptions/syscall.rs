@@ -56,7 +56,7 @@ use crate::{
 };
 use alloc::boxed::Box;
 use libkernel::{
-    error::syscall_error::kern_err_to_syscall,
+    error::{KernelError, syscall_error::kern_err_to_syscall},
     memory::address::{TUA, UA, VA},
 };
 
@@ -213,6 +213,7 @@ pub async fn handle_syscall() {
         0xaf => sys_geteuid().map_err(|e| match e {}),
         0xb0 => sys_getgid().map_err(|e| match e {}),
         0xb1 => sys_getegid().map_err(|e| match e {}),
+        0xc6 => Err(KernelError::NotSupported),
         0xd6 => sys_brk(VA::from_value(arg1 as _))
             .await
             .map_err(|e| match e {}),
