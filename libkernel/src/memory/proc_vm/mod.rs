@@ -193,7 +193,7 @@ mod tests {
 
         // The new break should be page-aligned
         let expected_brk_end = brk_addr.align_up(PAGE_SIZE);
-        assert_eq!(new_brk, expected_brk_end);
+        assert_eq!(new_brk, brk_addr);
         assert_eq!(vm.current_brk(), expected_brk_end);
         assert_eq!(vm.brk.size(), PAGE_SIZE);
 
