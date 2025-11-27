@@ -44,7 +44,17 @@ fn on_panic(info: &PanicInfo) -> ! {
 
     let panic_msg = info.message();
 
-    error!("Kernel panic - not syncing: {panic_msg}");
+    if let Some(location) = info.location() {
+        error!(
+            "Kernel panicked at {}:{}:{}: {}",
+            location.file(),
+            location.line(),
+            location.column(),
+            panic_msg
+        );
+    } else {
+        error!("Kernel panicked at unknown location: {panic_msg}");
+    }
 
     ArchImpl::halt();
 }
