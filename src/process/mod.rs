@@ -1,3 +1,4 @@
+use crate::drivers::timer::Instant;
 use crate::{
     arch::{Arch, ArchImpl},
     fs::DummyInode,
@@ -125,6 +126,7 @@ pub struct Task {
     pub sig_mask: SpinLock<SigSet>,
     pub pending_signals: SpinLock<SigSet>,
     pub priority: i8,
+    pub last_run: SpinLock<Option<Instant>>,
     pub state: Arc<SpinLock<TaskState>>,
 }
 
@@ -152,6 +154,7 @@ impl Task {
             sig_mask: SpinLock::new(SigSet::empty()),
             pending_signals: SpinLock::new(SigSet::empty()),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
+            last_run: SpinLock::new(None),
         }
     }
 
@@ -172,6 +175,7 @@ impl Task {
             ctx: SpinLock::new(Context::from_user_ctx(
                 <ArchImpl as Arch>::new_user_context(VA::null(), VA::null()),
             )),
+            last_run: SpinLock::new(None),
         }
     }
 

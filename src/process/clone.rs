@@ -125,6 +125,7 @@ pub async fn sys_clone(
             sig_mask: SpinLock::new(new_sigmask),
             pending_signals: SpinLock::new(SigSet::empty()),
             state: Arc::new(SpinLock::new(TaskState::Runnable)),
+            last_run: SpinLock::new(None),
         }
     };
 

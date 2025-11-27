@@ -1,3 +1,4 @@
+use crate::drivers::timer::now;
 use crate::{
     arch::{Arch, ArchImpl},
     per_cpu,
@@ -5,6 +6,7 @@ use crate::{
     sync::OnceLock,
 };
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
+use core::cmp::Ordering;
 use libkernel::{UserAddressSpace, error::Result};
 
 pub mod uspc_ret;
@@ -42,6 +44,7 @@ fn schedule() {
     }
 
     let previous_task = current_task();
+    *previous_task.last_run.lock_save_irq() = now();
     let mut sched_state = SCHED_STATE.borrow_mut();
     let next_task = sched_state.find_next_runnable_task();
 
@@ -125,7 +128,21 @@ impl SchedState {
                 // A process is a candidate if it's runnable and NOT the idle task
                 state == TaskState::Runnable && !candidate_proc.is_idle_task()
             })
-            .max_by_key(|proc| proc.priority())
+            .max_by(|proc1, proc2| {
+                proc1.priority().cmp(&proc2.priority()).then_with(|| {
+                    // If priorities are the same, use last run time to
+                    // decide.
+                    let last_run1 = proc1.last_run.lock_save_irq();
+                    let last_run2 = proc2.last_run.lock_save_irq();
+
+                    match (*last_run1, *last_run2) {
+                        (Some(t1), Some(t2)) => t1.cmp(&t2),
+                        (Some(_), None) => Ordering::Greater,
+                        (None, Some(_)) => Ordering::Less,
+                        (None, None) => Ordering::Equal,
+                    }
+                })
+            })
             .unwrap_or(idle_task)
             .clone()
     }
