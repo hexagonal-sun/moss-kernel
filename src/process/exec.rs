@@ -10,7 +10,7 @@ use crate::{
 };
 use alloc::{string::String, vec};
 use alloc::{string::ToString, sync::Arc, vec::Vec};
-use auxv::{AT_NULL, AT_PAGESZ};
+use auxv::{AT_NULL, AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM, AT_RANDOM};
 use core::{ffi::c_char, mem, slice};
 use libkernel::{
     UserAddressSpace, VirtualMemory,
@@ -46,12 +46,19 @@ pub async fn kernel_exec(
     envp: Vec<String>,
 ) -> Result<()> {
     let mut buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
+    let mut auxv = Vec::new();
 
     inode.read_at(0, &mut buf).await?;
 
     let elf = elf::FileHeader64::<LittleEndian>::parse(buf.as_slice())
         .map_err(|_| ExecError::InvalidElfFormat)?;
     let endian = elf.endian().unwrap();
+
+    // Push program header params.
+    auxv.push(AT_PHNUM);
+    auxv.push(elf.e_phnum.get(endian) as _);
+    auxv.push(AT_PHENT);
+    auxv.push(elf.e_phentsize(endian) as _);
 
     let mut ph_buf = vec![
         0u8;
@@ -74,6 +81,13 @@ pub async fn kernel_exec(
         if kind == PT_LOAD {
             vmas.push(VMArea::from_pheader(inode.clone(), *hdr, endian));
 
+            if hdr.p_offset.get(endian) == 0 {
+                // TODO: poteintally more validation that this VA will contain
+                // the program headers.
+                auxv.push(AT_PHDR);
+                auxv.push(hdr.p_vaddr.get(endian) + elf.e_phoff.get(endian));
+            }
+
             let mapping_end = hdr.p_vaddr(endian) + hdr.p_memsz(endian);
 
             if mapping_end > highest_addr {
@@ -90,7 +104,7 @@ pub async fn kernel_exec(
 
     let mut mem_map = MemoryMap::from_vmas(vmas)?;
 
-    let stack_ptr = setup_user_stack(&mut mem_map, &argv, &envp)?;
+    let stack_ptr = setup_user_stack(&mut mem_map, &argv, &envp, auxv)?;
 
     let user_ctx =
         ArchImpl::new_user_context(VA::from_value(elf.e_entry(endian) as usize), stack_ptr);
@@ -127,6 +141,7 @@ fn setup_user_stack(
     mm: &mut MemoryMap<<ArchImpl as VirtualMemory>::ProcessAddressSpace>,
     argv: &[String],
     envp: &[String],
+    mut auxv: Vec<u64>,
 ) -> Result<VA> {
     // Calculate the space needed and the virtual addresses for all strings and
     // pointers.
@@ -157,10 +172,15 @@ fn setup_user_stack(
     info_block.push(0); // Null terminator for envp
 
     // Add auxiliary vectors
-    info_block.push(AT_PAGESZ);
-    info_block.push(PAGE_SIZE as u64);
-    info_block.push(AT_NULL);
-    info_block.push(0);
+    auxv.push(AT_PAGESZ);
+    auxv.push(PAGE_SIZE as u64);
+    auxv.push(AT_RANDOM);
+    // TODO: SECURITY: Actually make this a random value.
+    auxv.push(STACK_END as u64 - 0x10);
+    auxv.push(AT_NULL);
+    auxv.push(0);
+
+    info_block.append(&mut auxv);
 
     let info_block_size = info_block.len() * mem::size_of::<u64>();
 

@@ -84,6 +84,12 @@ pub fn sys_getegid() -> core::result::Result<usize, Infallible> {
     Ok(gid as _)
 }
 
+pub fn sys_gettid() -> core::result::Result<usize, Infallible> {
+    let tid: u32 = current_task().tid.0;
+
+    Ok(tid as _)
+}
+
 pub async fn sys_getresuid(ruid: TUA<Uid>, euid: TUA<Uid>, suid: TUA<Uid>) -> Result<usize> {
     let task = current_task();
     let creds = task.creds.lock_save_irq().clone();

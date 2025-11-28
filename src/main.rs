@@ -1,13 +1,14 @@
 #![no_std]
 #![no_main]
 #![feature(used_with_arg)]
+#![feature(likely_unlikely)]
 use alloc::{
     boxed::Box,
     string::{String, ToString},
     vec,
     vec::Vec,
 };
-use arch::ArchImpl;
+use arch::{Arch, ArchImpl};
 use core::panic::PanicInfo;
 use drivers::{fdt_prober::get_fdt, fs::register_fs_drivers};
 use fs::VFS;
@@ -56,7 +57,7 @@ fn on_panic(info: &PanicInfo) -> ! {
         error!("Kernel panicked at unknown location: {panic_msg}");
     }
 
-    ArchImpl::halt();
+    ArchImpl::power_off();
 }
 
 async fn launch_init(opts: KOptions) {

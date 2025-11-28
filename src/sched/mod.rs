@@ -88,11 +88,25 @@ impl SchedState {
         previous_task: Option<Arc<Task>>,
         next_task: Arc<Task>,
     ) -> Result<()> {
+        let now_inst = now().expect("System timer not initialised");
+
         if let Some(ref prev_task) = previous_task
             && Arc::ptr_eq(&next_task, prev_task)
         {
             return Ok(());
         }
+
+        // Update vruntime and clear exec_start for the previous task.
+        if let Some(ref prev_task) = previous_task {
+            if let Some(start) = *prev_task.exec_start.lock_save_irq() {
+                let delta = now_inst - start;
+                *prev_task.vruntime.lock_save_irq() += delta.as_nanos() as u64;
+            }
+            *prev_task.exec_start.lock_save_irq() = None;
+        }
+
+        // Record the start time for the task we are about to run.
+        *next_task.exec_start.lock_save_irq() = Some(now_inst);
 
         // Context switch.
         if let Some(previous_task) = previous_task {
@@ -128,17 +142,19 @@ impl SchedState {
                 // A process is a candidate if it's runnable and NOT the idle task
                 state == TaskState::Runnable && !candidate_proc.is_idle_task()
             })
-            .max_by(|proc1, proc2| {
-                proc1.priority().cmp(&proc2.priority()).then_with(|| {
-                    // If priorities are the same, use last run time to
-                    // decide.
+            .min_by(|proc1, proc2| {
+                let vr1 = *proc1.vruntime.lock_save_irq();
+                let vr2 = *proc2.vruntime.lock_save_irq();
+
+                vr1.cmp(&vr2).then_with(|| {
+                    // Tie-breaker: fall back to last run timestamp.
                     let last_run1 = proc1.last_run.lock_save_irq();
                     let last_run2 = proc2.last_run.lock_save_irq();
 
                     match (*last_run1, *last_run2) {
                         (Some(t1), Some(t2)) => t1.cmp(&t2),
-                        (Some(_), None) => Ordering::Greater,
-                        (None, Some(_)) => Ordering::Less,
+                        (Some(_), None) => Ordering::Less,
+                        (None, Some(_)) => Ordering::Greater,
                         (None, None) => Ordering::Equal,
                     }
                 })

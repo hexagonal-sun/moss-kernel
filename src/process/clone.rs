@@ -124,8 +124,12 @@ pub async fn sys_clone(
             priority: current_task.priority,
             sig_mask: SpinLock::new(new_sigmask),
             pending_signals: SpinLock::new(SigSet::empty()),
+            vruntime: SpinLock::new(*current_task.vruntime.lock_save_irq()),
+            exec_start: SpinLock::new(None),
+            deadline: SpinLock::new(*current_task.deadline.lock_save_irq()),
             state: Arc::new(SpinLock::new(TaskState::Runnable)),
             last_run: SpinLock::new(None),
+            robust_list: SpinLock::new(None),
         }
     };
 

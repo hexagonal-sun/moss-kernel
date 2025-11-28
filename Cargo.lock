@@ -250,6 +250,7 @@ dependencies = [
  "num-traits",
  "object",
  "paste",
+ "rand",
  "ringbuf",
  "static_cell",
  "thiserror",

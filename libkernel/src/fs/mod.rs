@@ -57,6 +57,14 @@ pub trait Filesystem: Send + Sync {
 
     /// Returns the instance ID for this FS.
     fn id(&self) -> u64;
+
+    /// Flushes all pending data to the underlying storage device(s).
+    ///
+    /// The default implementation is a no-op so that read-only filesystems do
+    /// not need to override it.
+    async fn sync(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 // A unique identifier for an inode across the entire VFS. A tuple of

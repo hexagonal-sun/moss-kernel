@@ -207,8 +207,7 @@ impl<T: MemKind> MemoryRegion<T> {
     }
 
     /// Increases the capacity of the region by size bytes.
-    pub(crate) fn expand(&mut self, size: usize) {
-        assert!(size >= self.size);
+    pub(crate) fn expand_by(&mut self, size: usize) {
         assert!(size & PAGE_MASK == 0);
 
         self.size += size;

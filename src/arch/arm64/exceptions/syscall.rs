@@ -1,6 +1,8 @@
+use crate::kernel::power::sys_reboot;
+use crate::kernel::rand::sys_getrandom;
 use crate::{
     arch::{Arch, ArchImpl},
-    clock::gettime::sys_clock_gettime,
+    clock::{gettime::sys_clock_gettime, timeofday::sys_gettimeofday},
     fs::{
         dir::sys_getdents64,
         pipe::sys_pipe2,
@@ -19,6 +21,7 @@ use crate::{
             seek::sys_lseek,
             splice::sys_sendfile,
             stat::sys_fstat,
+            sync::sys_sync,
         },
     },
     kernel::uname::sys_uname,
@@ -28,7 +31,10 @@ use crate::{
     },
     process::{
         clone::sys_clone,
-        creds::{sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_getuid},
+        creds::{
+            sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_gettid,
+            sys_getuid,
+        },
         exec::sys_execve,
         exit::{sys_exit, sys_exit_group},
         fd_table::{
@@ -50,13 +56,13 @@ use crate::{
             umask::sys_umask,
             wait::sys_wait4,
         },
-        threading::sys_set_tid_address,
+        threading::{sys_set_robust_list, sys_set_tid_address},
     },
     sched::current_task,
 };
 use alloc::boxed::Box;
 use libkernel::{
-    error::syscall_error::kern_err_to_syscall,
+    error::{KernelError, syscall_error::kern_err_to_syscall},
     memory::address::{TUA, UA, VA},
 };
 
@@ -152,9 +158,11 @@ pub async fn handle_syscall() {
             .await
         }
         0x50 => sys_fstat(arg1.into(), TUA::from_value(arg2 as _)).await,
+        0x51 => sys_sync().await,
         0x5d => sys_exit(arg1 as _),
         0x5e => sys_exit_group(arg1 as _),
         0x60 => sys_set_tid_address(VA::from_value(arg1 as _)).await,
+        0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
         0x81 => sys_kill(arg1 as _, arg2.into()),
@@ -186,6 +194,7 @@ pub async fn handle_syscall() {
 
             return;
         }
+        0x8e => sys_reboot(arg1 as _, arg2 as _, arg3 as _, arg4 as _).await,
         0x94 => {
             sys_getresuid(
                 TUA::from_value(arg1 as _),
@@ -205,13 +214,17 @@ pub async fn handle_syscall() {
         0x9a => sys_setpgid(arg1 as _, Pgid(arg2 as _)),
         0x9b => sys_getpgid(arg1 as _),
         0xa0 => sys_uname(TUA::from_value(arg1 as _)).await,
+        0xa3 => Err(KernelError::InvalidValue),
         0xa6 => sys_umask(arg1 as _).map_err(|e| match e {}),
+        0xa9 => sys_gettimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xac => sys_getpid().map_err(|e| match e {}),
         0xad => sys_getppid().map_err(|e| match e {}),
         0xae => sys_getuid().map_err(|e| match e {}),
         0xaf => sys_geteuid().map_err(|e| match e {}),
         0xb0 => sys_getgid().map_err(|e| match e {}),
         0xb1 => sys_getegid().map_err(|e| match e {}),
+        0xb2 => sys_gettid().map_err(|e| match e {}),
+        0xc6 => Err(KernelError::NotSupported),
         0xd6 => sys_brk(VA::from_value(arg1 as _))
             .await
             .map_err(|e| match e {}),
@@ -253,6 +266,8 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x116 => sys_getrandom(TUA::from_value(arg1 as _), arg2 as _, arg3 as _).await,
+        0x125 => Err(KernelError::NotSupported),
         0x1b7 => {
             sys_faccessat2(
                 arg1.into(),

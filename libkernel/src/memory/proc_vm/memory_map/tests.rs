@@ -448,6 +448,45 @@ fn test_merge_with_previous_and_next() {
 }
 
 #[test]
+fn test_merge_with_smaller_region() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let perms = VMAPermissions::rw();
+    let addr = MMAP_BASE - 20 * PAGE_SIZE;
+
+    pvm.insert_and_merge(create_anon_vma(addr, 5 * PAGE_SIZE, perms));
+    pvm.insert_and_merge(create_anon_vma(addr + 5 * PAGE_SIZE, PAGE_SIZE, perms));
+
+    assert_eq!(pvm.vmas.len(), 1);
+    assert_vma_exists(&pvm, addr, 6 * PAGE_SIZE);
+}
+
+#[test]
+fn test_merge_with_same_sz_region() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let perms = VMAPermissions::rw();
+    let addr = MMAP_BASE - 20 * PAGE_SIZE;
+
+    pvm.insert_and_merge(create_anon_vma(addr, 5 * PAGE_SIZE, perms));
+    pvm.insert_and_merge(create_anon_vma(addr + 5 * PAGE_SIZE, 5 * PAGE_SIZE, perms));
+
+    assert_eq!(pvm.vmas.len(), 1);
+    assert_vma_exists(&pvm, addr, 10 * PAGE_SIZE);
+}
+
+#[test]
+fn test_merge_with_larger_region() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let perms = VMAPermissions::rw();
+    let addr = MMAP_BASE - 20 * PAGE_SIZE;
+
+    pvm.insert_and_merge(create_anon_vma(addr, 5 * PAGE_SIZE, perms));
+    pvm.insert_and_merge(create_anon_vma(addr + 5 * PAGE_SIZE, 10 * PAGE_SIZE, perms));
+
+    assert_eq!(pvm.vmas.len(), 1);
+    assert_vma_exists(&pvm, addr, 15 * PAGE_SIZE);
+}
+
+#[test]
 fn test_merge_file_backed_contiguous() {
     let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
     let perms = VMAPermissions::rw();

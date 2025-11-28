@@ -37,6 +37,7 @@ pub const EPIPE: isize = -32;
 pub const EDOM: isize = -33;
 pub const ERANGE: isize = -34;
 pub const EWOULDBLOCK: isize = -EAGAIN;
+pub const ENOSYS: isize = -38;
 
 pub fn kern_err_to_syscall(err: KernelError) -> isize {
     match err {
@@ -47,6 +48,7 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::Fs(FsError::NotFound) => ENOENT,
         KernelError::NotATty => ENOTTY,
         KernelError::SeekPipe => ESPIPE,
+        KernelError::NotSupported => ENOSYS,
         _ => todo!(),
     }
 }

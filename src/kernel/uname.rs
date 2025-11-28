@@ -40,7 +40,7 @@ pub async fn sys_uname(uts_ptr: TUA<OldUtsname>) -> Result<usize> {
     let nodename = c"moss-machine".to_bytes_with_nul();
     copy_str_to_c_char_arr(&mut uts.nodename, nodename);
 
-    let release = c"0.1.0-dev".to_bytes_with_nul();
+    let release = c"4.2.3".to_bytes_with_nul();
     copy_str_to_c_char_arr(&mut uts.release, release);
 
     let version = c"#1 Moss SMP Tue Feb 20 12:34:56 UTC 2024".to_bytes_with_nul();

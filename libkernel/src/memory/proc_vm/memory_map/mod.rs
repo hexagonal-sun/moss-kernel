@@ -241,7 +241,7 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
                 .remove(&next_vma.region.start_address())
                 .unwrap() // Should not fail, as we just got this VMA.
                 .region;
-            vma.region.expand(next_vma_region.size());
+            vma.region.expand_by(next_vma_region.size());
             // `vma` now represents the merged region of [new, next].
         }
 
@@ -257,7 +257,7 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
             {
                 // The VMAs are mergeable. Expand the previous VMA to absorb the
                 // new one's region.
-                prev_vma.region.expand(vma.region.size());
+                prev_vma.region.expand_by(vma.region.size());
                 return;
             }
         }
