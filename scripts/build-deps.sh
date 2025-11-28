@@ -8,17 +8,23 @@ rm -f "$base/build/bin"/*
 
 pushd "$base/build" &>/dev/null || exit 1
 
-if [ ! -f "aarch64-linux-musl-cross.tgz" ]
+if [ "$(uname -m)" == 'aarch64' ]; then
+    MUSL_CC="aarch64-linux-musl-native"
+else
+    MUSL_CC="aarch64-linux-musl-cross"
+fi
+
+if [ ! -f "${MUSL_CC}.tgz" ]
 then
-    wget https://musl.cc/aarch64-linux-musl-cross.tgz
-    tar -xzf aarch64-linux-musl-cross.tgz
+    wget https://musl.cc/${MUSL_CC}.tgz
+    tar -xzf ${MUSL_CC}.tgz
 fi
 
 popd &>/dev/null || exit 1
 
 build=${build:-$(ls $base/scripts/deps)}
 
-export PATH="$base/build/aarch64-linux-musl-cross/bin:$PATH"
+export CC="$base/build/${MUSL_CC}/bin/aarch64-linux-musl-gcc"
 
 for script in "$base/scripts/deps/"*
 do
