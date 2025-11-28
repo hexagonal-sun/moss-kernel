@@ -34,6 +34,7 @@ mod exceptions;
 mod fdt;
 mod memory;
 mod proc;
+pub mod psci;
 
 pub struct Aarch64 {}
 impl CpuOps for Aarch64 {
@@ -106,6 +107,18 @@ impl Arch for Aarch64 {
 
     fn create_idle_task() -> Task {
         proc::idle::create_idle_task()
+    }
+
+    fn power_off() -> ! {
+        // Try PSCI `SYSTEM_OFF` first (works on QEMU `-machine virt` and most
+        // real hardware that implements the PSCI interface).
+        const PSCI_SYSTEM_OFF: u32 = 0x8400_0008;
+        unsafe {
+            psci::do_psci_hyp_call(PSCI_SYSTEM_OFF, 0, 0, 0);
+        }
+
+        // Fallback: halt the CPU indefinitely.
+        Self::halt()
     }
 
     unsafe fn copy_from_user(

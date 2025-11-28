@@ -39,6 +39,9 @@ pub trait Arch: CpuOps + VirtualMemory {
     /// Construct a new idle task.
     fn create_idle_task() -> Task;
 
+    /// Powers off the machine. Implementations must never return.
+    fn power_off() -> !;
+
     /// Call a user-specified signal handler in the current process.
     fn do_signal(
         sig: SigId,

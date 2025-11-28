@@ -11,6 +11,7 @@ use reg::RegFile;
 
 use crate::drivers::{DM, Driver};
 use crate::sync::SpinLock;
+use alloc::vec::Vec;
 
 pub mod dir;
 pub mod fops;
@@ -316,3 +317,22 @@ impl VFS {
 }
 
 pub static VFS: VFS = VFS::new();
+
+impl VFS {
+    /// Flushes all mounted filesystems and their underlying block devices.
+    /// Any individual error is logged and ignored so that a single faulty
+    /// filesystem does not block the shutdown sequence.
+    pub async fn sync_all(&self) -> Result<()> {
+        let filesystems: Vec<_> = {
+            let state = self.state.lock_save_irq();
+            state.filesystems.values().cloned().collect()
+        };
+
+        for fs in filesystems {
+            // Ignore per-filesystem errors; best-effort
+            let _ = fs.sync().await;
+        }
+
+        Ok(())
+    }
+}

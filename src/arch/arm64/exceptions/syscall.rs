@@ -1,3 +1,4 @@
+use crate::kernel::power::sys_reboot;
 use crate::{
     arch::{Arch, ArchImpl},
     clock::gettime::sys_clock_gettime,
@@ -19,6 +20,7 @@ use crate::{
             seek::sys_lseek,
             splice::sys_sendfile,
             stat::sys_fstat,
+            sync::sys_sync,
         },
     },
     kernel::uname::sys_uname,
@@ -152,6 +154,7 @@ pub async fn handle_syscall() {
             .await
         }
         0x50 => sys_fstat(arg1.into(), TUA::from_value(arg2 as _)).await,
+        0x51 => sys_sync().await,
         0x5d => sys_exit(arg1 as _),
         0x5e => sys_exit_group(arg1 as _),
         0x60 => sys_set_tid_address(VA::from_value(arg1 as _)).await,
@@ -186,6 +189,7 @@ pub async fn handle_syscall() {
 
             return;
         }
+        0x8e => sys_reboot(arg1 as _, arg2 as _, arg3 as _, arg4 as _).await,
         0x94 => {
             sys_getresuid(
                 TUA::from_value(arg1 as _),
