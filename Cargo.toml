@@ -1,5 +1,5 @@
 [workspace]
-members = [ "libkernel" ]
+members = ["libkernel", "usertest"]
 
 [package]
 name = "moss"
