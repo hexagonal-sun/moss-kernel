@@ -1,9 +1,12 @@
 use crate::{
     arch::{
         ArchImpl,
-        arm64::boot::{
-            arch_init_secondary,
-            memory::{KERNEL_STACK_PG_ORDER, allocate_kstack_region},
+        arm64::{
+            boot::{
+                arch_init_secondary,
+                memory::{KERNEL_STACK_PG_ORDER, allocate_kstack_region},
+            },
+            psci::{PSCIEntry, PSCIMethod, boot_secondary_psci},
         },
     },
     drivers::{fdt_prober::get_fdt, timer::now},
@@ -27,14 +30,11 @@ use libkernel::{
     },
 };
 use log::{info, warn};
-use psci::{PSCIEntry, PSCIMethod, boot_secondary_psci};
 
 unsafe extern "C" {
     static __boot_stack: u8;
     static exception_return: u8;
 }
-
-mod psci;
 
 #[derive(Debug)]
 #[repr(C)]
