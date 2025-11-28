@@ -278,15 +278,24 @@ fn days_since_1980(year: u32, mut month: u32, day: u32) -> u32 {
         days += days_in_month(year, month);
     }
 
-    // Add remaining days (day is 1-based).
-    days + (day - 1)
+    // Add remaining days (day is 1-based, but saturate to avoid underflow for invalid values).
+    days + day.saturating_sub(1)
 }
 
 /// Converts a 16-bit FAT date field into a `Duration` since the Unix epoch.
 fn fat_date_to_duration(date: u16) -> Duration {
+    if date == 0 {
+        return Duration::ZERO;
+    }
+
     let day = (date & 0b1_1111) as u32;
     let month = ((date >> 5) & 0b1111) as u32;
     let year = ((date >> 9) & 0b111_1111) as u32 + 1980;
+
+    // Guard against obviously invalid encodings (day or month zero).
+    if day == 0 || month == 0 {
+        return Duration::ZERO;
+    }
 
     // Days between 1970-01-01 and 1980-01-01 = 3652 (incl. 1972 and 1976 leap years)
     const DAYS_OFFSET: u32 = 3652;
@@ -297,6 +306,11 @@ fn fat_date_to_duration(date: u16) -> Duration {
 
 /// Converts FAT (date, time, centisecond) fields into a `Duration` since epoch.
 fn fat_datetime_to_duration(date: u16, time: u16, csecs: u8) -> Duration {
+    // Zero date & time indicates an unset timestamp in FAT; treat as epoch.
+    if date == 0 && time == 0 {
+        return Duration::ZERO;
+    }
+
     let base = fat_date_to_duration(date);
 
     let hours = ((time >> 11) & 0b1_1111) as u64;
