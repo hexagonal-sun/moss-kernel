@@ -1,4 +1,5 @@
 use core::ptr;
+use core::time::Duration;
 
 use super::{Cluster, Fat32Operations, file::Fat32FileNode, reader::Fat32Reader};
 use crate::{
@@ -220,7 +221,13 @@ impl<T: Fat32Operations> Fat32DirStream<T> {
                 size: dir_entry.size as u64,
                 file_type,
                 mode: FilePermissions::from_bits_retain(0o755),
-                // TODO: parse date/time fields.
+                atime: fat_date_to_duration(dir_entry.adate),
+                mtime: fat_datetime_to_duration(dir_entry.mdate, dir_entry.mtime, 0),
+                ctime: fat_datetime_to_duration(
+                    dir_entry.cdate,
+                    dir_entry.ctime,
+                    dir_entry.ctime_ms,
+                ),
                 ..Default::default()
             };
 
@@ -237,6 +244,69 @@ impl<T: Fat32Operations> Fat32DirStream<T> {
             }));
         }
     }
+}
+
+/// Determines if a given year is a leap year
+#[inline(always)]
+fn is_leap_year(year: u32) -> bool {
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || (year.is_multiple_of(400))
+}
+
+/// Returns the number of days in the given month of the specified year.
+fn days_in_month(year: u32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 30, // Fallback (should not happen with valid FAT timestamps)
+    }
+}
+
+/// Calculates the number of days elapsed since 1980-01-01.
+fn days_since_1980(year: u32, mut month: u32, day: u32) -> u32 {
+    let mut days = 0;
+
+    // Add whole years.
+    for y in 1980..year {
+        days += 365 + is_leap_year(y) as u32;
+    }
+
+    // Add whole months in the current year.
+    while month > 1 {
+        month -= 1;
+        days += days_in_month(year, month);
+    }
+
+    // Add remaining days (day is 1-based).
+    days + (day - 1)
+}
+
+/// Converts a 16-bit FAT date field into a `Duration` since the Unix epoch.
+fn fat_date_to_duration(date: u16) -> Duration {
+    let day = (date & 0b1_1111) as u32;
+    let month = ((date >> 5) & 0b1111) as u32;
+    let year = ((date >> 9) & 0b111_1111) as u32 + 1980;
+
+    // Days between 1970-01-01 and 1980-01-01 = 3652 (incl. 1972 and 1976 leap years)
+    const DAYS_OFFSET: u32 = 3652;
+    let days_total = DAYS_OFFSET + days_since_1980(year, month, day);
+
+    Duration::from_secs(days_total as u64 * 86_400)
+}
+
+/// Converts FAT (date, time, centisecond) fields into a `Duration` since epoch.
+fn fat_datetime_to_duration(date: u16, time: u16, csecs: u8) -> Duration {
+    let base = fat_date_to_duration(date);
+
+    let hours = ((time >> 11) & 0b1_1111) as u64;
+    let minutes = ((time >> 5) & 0b11_1111) as u64;
+    let two_secs = (time & 0b1_1111) as u64;
+    let secs = two_secs * 2;
+
+    let millis = (csecs as u64) * 10;
+
+    base + Duration::from_secs(hours * 3600 + minutes * 60 + secs) + Duration::from_millis(millis)
 }
 
 #[async_trait]
