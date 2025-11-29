@@ -163,6 +163,52 @@ impl<T: MemKind> MemoryRegion<T> {
         }
     }
 
+    /// Punches a hole (`other`) into the region.
+    ///
+    /// # Returns
+    /// * `(None, None)` if `other` fully contains `self`.
+    /// * `(Some(Left), None)` if `other` overlaps the tail (end) of `self`,
+    ///   or if `other` is strictly after `self` (no overlap).
+    /// * `(None, Some(Right))` if `other` overlaps the head (start) of `self`,
+    ///   or if `other` is strictly before `self` (no overlap).
+    /// * `(Some(Left), Some(Right))` if `other` is strictly inside `self`.
+    pub fn punch_hole(self, other: Self) -> (Option<Self>, Option<Self>) {
+        let s_start = self.start_address();
+        let s_end = self.end_address();
+        let o_start = other.start_address();
+        let o_end = other.end_address();
+
+        // Calculate the "Left" remainder:
+        // Exists if self starts before other starts.
+        // The region is [self.start, min(self.end, other.start)).
+        let left = if s_start < o_start {
+            let end = core::cmp::min(s_end, o_start);
+            if end > s_start {
+                Some(Self::from_start_end_address(s_start, end))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Calculate the "Right" remainder:
+        // Exists if self ends after other ends.
+        // The region is [max(self.start, other.end), self.end).
+        let right = if s_end > o_end {
+            let start = core::cmp::max(s_start, o_end);
+            if start < s_end {
+                Some(Self::from_start_end_address(start, s_end))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        (left, right)
+    }
+
     /// Returns `true` if this region fully contains `other`.
     pub fn contains(self, other: Self) -> bool {
         self.start_address().value() <= other.start_address().value()
@@ -403,10 +449,14 @@ mod tests {
         region::VirtMemoryRegion,
     };
 
+    fn region(start: usize, size: usize) -> PhysMemoryRegion {
+        PhysMemoryRegion::new(PA::from_value(start), size)
+    }
+
     #[test]
     fn merge_adjacent() {
-        let a = PhysMemoryRegion::new(PA::from_value(0x100), 0x10);
-        let b = PhysMemoryRegion::new(PA::from_value(0x110), 0x10);
+        let a = region(0x100, 0x10);
+        let b = region(0x110, 0x10);
         let merged = a.merge(b).unwrap();
 
         assert_eq!(merged.address.value(), 0x100);
@@ -415,8 +465,8 @@ mod tests {
 
     #[test]
     fn merge_overlap() {
-        let a = PhysMemoryRegion::new(PA::from_value(0x100), 0x20);
-        let b = PhysMemoryRegion::new(PA::from_value(0x110), 0x20);
+        let a = region(0x100, 0x20);
+        let b = region(0x110, 0x20);
         let merged = a.merge(b).unwrap();
 
         assert_eq!(merged.address.value(), 0x100);
@@ -425,8 +475,8 @@ mod tests {
 
     #[test]
     fn merge_identical() {
-        let a = PhysMemoryRegion::new(PA::from_value(0x100), 0x20);
-        let b = PhysMemoryRegion::new(PA::from_value(0x100), 0x20);
+        let a = region(0x100, 0x20);
+        let b = region(0x100, 0x20);
         let merged = a.merge(b).unwrap();
 
         assert_eq!(merged.address.value(), 0x100);
@@ -435,15 +485,15 @@ mod tests {
 
     #[test]
     fn merge_non_touching() {
-        let a = PhysMemoryRegion::new(PA::from_value(0x100), 0x10);
-        let b = PhysMemoryRegion::new(PA::from_value(0x200), 0x10);
+        let a = region(0x100, 0x10);
+        let b = region(0x200, 0x10);
         assert!(a.merge(b).is_none());
     }
 
     #[test]
     fn merge_reverse_order() {
-        let a = PhysMemoryRegion::new(PA::from_value(0x200), 0x20);
-        let b = PhysMemoryRegion::new(PA::from_value(0x100), 0x100);
+        let a = region(0x200, 0x20);
+        let b = region(0x100, 0x100);
         let merged = a.merge(b).unwrap();
 
         assert_eq!(merged.address.value(), 0x100);
@@ -452,8 +502,8 @@ mod tests {
 
     #[test]
     fn merge_partial_overlap() {
-        let a = PhysMemoryRegion::new(PA::from_value(0x100), 0x30); // [0x100, 0x130)
-        let b = PhysMemoryRegion::new(PA::from_value(0x120), 0x20); // [0x120, 0x140)
+        let a = region(0x100, 0x30); // [0x100, 0x130)
+        let b = region(0x120, 0x20); // [0x120, 0x140)
         let merged = a.merge(b).unwrap(); // should be [0x100, 0x140)
 
         assert_eq!(merged.address.value(), 0x100);
@@ -462,15 +512,15 @@ mod tests {
 
     #[test]
     fn test_contains_region() {
-        let a = PhysMemoryRegion::new(PA::from_value(0x1000), 0x300);
-        let b = PhysMemoryRegion::new(PA::from_value(0x1100), 0x100);
+        let a = region(0x1000, 0x300);
+        let b = region(0x1100, 0x100);
         assert!(a.contains(b));
         assert!(!b.contains(a));
     }
 
     #[test]
     fn test_contains_address() {
-        let region = PhysMemoryRegion::new(PA::from_value(0x1000), 0x100);
+        let region = region(0x1000, 0x100);
         assert!(region.contains_address(PA::from_value(0x1000)));
         assert!(region.contains_address(PA::from_value(0x10FF)));
         assert!(!region.contains_address(PA::from_value(0x1100)));
@@ -533,5 +583,113 @@ mod tests {
         let region = VirtMemoryRegion::new(start_va, num_pages * PAGE_SIZE);
 
         assert_eq!(region.iter_pages().count(), num_pages);
+    }
+
+    #[test]
+    fn test_punch_hole_middle() {
+        // Region: [0x1000 ... 0x5000) (size 0x4000)
+        // Hole:   [0x2000 ... 0x3000)
+        // Expect: Left [0x1000, 0x2000), Right [0x3000, 0x5000)
+        let main = region(0x1000, 0x4000);
+        let hole = region(0x2000, 0x1000);
+
+        let (left, right) = main.punch_hole(hole);
+
+        assert_eq!(left, Some(region(0x1000, 0x1000)));
+        assert_eq!(right, Some(region(0x3000, 0x2000)));
+    }
+
+    #[test]
+    fn test_punch_hole_consumes_start() {
+        // Region: [0x2000 ... 0x4000)
+        // Hole:   [0x1000 ... 0x3000) (Overlaps the beginning)
+        // Expect: Left None, Right [0x3000, 0x4000)
+        let main = region(0x2000, 0x2000);
+        let hole = region(0x1000, 0x2000);
+
+        let (left, right) = main.punch_hole(hole);
+
+        assert_eq!(left, None);
+        assert_eq!(right, Some(region(0x3000, 0x1000)));
+    }
+
+    #[test]
+    fn test_punch_hole_consumes_end() {
+        // Region: [0x1000 ... 0x3000)
+        // Hole:   [0x2000 ... 0x4000) (Overlaps the end)
+        // Expect: Left [0x1000, 0x2000), Right None
+        let main = region(0x1000, 0x2000);
+        let hole = region(0x2000, 0x2000);
+
+        let (left, right) = main.punch_hole(hole);
+
+        assert_eq!(left, Some(region(0x1000, 0x1000)));
+        assert_eq!(right, None);
+    }
+
+    #[test]
+    fn test_punch_hole_exact_match() {
+        // Region: [0x1000 ... 0x2000)
+        // Hole:   [0x1000 ... 0x2000)
+        // Expect: None, None
+        let main = region(0x1000, 0x1000);
+        let hole = region(0x1000, 0x1000);
+
+        let (left, right) = main.punch_hole(hole);
+
+        assert_eq!(left, None);
+        assert_eq!(right, None);
+    }
+
+    #[test]
+    fn test_punch_hole_fully_contained() {
+        // Region: [0x2000 ... 0x3000)
+        // Hole:   [0x1000 ... 0x4000) (Swallows the region entirely)
+        // Expect: None, None
+        let main = region(0x2000, 0x1000);
+        let hole = region(0x1000, 0x3000);
+
+        let (left, right) = main.punch_hole(hole);
+
+        assert_eq!(left, None);
+        assert_eq!(right, None);
+    }
+
+    #[test]
+    fn test_punch_hole_touching_edges() {
+        // Case A: Hole ends exactly where region starts
+        // Region: [0x2000 ... 0x3000)
+        // Hole:   [0x1000 ... 0x2000)
+        // Result: Region is to the right of the hole.
+        let main = region(0x2000, 0x1000);
+        let hole = region(0x1000, 0x1000);
+        assert_eq!(main.punch_hole(hole), (None, Some(main)));
+
+        // Case B: Hole starts exactly where region ends
+        // Region: [0x1000 ... 0x2000)
+        // Hole:   [0x2000 ... 0x3000)
+        // Result: Region is to the left of the hole.
+        let main = region(0x1000, 0x1000);
+        let hole = region(0x2000, 0x1000);
+        assert_eq!(main.punch_hole(hole), (Some(main), None));
+    }
+
+    #[test]
+    fn test_punch_hole_disjoint() {
+        // Hole is completely far away (after)
+        // Region: [0x1000 ... 0x2000)
+        // Hole:   [0x5000 ... 0x6000)
+        // Result: Region is to the left of the hole.
+        let main = region(0x1000, 0x1000);
+        let hole = region(0x5000, 0x1000);
+        assert_eq!(main.punch_hole(hole), (Some(main), None));
+
+        // Hole is completely far away (before)
+        // Region: [0x5000 ... 0x6000)
+        // Hole:   [0x1000 ... 0x2000)
+        // Result: Region is to the right of the hole.
+        let main = region(0x5000, 0x1000);
+        let hole = region(0x1000, 0x1000);
+        assert_eq!(main.punch_hole(hole), (None, Some(main)));
     }
 }
