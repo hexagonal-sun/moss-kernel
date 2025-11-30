@@ -9,6 +9,8 @@
 //!   and initialized data from files, most notably ELF binaries.
 //! - Anonymous (via [`VMAreaKind::Anon`]): Used for demand-zeroed memory like
 //!   the process stack, heap, and BSS sections.
+use core::cmp;
+
 use crate::{
     fs::Inode,
     memory::{PAGE_MASK, PAGE_SIZE, address::VA, region::VirtMemoryRegion},
@@ -408,6 +410,42 @@ impl VMArea {
     pub fn is_file_backed(&self) -> bool {
         matches!(self.kind, VMAreaKind::File(_))
     }
+
+    /// Shrink this VMA's region to `new_region`, recalculating file offsets,
+    /// for file mappings.
+    #[must_use]
+    pub(crate) fn shrink_to(&self, new_region: VirtMemoryRegion) -> Self {
+        debug_assert!(self.region.contains(new_region));
+
+        let mut new_vma = self.clone_with_new_region(new_region);
+
+        match self.kind {
+            VMAreaKind::File(ref vmfile_mapping) => {
+                let start_offset =
+                    new_region.start_address().value() - self.region.start_address().value();
+
+                let new_sz = cmp::min(
+                    vmfile_mapping.len.saturating_sub(start_offset as u64),
+                    new_region.size() as u64,
+                );
+
+                if new_sz == 0 {
+                    // convert this VMA into an anonymous VMA, since we've
+                    // shrunk past the file mapping.
+                    new_vma.kind = VMAreaKind::Anon;
+                } else {
+                    new_vma.kind = VMAreaKind::File(VMFileMapping {
+                        file: vmfile_mapping.file.clone(),
+                        offset: vmfile_mapping.offset + start_offset as u64,
+                        len: new_sz,
+                    });
+                }
+
+                new_vma
+            }
+            VMAreaKind::Anon => new_vma,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -568,5 +606,150 @@ pub mod tests {
 
         let result = vma.resolve_fault(fault_addr);
         assert!(result.is_none(), "Anonymous VMA fault should return None");
+    }
+
+    #[test]
+    fn shrink_anonymous_vma() {
+        // Easy case: Standard shrinking of an anonymous region
+        let vma = VMArea::new(
+            VirtMemoryRegion::new(VA::from_value(0x5000), 0x4000),
+            VMAreaKind::Anon,
+            VMAPermissions::rw(),
+        );
+
+        // Shrink to the middle.
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x6000), 0x1000);
+        let result = vma.shrink_to(new_region);
+
+        assert_eq!(result.region, new_region);
+        assert!(matches!(result.kind, VMAreaKind::Anon));
+    }
+
+    #[test]
+    fn shrink_file_vma_from_front() {
+        // Scenario: [  File (0x4000)  ]
+        // Cut:      xx[ File (0x1000) ]
+        // Expect: Offset increases, Length decreases
+
+        let vma = create_test_vma(0x1000, 0x4000, 0x0, 0x4000);
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x4000), 0x1000);
+
+        let result = vma.shrink_to(new_region);
+
+        assert_eq!(result.region, new_region);
+        match result.kind {
+            VMAreaKind::File(vmfile_mapping) => {
+                assert_eq!(vmfile_mapping.len, 0x1000);
+                assert_eq!(vmfile_mapping.offset, 0x3000);
+            }
+            _ => panic!("Expected File VMA"),
+        }
+    }
+
+    #[test]
+    fn shrink_file_vma_from_end() {
+        // Scenario: [  File (0x4000)  ]
+        // Cut:      [ File (0x2000) ]xx
+
+        let vma = create_test_vma(0x1000, 0x4000, 0x0, 0x4000);
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x1000), 0x2000);
+
+        let result = vma.shrink_to(new_region);
+
+        assert_eq!(result.region, new_region);
+
+        match result.kind {
+            VMAreaKind::File(vmfile_mapping) => {
+                // Offset shouldn't change
+                assert_eq!(vmfile_mapping.offset, 0x0);
+                assert_eq!(vmfile_mapping.len, 0x2000);
+            }
+            _ => panic!("Expected File VMA"),
+        }
+    }
+
+    #[test]
+    fn shrink_file_vma_both_sides() {
+        // Scenario: [   File (0x4000)   ]
+        // Cut:      xx[ File (0x1000) ]xx
+        let vma = create_test_vma(0x1000, 0x4000, 0x0, 0x4000);
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x2000), 0x1000);
+
+        let result = vma.shrink_to(new_region);
+
+        match result.kind {
+            VMAreaKind::File(vmfile_mapping) => {
+                assert_eq!(vmfile_mapping.offset, 0x1000);
+                assert_eq!(vmfile_mapping.len, 0x1000);
+            }
+            _ => panic!("Expected File VMA"),
+        }
+    }
+
+    #[test]
+    fn shrink_mixed_vma_past_file_boundary_becomes_anon() {
+        // Scenario: [ File (0x2000) | Anon (0x2000) ]
+        // Cut front by 0x3000.    xx[ Anon (0x1000) ]
+
+        let vma = create_test_vma(0x1000, 0x4000, 0x0, 0x2000);
+
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x4000), 0x1000);
+
+        let result = vma.shrink_to(new_region);
+
+        assert_eq!(result.region, new_region);
+        assert!(
+            matches!(result.kind, VMAreaKind::Anon),
+            "Should have converted to Anon because we skipped the file part"
+        );
+    }
+
+    #[test]
+    fn shrink_mixed_vma_keep_file_part() {
+        // Scenario: [ File (0x2000) | Anon (0x2000) ]
+        // cut:      xx[ File(0x1000)| Anon (0x2000) ]
+        let vma = create_test_vma(0x1000, 0x4000, 0x0, 0x2000);
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x2000), 0x3000);
+
+        let result = vma.shrink_to(new_region);
+
+        match result.kind {
+            VMAreaKind::File(mapping) => {
+                assert_eq!(mapping.offset, 0x1000);
+                assert_eq!(mapping.len, 0x1000);
+            }
+            _ => panic!("Expected File VMA"),
+        }
+    }
+
+    #[test]
+    fn shrink_mixed_vma_from_end_remove_anon_part() {
+        // Scenario: [ File (0x2000) | Anon (0x2000) ]
+        // Cut:      [ File (0x2000) ]xx
+        let vma = create_test_vma(0x1000, 0x4000, 0x0, 0x2000);
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x1000), 0x2000);
+
+        let result = vma.shrink_to(new_region);
+
+        match result.kind {
+            VMAreaKind::File(mapping) => {
+                assert_eq!(mapping.offset, 0x0);
+                assert_eq!(mapping.len, 0x2000);
+            }
+            _ => panic!("Expected File VMA"),
+        }
+    }
+
+    #[test]
+    fn shrink_mixed_vma_exact_boundary() {
+        // Scenario: [ File (0x2000) | Anon (0x2000) ]
+        // Cut:                   xxx[ Anon (0x2000) ]
+
+        let vma = create_test_vma(0x1000, 0x4000, 0x0, 0x2000);
+        let new_region = VirtMemoryRegion::new(VA::from_value(0x3000), 0x1000);
+
+        let result = vma.shrink_to(new_region);
+
+        assert!(matches!(result.kind, VMAreaKind::Anon));
     }
 }
