@@ -29,6 +29,14 @@ const MAP_ANONYMOUS: u64 = 0x0020;
 /// MAP_FIXED{,_NOREPLACE}.
 static MMAP_MIN_ADDR: AtomicUsize = AtomicUsize::new(0x1000);
 
+fn prot_to_perms(prot: u64) -> VMAPermissions {
+    VMAPermissions {
+        read: (prot & PROT_READ) != 0,
+        write: (prot & PROT_WRITE) != 0,
+        execute: (prot & PROT_EXEC) != 0,
+    }
+}
+
 /// Handles the `mmap` system call.
 ///
 /// # Arguments
@@ -74,11 +82,7 @@ pub async fn sys_mmap(
         return Err(KernelError::InvalidValue);
     }
 
-    let permissions = VMAPermissions {
-        read: (prot & PROT_READ) != 0,
-        write: (prot & PROT_WRITE) != 0,
-        execute: (prot & PROT_EXEC) != 0,
-    };
+    let permissions = prot_to_perms(prot);
 
     let requested_len = len as usize;
 
@@ -134,6 +138,19 @@ pub async fn sys_munmap(addr: VA, len: usize) -> Result<usize> {
 
     // TODO: reclaim pages.
     current_task().vm.lock_save_irq().mm_mut().munmap(region)?;
+
+    Ok(0)
+}
+
+pub fn sys_mprotect(addr: VA, len: usize, prot: u64) -> Result<usize> {
+    let perms = prot_to_perms(prot);
+    let region = VirtMemoryRegion::new(addr, len);
+
+    current_task()
+        .vm
+        .lock_save_irq()
+        .mm_mut()
+        .mprotect(region, perms)?;
 
     Ok(0)
 }

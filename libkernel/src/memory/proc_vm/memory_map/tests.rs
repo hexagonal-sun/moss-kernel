@@ -153,6 +153,37 @@ fn assert_vma_exists(pvm: &MemoryMap<MockAddressSpace>, start: usize, size: usiz
     assert_eq!(vma.region.size(), size, "VMA size mismatch");
 }
 
+fn assert_vma_perms(pvm: &MemoryMap<MockAddressSpace>, start: usize, perms: VMAPermissions) {
+    let vma = pvm
+        .find_vma(VA::from_value(start))
+        .expect("VMA not found for permission check");
+    assert_eq!(
+        vma.permissions(),
+        perms,
+        "VMA permissions mismatch at {:#x}",
+        start
+    );
+}
+
+fn assert_ops_log_protect(
+    pvm: &MemoryMap<MockAddressSpace>,
+    expected_region: VirtMemoryRegion,
+    expected_perms: VMAPermissions,
+) {
+    let log = pvm.address_space.ops_log.lock().unwrap();
+    let found = log.iter().any(|op| match op {
+        MockPageTableOp::ProtectRange { region, perms } => {
+            *region == expected_region && *perms == expected_perms.into()
+        }
+        _ => false,
+    });
+    assert!(
+        found,
+        "Did not find ProtectRange op for {:?} with {:?}",
+        expected_region, expected_perms
+    );
+}
+
 #[test]
 fn test_mmap_any_empty() {
     let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
@@ -684,4 +715,180 @@ fn test_munmap_over_multiple_vmas() {
             },
         ]
     );
+}
+
+#[test]
+fn mprotect_full_vma() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let start = MMAP_BASE - 4 * PAGE_SIZE;
+    let size = 4 * PAGE_SIZE;
+
+    pvm.insert_and_merge(create_anon_vma(start, size, VMAPermissions::rw()));
+
+    // Protect entire region to RO
+    let region = VirtMemoryRegion::new(VA::from_value(start), size);
+    pvm.mprotect(region, VMAPermissions::ro()).unwrap();
+
+    assert_eq!(pvm.vmas.len(), 1); // Should still be 1 VMA
+    assert_vma_exists(&pvm, start, size);
+    assert_vma_perms(&pvm, start, VMAPermissions::ro());
+    assert_ops_log_protect(&pvm, region, VMAPermissions::ro());
+}
+
+#[test]
+fn test_mprotect_split_middle() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let start = 0x10000;
+    let size = 3 * PAGE_SIZE; // [0x10000, 0x11000, 0x12000]
+
+    pvm.insert_and_merge(create_anon_vma(start, size, VMAPermissions::rw()));
+
+    let protect_start = start + PAGE_SIZE;
+    let protect_len = PAGE_SIZE;
+    let region = VirtMemoryRegion::new(VA::from_value(protect_start), protect_len);
+
+    pvm.mprotect(region, VMAPermissions::ro()).unwrap();
+
+    // Should now be 3 VMAs: RW - RO - RW
+    assert_eq!(pvm.vmas.len(), 3);
+
+    // Left
+    assert_vma_exists(&pvm, start, PAGE_SIZE);
+    assert_vma_perms(&pvm, start, VMAPermissions::rw());
+
+    // Middle
+    assert_vma_exists(&pvm, protect_start, PAGE_SIZE);
+    assert_vma_perms(&pvm, protect_start, VMAPermissions::ro());
+
+    // Right
+    assert_vma_exists(&pvm, start + 2 * PAGE_SIZE, PAGE_SIZE);
+    assert_vma_perms(&pvm, start + 2 * PAGE_SIZE, VMAPermissions::rw());
+
+    assert_ops_log_protect(&pvm, region, VMAPermissions::ro());
+}
+
+#[test]
+fn test_mprotect_split_start() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let start = 0x20000;
+    let size = 2 * PAGE_SIZE;
+
+    pvm.insert_and_merge(create_anon_vma(start, size, VMAPermissions::rw()));
+
+    let region = VirtMemoryRegion::new(VA::from_value(start), PAGE_SIZE);
+    pvm.mprotect(region, VMAPermissions::ro()).unwrap();
+
+    // Should be 2 VMAs: RO - RW
+    assert_eq!(pvm.vmas.len(), 2);
+
+    assert_vma_exists(&pvm, start, PAGE_SIZE);
+    assert_vma_perms(&pvm, start, VMAPermissions::ro());
+
+    assert_vma_exists(&pvm, start + PAGE_SIZE, PAGE_SIZE);
+    assert_vma_perms(&pvm, start + PAGE_SIZE, VMAPermissions::rw());
+
+    assert_ops_log_protect(&pvm, region, VMAPermissions::ro());
+}
+
+#[test]
+fn test_mprotect_split_end() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let start = 0x30000;
+    let size = 2 * PAGE_SIZE;
+
+    pvm.insert_and_merge(create_anon_vma(start, size, VMAPermissions::rw()));
+
+    let region = VirtMemoryRegion::new(VA::from_value(start + PAGE_SIZE), PAGE_SIZE);
+    pvm.mprotect(region, VMAPermissions::ro()).unwrap();
+
+    // Should be 2 VMAs: RW - RO
+    assert_eq!(pvm.vmas.len(), 2);
+
+    assert_vma_exists(&pvm, start, PAGE_SIZE);
+    assert_vma_perms(&pvm, start, VMAPermissions::rw());
+
+    assert_vma_exists(&pvm, start + PAGE_SIZE, PAGE_SIZE);
+    assert_vma_perms(&pvm, start + PAGE_SIZE, VMAPermissions::ro());
+
+    assert_ops_log_protect(&pvm, region, VMAPermissions::ro());
+}
+
+#[test]
+fn test_mprotect_file_backed_split() {
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let start = 0x40000;
+    let size = 3 * PAGE_SIZE;
+    let file_offset = 0x1000;
+    let inode = Arc::new(DummyTestInode);
+
+    // VMA: [0x40000 - 0x43000), File Offset: 0x1000
+    pvm.insert_and_merge(create_file_vma(
+        start,
+        size,
+        VMAPermissions::rw(),
+        file_offset,
+        inode.clone(),
+    ));
+
+    // Protect Middle Page [0x41000 - 0x42000)
+    let region = VirtMemoryRegion::new(VA::from_value(start + PAGE_SIZE), PAGE_SIZE);
+    pvm.mprotect(region, VMAPermissions::ro()).unwrap();
+
+    // Left VMA: 0x40000, Len 0x1000, Offset 0x1000
+    let left = pvm.find_vma(VA::from_value(start)).unwrap();
+    if let VMAreaKind::File(f) = &left.kind {
+        assert_eq!(f.offset, 0x1000);
+        assert_eq!(f.len, PAGE_SIZE as u64);
+    } else {
+        panic!("Left VMA lost file backing");
+    }
+
+    // Middle VMA: 0x41000, Len 0x1000, Offset 0x2000 (0x1000 + 0x1000)
+    let middle = pvm.find_vma(VA::from_value(start + PAGE_SIZE)).unwrap();
+    assert_eq!(middle.permissions(), VMAPermissions::ro());
+    if let VMAreaKind::File(f) = &middle.kind {
+        assert_eq!(f.offset, 0x2000);
+        assert_eq!(f.len, PAGE_SIZE as u64);
+    } else {
+        panic!("Middle VMA lost file backing");
+    }
+
+    // Right VMA: 0x42000, Len 0x1000, Offset 0x3000 (0x1000 + 0x2000)
+    let right = pvm.find_vma(VA::from_value(start + 2 * PAGE_SIZE)).unwrap();
+    if let VMAreaKind::File(f) = &right.kind {
+        assert_eq!(f.offset, 0x3000);
+        assert_eq!(f.len, PAGE_SIZE as u64);
+    } else {
+        panic!("Right VMA lost file backing");
+    }
+
+    assert_ops_log_protect(&pvm, region, VMAPermissions::ro());
+}
+
+#[test]
+fn test_mprotect_merge_restoration() {
+    // Ensures that if we split permissions, then restore them, the VMAs
+    // merge back together.
+    let mut pvm: MemoryMap<MockAddressSpace> = MemoryMap::new().unwrap();
+    let start = 0x50000;
+    let size = 2 * PAGE_SIZE;
+
+    pvm.insert_and_merge(create_anon_vma(start, size, VMAPermissions::rw()));
+
+    // Split.
+    let region1 = VirtMemoryRegion::new(VA::from_value(start), PAGE_SIZE);
+    pvm.mprotect(region1, VMAPermissions::ro()).unwrap();
+    assert_eq!(pvm.vmas.len(), 2);
+
+    // Restore back to RW
+    pvm.mprotect(region1, VMAPermissions::rw()).unwrap();
+
+    // 3. Should merge back to 1 VMA
+    assert_eq!(
+        pvm.vmas.len(),
+        1,
+        "VMAs failed to merge back after permissions restored"
+    );
+    assert_vma_exists(&pvm, start, size);
+    assert_vma_perms(&pvm, start, VMAPermissions::rw());
 }

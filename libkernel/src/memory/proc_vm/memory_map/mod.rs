@@ -165,6 +165,67 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
         self.unmap_region(range.align_to_page_boundary(), None)
     }
 
+    pub fn mprotect(
+        &mut self,
+        protect_region: VirtMemoryRegion,
+        new_perms: VMAPermissions,
+    ) -> Result<()> {
+        if !protect_region.is_page_aligned() {
+            return Err(KernelError::InvalidValue);
+        }
+
+        if protect_region.size() == 0 {
+            return Err(KernelError::InvalidValue);
+        }
+
+        let affected_vma_addr = self
+            .find_vma(protect_region.start_address())
+            .map(|x| x.region.start_address())
+            .ok_or(KernelError::NoMemory)?;
+
+        let affected_vma = self
+            .vmas
+            .remove(&affected_vma_addr)
+            .expect("Should have the same key as the start address");
+
+        // Easy case, the entire VMA is changing.
+        if affected_vma.region == protect_region {
+            let old_vma = affected_vma.clone();
+            let mut new_vma = old_vma.clone();
+            new_vma.permissions = new_perms;
+
+            self.insert_and_merge(new_vma.clone());
+            self.address_space
+                .protect_range(protect_region, new_perms.into())?;
+
+            return Ok(());
+        }
+
+        // Next case, a sub-region of a VMA is changing, requring a split.
+        if affected_vma.region.contains(protect_region) {
+            let (left, right) = affected_vma.region.punch_hole(protect_region);
+            let mut new_vma = affected_vma.clone().shrink_to(protect_region);
+            new_vma.permissions = new_perms;
+
+            if let Some(left) = left {
+                self.insert_and_merge(affected_vma.shrink_to(left));
+            }
+
+            self.address_space
+                .protect_range(protect_region, new_perms.into())?;
+            self.insert_and_merge(new_vma);
+
+            if let Some(right) = right {
+                self.insert_and_merge(affected_vma.shrink_to(right));
+            }
+
+            return Ok(());
+        }
+
+        // TODO: protecting over contiguous VMAreas.
+        Err(KernelError::NoMemory)
+    }
+
     /// Checks if a given virtual memory region is completely free.
     fn is_region_free(&self, region: VirtMemoryRegion) -> bool {
         // Find the VMA that might overlap with the start of our desired region.

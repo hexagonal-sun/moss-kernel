@@ -1,5 +1,6 @@
 use crate::kernel::power::sys_reboot;
 use crate::kernel::rand::sys_getrandom;
+use crate::memory::mmap::sys_mprotect;
 use crate::{
     arch::{Arch, ArchImpl},
     clock::{gettime::sys_clock_gettime, timeofday::sys_gettimeofday},
@@ -248,6 +249,7 @@ pub async fn handle_syscall() {
             .await
         }
         0xde => sys_mmap(arg1, arg2, arg3, arg4, arg5.into(), arg6).await,
+        0xe2 => sys_mprotect(VA::from_value(arg1 as _), arg2 as _, arg3 as _),
         0x104 => {
             sys_wait4(
                 arg1.cast_signed() as _,
