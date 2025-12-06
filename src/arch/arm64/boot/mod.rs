@@ -21,7 +21,6 @@ use aarch64_cpu::{
     asm::{self, barrier},
     registers::{ReadWriteable, SCTLR_EL1, TCR_EL1, TTBR0_EL1},
 };
-use alloc::string::ToString;
 use core::arch::global_asm;
 use libkernel::{
     CpuOps,
@@ -125,10 +124,9 @@ fn arch_init_stage2(frame: *mut ExceptionState) -> *mut ExceptionState {
 
     cpu_messenger_init(cpu_count());
 
-    kmain(
-        "--init=/bin/bash --rootfs=fat32fs --automount=/dev,devfs".to_string(),
-        frame,
-    );
+    let cmdline = super::fdt::get_cmdline();
+
+    kmain(cmdline.unwrap_or_default(), frame);
 
     boot_secondaries();
 
