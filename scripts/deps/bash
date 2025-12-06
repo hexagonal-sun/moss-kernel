@@ -8,16 +8,13 @@ CC="${CC:-aarch64-linux-$stdlib-gcc}"
 
 pushd "build" &>/dev/null || exit 1
 
-if [ ! -d "bash" ]; then
-    git clone --depth 1 --branch "$bash_tag" "$bash_repo" "bash"
-else
-    pushd "bash" &>/dev/null || exit 1
-    git pull
-    popd &>/dev/null || exit 1
+if [ ! -d "bash-5.3" ]; then
+    wget https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
+    tar xzf bash-5.3.tar.gz
 fi
 
-pushd "bash" &>/dev/null || exit 1
-./configure --without-bash-malloc --enable-static-link --host="aarch64-linux-$stdlib"
+pushd "bash-5.3" &>/dev/null || exit 1
+CFLAGS_FOR_BUILD="-std=c99" ./configure --without-bash-malloc --enable-static-link --host="aarch64-linux-$stdlib"
 make clean
 make
 mv bash ../bin/bash
