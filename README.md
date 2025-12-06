@@ -66,10 +66,11 @@ x86) before running on bare metal.
 ## Building and Running
 
 ### Prerequisites
-You will need QEMU for aarch64 emulation and dosfstools to create the virtual file system.
+You will need QEMU for aarch64 emulation, dosfstools and mtools to create the
+virtual file system.
 
 ```bash
-sudo apt install qemu-system-aarch64 dosfstools
+sudo apt install qemu-system-aarch64 dosfstools mtools
 ```
 
 Additionally you will need a version of the [aarch64-none-elf](https://developer.arm.com/Tools%20and%20Software/GNU%20Toolchain) toolchain installed.
@@ -100,14 +101,12 @@ into the `build` directory.
 
 Once that is done, you can create the image using the following command:
 ```bash
-sudo ./scripts/create-image.sh
+./scripts/create-image.sh
 ```
 
-This will create an image file named `moss.img` in the root directory of the project,
-format it as VFAT 32 and create the necessary files and directories for the kernel.
-
-This script needs to run with sudo to mount the image through a loop device,
-which is required to properly create the image for the kernel to work.
+This will create an image file named `moss.img` in the root directory of the
+project, format it as VFAT 32 and create the necessary files and directories for
+the kernel.
 
 ### Running via QEMU
 
