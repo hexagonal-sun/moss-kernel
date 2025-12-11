@@ -111,7 +111,8 @@ impl DirEntry {
             result.push('.');
             result.push_str(&String::from_utf8_lossy(&self.dos_extension[..ext_part]));
         }
-        result
+
+        result.to_ascii_lowercase()
     }
 }
 
@@ -566,13 +567,13 @@ mod test {
         assert_eq!(entries.len(), 2);
 
         let file = &entries[0];
-        assert_eq!(file.name, "FILE.TXT");
+        assert_eq!(file.name, "file.txt");
         assert_eq!(file.attr.file_type, FileType::File);
         assert_eq!(file.cluster, Cluster(10));
         assert_eq!(file.attr.size, 1024);
 
         let dir = &entries[1];
-        assert_eq!(dir.name, "SUBDIR");
+        assert_eq!(dir.name, "subdir");
         assert_eq!(dir.attr.file_type, FileType::Directory);
         assert_eq!(dir.cluster, Cluster(11));
     }
@@ -646,7 +647,7 @@ mod test {
         let entries = collect_entries(dir_stream).await;
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "GOODFILE.DAT");
+        assert_eq!(entries[0].name, "goodfile.dat");
         assert_eq!(entries[0].offset, 2);
     }
 
@@ -662,7 +663,7 @@ mod test {
         let entries = collect_entries(dir_stream).await;
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "FIRST.FIL");
+        assert_eq!(entries[0].name, "first.fil");
     }
 
     #[tokio::test]
@@ -680,7 +681,7 @@ mod test {
         let entries = collect_entries(dir_stream).await;
 
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].name, "REALFILE.TXT");
+        assert_eq!(entries[0].name, "realfile.txt");
         assert_eq!(entries[0].offset, 2);
     }
 
@@ -747,7 +748,7 @@ mod test {
         let entries = collect_entries(dir_stream).await;
 
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].name, "KERNEL.ELF");
+        assert_eq!(entries[0].name, "kernel.elf");
         assert_eq!(entries[0].cluster, Cluster(3));
         assert_eq!(entries[1].name, "my notes.md");
         assert_eq!(entries[1].cluster, Cluster(4));
