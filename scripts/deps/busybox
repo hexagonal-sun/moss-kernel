@@ -6,7 +6,4 @@ pushd "build" &>/dev/null || exit 1
 wget https://github.com/shutingrz/busybox-static-binaries-fat/raw/refs/heads/main/busybox-aarch64-linux-gnu
 chmod +x busybox-aarch64-linux-gnu
 mv busybox-aarch64-linux-gnu bin/busybox
-
-popd &>/dev/null || exit 1
-
 popd &>/dev/null || exit 1
