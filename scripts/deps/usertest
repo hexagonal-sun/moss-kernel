@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pushd "usertest" &>/dev/null || exit 1
+cargo build
+popd &>/dev/null || exit 1
+
+cp ./target/aarch64-unknown-linux-musl/debug/usertest build/bin/
