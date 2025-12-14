@@ -70,9 +70,9 @@ impl RegionList {
         self.count -= 1;
     }
 
-    pub fn insert_region(&mut self, mut new_region: PhysMemoryRegion) {
+    pub fn insert_region(&mut self, mut new_region: PhysMemoryRegion) -> Result<()> {
         if self.count == self.max {
-            panic!("Cannot insert into full region list");
+            return Err(KernelError::NoMemory);
         }
 
         // Step 1: Try to merge with previous and next regions
@@ -108,6 +108,7 @@ impl RegionList {
         // Step 4: Insert the region
         self.count += 1;
         self[insert_idx] = new_region;
+        Ok(())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = PhysMemoryRegion> {
@@ -242,7 +243,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
             .ok_or(KernelError::NoMemory)?;
 
         // Allocation fits and doesn't overlap any reservation
-        self.res.insert_region(PhysMemoryRegion::new(address, size));
+        self.res.insert_region(PhysMemoryRegion::new(address, size))?;
 
         Ok(address)
     }
@@ -282,13 +283,13 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
             if remove_start > start_val {
                 let left =
                     PhysMemoryRegion::new(PA::from_value(start_val), remove_start - start_val);
-                self.res.insert_region(left);
+                self.res.insert_region(left)?;
             }
 
             // Right fragment (after freed block)
             if remove_end < end_val {
                 let right = PhysMemoryRegion::new(PA::from_value(remove_end), end_val - remove_end);
-                self.res.insert_region(right);
+                self.res.insert_region(right)?;
             }
 
             Ok(())
@@ -338,7 +339,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
             self.res.insert_region(PhysMemoryRegion::new(
                 PA::from_value(new_ptr.expose_provenance()),
                 new_size,
-            ));
+            ))?;
 
             Ok(())
         } else {
@@ -351,7 +352,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
             self.grow_region_list(RegionListType::Res)?;
         }
 
-        self.res.insert_region(region);
+        self.res.insert_region(region)?;
 
         Ok(())
     }
@@ -369,7 +370,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
             self.grow_region_list(RegionListType::Mem)?;
         }
 
-        self.memory.insert_region(region);
+        self.memory.insert_region(region)?;
 
         Ok(())
     }
@@ -715,7 +716,8 @@ mod tests {
         // Reserve a middle region
         smalloc
             .res
-            .insert_region(PhysMemoryRegion::new(PA::from_value(0x1200), 0x100));
+            .insert_region(PhysMemoryRegion::new(PA::from_value(0x1200), 0x100))
+            .unwrap();
 
         // Alloc before the reserved region
         let addr1 = smalloc.alloc(0x100, 0x100).unwrap();
@@ -739,7 +741,8 @@ mod tests {
         // Reserve something at the start
         smalloc
             .res
-            .insert_region(PhysMemoryRegion::new(PA::from_value(0x1000), 0x100));
+            .insert_region(PhysMemoryRegion::new(PA::from_value(0x1000), 0x100))
+            .unwrap();
 
         // Should only be able to allocate after 0x1100
         let addr = smalloc.alloc(0x80, 0x10).unwrap();
