@@ -5,7 +5,10 @@ use crate::{
         TaskState,
         ctx::UserCtx,
         exit::kernel_exit_with_signal,
-        thread_group::signal::{SigId, ksigaction::KSignalAction},
+        thread_group::{
+            signal::{SigId, ksigaction::KSignalAction},
+            wait::ChildState,
+        },
     },
 };
 use alloc::boxed::Box;
@@ -193,8 +196,62 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             state = State::PickNewTask;
                             continue;
                         }
-                        KSignalAction::Stop => todo!(),
-                        KSignalAction::Continue => todo!(),
+                        KSignalAction::Stop => {
+                            // Default action: stop (suspend) the entire process.
+                            let process = &task.process;
+
+                            // Notify the parent that we have stopped (SIGCHLD).
+                            if let Some(parent) = process
+                                .parent
+                                .lock_save_irq()
+                                .as_ref()
+                                .and_then(|p| p.upgrade())
+                            {
+                                parent
+                                    .child_notifiers
+                                    .child_update(process.tgid, ChildState::Stop { signal: id });
+                                parent.signals.lock_save_irq().set_pending(SigId::SIGCHLD);
+                            }
+
+                            for thr_weak in process.threads.lock_save_irq().values() {
+                                if let Some(thr) = thr_weak.upgrade() {
+                                    *thr.state.lock_save_irq() = TaskState::Sleeping;
+                                }
+                            }
+
+                            state = State::PickNewTask;
+                            continue;
+                        }
+                        KSignalAction::Continue => {
+                            let process = &task.process;
+
+                            // Wake up all sleeping threads in the process.
+                            for thr_weak in process.threads.lock_save_irq().values() {
+                                if let Some(thr) = thr_weak.upgrade() {
+                                    let mut st = thr.state.lock_save_irq();
+                                    if *st == TaskState::Sleeping {
+                                        *st = TaskState::Runnable;
+                                    }
+                                }
+                            }
+
+                            // Notify the parent that we have continued (SIGCHLD).
+                            if let Some(parent) = process
+                                .parent
+                                .lock_save_irq()
+                                .as_ref()
+                                .and_then(|p| p.upgrade())
+                            {
+                                parent
+                                    .child_notifiers
+                                    .child_update(process.tgid, ChildState::Continue);
+                                parent.signals.lock_save_irq().set_pending(SigId::SIGCHLD);
+                            }
+
+                            // Re-process kernel work for this task (there may be more to do).
+                            state = State::ProcessKernelWork;
+                            continue;
+                        }
                         KSignalAction::Userspace(id, action) => {
                             let fut = ArchImpl::do_signal(id, action);
 
