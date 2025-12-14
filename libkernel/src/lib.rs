@@ -21,7 +21,7 @@ pub mod sync;
 
 extern crate alloc;
 
-pub trait CpuOps {
+pub trait CpuOps: 'static {
     /// Returns the ID of the currently executing core.
     fn id() -> usize;
 
