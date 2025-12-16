@@ -106,7 +106,7 @@ impl BiosParameterBlock {
     }
 
     pub fn fat_region(&self, fat_number: usize) -> Option<(Sector, Sector)> {
-        if fat_number >= self.num_fats as _ {
+        if fat_number >= self.num_fats as usize {
             None
         } else {
             let start = self.fat_region_start() + self.fat_len() * fat_number;

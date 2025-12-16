@@ -25,25 +25,31 @@ bitflags::bitflags! {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub struct FilePermissions: u16 {
-        // Owner permissions
-        const S_IRUSR = 0o400; // Read permission, owner
-        const S_IWUSR = 0o200; // Write permission, owner
-        const S_IXUSR = 0o100; // Execute/search permission, owner
+        const S_IXOTH = 0x0001;
+        const S_IWOTH = 0x0002;
+        const S_IROTH = 0x0004;
 
-        // Group permissions
-        const S_IRGRP = 0o040; // Read permission, group
-        const S_IWGRP = 0o020; // Write permission, group
-        const S_IXGRP = 0o010; // Execute/search permission, group
+        const S_IXGRP = 0x0008;
+        const S_IWGRP = 0x0010;
+        const S_IRGRP = 0x0020;
 
-        // Others permissions
-        const S_IROTH = 0o004; // Read permission, others
-        const S_IWOTH = 0o002; // Write permission, others
-        const S_IXOTH = 0o001; // Execute/search permission, others
+        const S_IXUSR = 0x0040;
+        const S_IWUSR = 0x0080;
+        const S_IRUSR = 0x0100;
 
-        // Optional: sticky/setuid/setgid bits
-        const S_ISUID = 0o4000; // Set-user-ID on execution
-        const S_ISGID = 0o2000; // Set-group-ID on execution
-        const S_ISVTX = 0o1000; // Sticky bit
+        const S_ISVTX = 0x0200;
+
+        const S_ISGID = 0x0400;
+        const S_ISUID = 0x0800;
+
+        // Mutually-exclusive file types:
+        const S_IFIFO = 0x1000;
+        const S_IFCHR = 0x2000;
+        const S_IFDIR = 0x4000;
+        const S_IFBLK = 0x6000;
+        const S_IFREG = 0x8000;
+        const S_IFLNK = 0xA000;
+        const S_IFSOCK = 0xC000;
     }
 }
 

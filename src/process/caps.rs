@@ -58,7 +58,7 @@ pub async fn sys_capget(hdrp: TUA<CapUserHeader>, datap: TUA<CapUserData>) -> Re
         TASK_LIST
             .lock_save_irq()
             .iter()
-            .find(|task| task.0.tgid.value() == header.pid as _)
+            .find(|task| task.0.tgid.value() == header.pid as u32)
             .and_then(|task| task.1.upgrade())
             .ok_or(KernelError::NoProcess)?
     };
@@ -93,7 +93,7 @@ pub async fn sys_capset(hdrp: TUA<CapUserHeader>, datap: TUA<CapUserData>) -> Re
         TASK_LIST
             .lock_save_irq()
             .iter()
-            .find(|task| task.0.tgid.value() == header.pid as _)
+            .find(|task| task.0.tgid.value() == header.pid as u32)
             .and_then(|task| task.1.upgrade())
             .ok_or(KernelError::NoProcess)?
     };
