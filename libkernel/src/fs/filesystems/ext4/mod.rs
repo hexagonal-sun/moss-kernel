@@ -12,9 +12,14 @@ use group::Ext4BlockGroupDescriptor;
 use inode::Ext4Inode;
 use superblock::Ext4SuperBlock;
 
+use crate::proc::ids::{Gid, Uid};
 use crate::{
     error::{KernelError, Result},
-    fs::{FileType, Filesystem, Inode, InodeId, attr::FileAttr, blk::buffer::BlockBuffer},
+    fs::{
+        FileType, Filesystem, Inode, InodeId,
+        attr::{FileAttr, FilePermissions},
+        blk::buffer::BlockBuffer,
+    },
 };
 use alloc::{
     boxed::Box,
@@ -176,9 +181,23 @@ impl Filesystem for Ext4Filesystem {
         let dinode = self.read_inode(2).await?;
         let size = ((dinode.size_high as u64) << 32) | dinode.size_lo as u64;
 
+        let mode_bits = dinode.mode;
+        let file_type = match mode_bits & 0xF000 {
+            0x4000 => FileType::Directory,
+            0x8000 => FileType::File,
+            0xA000 => FileType::Symlink,
+            _ => FileType::File,
+        };
+        let permissions = FilePermissions::from_bits_truncate((mode_bits & 0o777) as u16);
+        let uid = Uid::new(dinode.uid as u32);
+        let gid = Gid::new(dinode.gid as u32);
+
         let attr = FileAttr {
             id: InodeId::from_fsid_and_inodeid(self.id, 2),
-            file_type: FileType::Directory,
+            file_type,
+            mode: permissions,
+            uid,
+            gid,
             size,
             ..FileAttr::default()
         };
