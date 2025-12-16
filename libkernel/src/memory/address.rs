@@ -297,7 +297,7 @@ impl PA {
 }
 
 /// Trait for translating between physical and virtual addresses.
-pub trait AddressTranslator<T> {
+pub trait AddressTranslator<T>: 'static + Send + Sync {
     fn virt_to_phys(va: TVA<T>) -> TPA<T>;
     fn phys_to_virt(pa: TPA<T>) -> TVA<T>;
 }

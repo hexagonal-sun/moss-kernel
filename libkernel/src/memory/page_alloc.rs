@@ -2,7 +2,7 @@ use crate::{
     CpuOps,
     error::{KernelError, Result},
     memory::{PAGE_SHIFT, address::AddressTranslator, page::PageFrame, smalloc::Smalloc},
-    sync::spinlock::SpinLockIrq,
+    sync::{once_lock::OnceLock, spinlock::SpinLockIrq},
 };
 use core::{
     cmp::min,
@@ -420,6 +420,10 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
             inner: SpinLockIrq::new(allocator),
         }
     }
+}
+
+pub trait PageAllocGetter<C: CpuOps>: Send + Sync + 'static {
+    fn global_page_alloc() -> &'static OnceLock<FrameAllocator<C>, C>;
 }
 
 #[cfg(test)]

@@ -6,6 +6,9 @@ pub struct PageOffsetTranslator<VM: VirtualMemory> {
     _phantom: PhantomData<VM>,
 }
 
+unsafe impl<VM: VirtualMemory> Send for PageOffsetTranslator<VM> {}
+unsafe impl<VM: VirtualMemory> Sync for PageOffsetTranslator<VM> {}
+
 impl<T, VM: VirtualMemory> AddressTranslator<T> for PageOffsetTranslator<VM> {
     fn virt_to_phys(va: TVA<T>) -> TPA<T> {
         let mut v = va.value();
