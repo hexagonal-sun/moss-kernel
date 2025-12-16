@@ -7,6 +7,7 @@
 mod group;
 mod inode;
 mod superblock;
+mod dir_entry;
 
 use group::Ext4BlockGroupDescriptor;
 use inode::Ext4Inode;
@@ -26,6 +27,8 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use async_trait::async_trait;
+
+pub const EXT4_NAME_LEN: usize = 255;
 
 /// An EXT4 filesystem instance.
 ///
