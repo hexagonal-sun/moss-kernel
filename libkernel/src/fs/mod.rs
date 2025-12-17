@@ -25,7 +25,7 @@ use crate::{
 };
 use alloc::{boxed::Box, string::String, sync::Arc};
 use async_trait::async_trait;
-use attr::FileAttr;
+use attr::{FileAttr, FilePermissions};
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -198,7 +198,7 @@ pub trait Inode: Send + Sync {
         &self,
         _name: &str,
         _file_type: FileType,
-        _permissions: u16,
+        _permissions: FilePermissions,
     ) -> Result<Arc<dyn Inode>> {
         Err(KernelError::NotSupported)
     }

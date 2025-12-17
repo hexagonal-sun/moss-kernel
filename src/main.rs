@@ -15,7 +15,10 @@ use fs::VFS;
 use getargs::{Opt, Options};
 use libkernel::{
     CpuOps, VirtualMemory,
-    fs::{BlockDevice, OpenFlags, blk::ramdisk::RamdiskBlkDev, path::Path, pathbuf::PathBuf},
+    fs::{
+        BlockDevice, OpenFlags, attr::FilePermissions, blk::ramdisk::RamdiskBlkDev, path::Path,
+        pathbuf::PathBuf,
+    },
     memory::{
         address::{PA, VA},
         region::PhysMemoryRegion,
@@ -132,6 +135,7 @@ async fn launch_init(opts: KOptions) {
             Path::new("/dev/console"),
             OpenFlags::O_RDWR,
             VFS.root_inode(),
+            FilePermissions::empty(),
         )
         .await
         .expect("Could not open console for init process");

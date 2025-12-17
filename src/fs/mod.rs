@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use core::sync::atomic::{AtomicU64, Ordering};
 use dir::DirFile;
 use libkernel::error::{FsError, KernelError, Result};
+use libkernel::fs::attr::FilePermissions;
 use libkernel::fs::path::Path;
 use libkernel::fs::{BlockDevice, FS_ID_START, FileType, Filesystem, Inode, InodeId, OpenFlags};
 use open_file::OpenFile;
@@ -216,6 +217,7 @@ impl VFS {
         path: &Path,
         flags: OpenFlags,
         root: Arc<dyn Inode>,
+        mode: FilePermissions,
     ) -> Result<Arc<OpenFile>> {
         // Attempt to resolve the full path first.
         let resolve_result = self.resolve_path(path, root.clone()).await;
@@ -238,7 +240,7 @@ impl VFS {
                 if flags.contains(OpenFlags::O_CREAT) {
                     // Resolve its parent directory.
                     let parent_path = path.parent().ok_or(FsError::InvalidInput)?;
-                    let _file_name = path.file_name().ok_or(FsError::InvalidInput)?;
+                    let file_name = path.file_name().ok_or(FsError::InvalidInput)?;
 
                     let parent_inode = self.resolve_path(parent_path, root).await?;
 
@@ -248,9 +250,7 @@ impl VFS {
                         return Err(FsError::NotADirectory.into());
                     }
 
-                    // TODO: Check for write permissions on parent_inode before creating.
-                    // let _mode = ...; get mode from syscall arguments
-                    todo!("File creation logic");
+                    parent_inode.create(file_name, FileType::File, mode).await?
                 } else {
                     // O_CREAT was not specified, so NotFound is the correct error.
                     return Err(FsError::NotFound.into());
