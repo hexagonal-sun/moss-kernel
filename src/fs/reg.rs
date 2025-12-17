@@ -91,6 +91,10 @@ impl FileOps for RegFile {
         Ok(total_bytes_written)
     }
 
+    async fn truncate(&mut self, _ctx: &FileCtx, new_size: usize) -> Result<()> {
+        self.inode.truncate(new_size as _).await
+    }
+
     fn poll_read_ready(&self) -> Pin<Box<dyn Future<Output = Result<()>> + 'static + Send>> {
         // For regular files, polling just returns ready.
         Box::pin(async { Ok(()) })

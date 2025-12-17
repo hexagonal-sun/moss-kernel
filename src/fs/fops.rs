@@ -84,6 +84,11 @@ pub trait FileOps: Send + Sync {
         Err(KernelError::NotATty)
     }
 
+    /// Truncate a file to a specified length
+    async fn truncate(&mut self, _ctx: &FileCtx, _new_size: usize) -> Result<()> {
+        Err(KernelError::InvalidValue)
+    }
+
     /// Flushes any pending writes to the hardware.
     async fn flush(&self, _ctx: &FileCtx) -> Result<()> {
         Ok(())

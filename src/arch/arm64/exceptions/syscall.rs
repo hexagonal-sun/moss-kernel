@@ -1,3 +1,4 @@
+use crate::fs::syscalls::trunc::sys_ftruncate;
 use crate::kernel::power::sys_reboot;
 use crate::kernel::rand::sys_getrandom;
 use crate::memory::mmap::sys_mprotect;
@@ -91,6 +92,7 @@ pub async fn handle_syscall() {
         0x18 => sys_dup3(arg1.into(), arg2.into(), arg3 as _),
         0x19 => sys_fcntl(arg1.into(), arg2 as _, arg3 as _).await,
         0x1d => sys_ioctl(arg1.into(), arg2 as _, arg3 as _).await,
+        0x2e => sys_ftruncate(arg1.into(), arg2 as _).await,
         0x30 => sys_faccessat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x31 => sys_chdir(TUA::from_value(arg1 as _)).await,
         0x38 => {

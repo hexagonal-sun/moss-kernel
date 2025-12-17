@@ -9,3 +9,4 @@ pub mod seek;
 pub mod splice;
 pub mod stat;
 pub mod sync;
+pub mod trunc;
