@@ -131,6 +131,18 @@ fn test_rust_file() {
     println!(" OK");
 }
 
+fn test_rust_dir() {
+    print!("Testing rust directory operations ...");
+    use std::fs;
+    use std::path::Path;
+
+    let dir_path = "/tmp/rust_dir_test";
+    fs::create_dir(dir_path).expect("Failed to create directory");
+    assert!(Path::new(dir_path).exists());
+    fs::remove_dir(dir_path).expect("Failed to delete directory");
+    println!(" OK");
+}
+
 fn run_test(test_fn: fn()) {
     // Fork a new process to run the test
     unsafe {
@@ -163,6 +175,7 @@ fn main() {
     run_test(test_read);
     run_test(test_write);
     run_test(test_rust_file);
+    run_test(test_rust_dir);
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }
