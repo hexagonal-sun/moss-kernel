@@ -202,6 +202,7 @@ impl Filesystem for Ext4Filesystem {
             uid,
             gid,
             size,
+            nlinks: dinode.links_count as u32,
             ..FileAttr::default()
         };
 
@@ -250,7 +251,7 @@ mod tests {
         }
     }
 
-    const IMG: &[u8] = include_bytes!("test_img/test.img");
+    const IMG: &[u8] = include_bytes!("test_img/new_ext_img.img");
 
     #[tokio::test]
     async fn test_mount_ext4_image() {
@@ -268,6 +269,8 @@ mod tests {
 
         assert_eq!(attr.file_type, FileType::Directory);
         assert_eq!(attr.id.fs_id(), 42);
+        assert!(attr.size > 0);
+        assert_eq!(attr.mode.bits() & 0o777, 0o755);
     }
 
     #[tokio::test]
