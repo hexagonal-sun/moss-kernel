@@ -1,3 +1,4 @@
+use crate::process::Comm;
 use crate::{
     arch::{Arch, ArchImpl},
     fs::VFS,
@@ -33,7 +34,6 @@ use object::{
     elf::{self, PT_LOAD},
     read::elf::{FileHeader, ProgramHeader},
 };
-use crate::process::Comm;
 
 mod auxv;
 
@@ -117,9 +117,7 @@ pub async fn kernel_exec(
     // state. Simply activate the new process's address space.
     vm.mm_mut().address_space_mut().activate();
 
-    let new_comm = argv.get(0).map(|s| {
-        Comm::new(s.as_str())
-    });
+    let new_comm = argv.first().map(|s| Comm::new(s.as_str()));
 
     let current_task = current_task();
 

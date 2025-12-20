@@ -1,17 +1,12 @@
 #![allow(clippy::module_name_repetitions)]
 
+use crate::sched::{SCHED_STATE, current_task};
 use crate::{
     drivers::{Driver, FilesystemDriver},
     process::TASK_LIST,
     sync::SpinLock,
 };
-use alloc::{
-    boxed::Box,
-    format,
-    string::ToString,
-    sync::Arc,
-    vec::Vec,
-};
+use alloc::{boxed::Box, format, string::ToString, sync::Arc, vec::Vec};
 use async_trait::async_trait;
 use core::sync::atomic::{AtomicU64, Ordering};
 use libkernel::{
@@ -22,7 +17,6 @@ use libkernel::{
     },
 };
 use log::warn;
-use crate::sched::{current_task, SCHED_STATE};
 
 pub struct ProcFs {
     root: Arc<ProcRootInode>,
@@ -55,7 +49,6 @@ impl Filesystem for ProcFs {
         PROCFS_ID
     }
 }
-
 
 struct ProcDirStream {
     entries: Vec<Dirent>,
@@ -105,8 +98,7 @@ impl Inode for ProcRootInode {
             let current_task = current_task();
             current_task.descriptor().tid().0
         } else {
-            name
-                .parse()
+            name.parse()
                 .map_err(|_| FsError::NotFound)
                 .map_err(Into::<KernelError>::into)?
         };
@@ -248,7 +240,7 @@ impl ProcTaskStatusInode {
                 mode: FilePermissions::from_bits_retain(0o444),
                 ..FileAttr::default()
             }),
-            pid
+            pid,
         }
     }
 }
@@ -278,11 +270,7 @@ impl Inode for ProcTaskStatusInode {
             .iter()
             .find(|(desc, _)| desc.tgid().value() == pid);
         let task_details = if let Some((desc, _)) = id {
-            SCHED_STATE
-                .borrow()
-                .run_queue
-                .get(desc)
-                .cloned()
+            SCHED_STATE.borrow().run_queue.get(desc).cloned()
         } else {
             None
         };
@@ -290,10 +278,12 @@ impl Inode for ProcTaskStatusInode {
         let status_string = if let Some(task) = task_details {
             let state = *task.state.lock_save_irq();
             let name = task.comm.lock_save_irq();
-            format!("Name:\t{name}
+            format!(
+                "Name:\t{name}
 State:\t{state}
 Pid:\t{pid}\n",
-            name = name.as_str())
+                name = name.as_str()
+            )
         } else {
             "State:\tGone\n".to_string()
         };
