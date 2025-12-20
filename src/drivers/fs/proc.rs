@@ -186,14 +186,16 @@ impl Inode for ProcTaskInode {
     }
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
-        if name == "status" {
+        if let Some(file_type) = TaskFileType::from_filename(name) {
             let fs = PROCFS_INSTANCE
                 .lock_save_irq()
                 .as_ref()
                 .expect("ProcFS singleton not initialised")
                 .clone();
             let inode_id = fs.alloc_inode_id();
-            Ok(Arc::new(ProcTaskStatusInode::new(self.pid, inode_id)))
+            Ok(Arc::new(ProcTaskFileInode::new(
+                self.pid, file_type, inode_id,
+            )))
         } else {
             Err(FsError::NotFound.into())
         }
@@ -213,6 +215,13 @@ impl Inode for ProcTaskInode {
             FileType::File,
             1,
         ));
+        entries.push(Dirent::new("comm".to_string(), inode_id, FileType::File, 2));
+        entries.push(Dirent::new(
+            "state".to_string(),
+            inode_id,
+            FileType::File,
+            3,
+        ));
 
         // honour start_offset
         let entries = if (start_offset as usize) < entries.len() {
@@ -225,14 +234,32 @@ impl Inode for ProcTaskInode {
     }
 }
 
-struct ProcTaskStatusInode {
+enum TaskFileType {
+    Status,
+    Comm,
+    State,
+}
+
+impl TaskFileType {
+    fn from_filename(name: &str) -> Option<Self> {
+        match name {
+            "status" => Some(TaskFileType::Status),
+            "comm" => Some(TaskFileType::Comm),
+            "state" => Some(TaskFileType::State),
+            _ => None,
+        }
+    }
+}
+
+struct ProcTaskFileInode {
     id: InodeId,
+    file_type: TaskFileType,
     attr: SpinLock<FileAttr>,
     pid: u32,
 }
 
-impl ProcTaskStatusInode {
-    fn new(pid: u32, inode_id: InodeId) -> Self {
+impl ProcTaskFileInode {
+    fn new(pid: u32, file_type: TaskFileType, inode_id: InodeId) -> Self {
         Self {
             id: inode_id,
             attr: SpinLock::new(FileAttr {
@@ -241,12 +268,13 @@ impl ProcTaskStatusInode {
                 ..FileAttr::default()
             }),
             pid,
+            file_type,
         }
     }
 }
 
 #[async_trait]
-impl Inode for ProcTaskStatusInode {
+impl Inode for ProcTaskFileInode {
     fn id(&self) -> InodeId {
         self.id
     }
@@ -278,12 +306,22 @@ impl Inode for ProcTaskStatusInode {
         let status_string = if let Some(task) = task_details {
             let state = *task.state.lock_save_irq();
             let name = task.comm.lock_save_irq();
-            format!(
-                "Name:\t{name}
+            match self.file_type {
+                TaskFileType::Status => format!(
+                    "Name:\t{name}
 State:\t{state}
-Pid:\t{pid}\n",
-                name = name.as_str()
-            )
+Tgid:\t{tgid}
+FDSize:\t{fd_size}
+Pid:\t{pid}
+Threads:\t{threads}\n",
+                    name = name.as_str(),
+                    tgid = task.process.tgid,
+                    fd_size = task.fd_table.lock_save_irq().len(),
+                    threads = task.process.threads.lock_save_irq().len(),
+                ),
+                TaskFileType::Comm => format!("{name}\n", name = name.as_str()),
+                TaskFileType::State => format!("{state}\n"),
+            }
         } else {
             "State:\tGone\n".to_string()
         };

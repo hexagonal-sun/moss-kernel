@@ -161,4 +161,9 @@ impl FileDescriptorTable {
             Ok(Fd(next as i32))
         }
     }
+
+    /// Number of file descriptors in use.
+    pub fn len(&self) -> usize {
+        self.entries.iter().filter(|e| e.is_some()).count()
+    }
 }
