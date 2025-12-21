@@ -4,3 +4,4 @@
 *.img
 .idea/
 .vscode/
+test_output.log

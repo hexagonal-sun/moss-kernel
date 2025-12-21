@@ -33,3 +33,6 @@ jobs:
 
       - name: Run unit tests for libkernel
         run: cargo test -p libkernel --target x86_64-unknown-linux-gnu --all-features
+
+      - name: Run userspace testing
+        run: sh scripts/qemu-test-runner.sh
