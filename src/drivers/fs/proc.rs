@@ -1,10 +1,11 @@
 #![allow(clippy::module_name_repetitions)]
 
+use crate::process::thread_group::Tgid;
 use crate::sched::{SCHED_STATE, current_task};
+use crate::sync::OnceLock;
 use crate::{
     drivers::{Driver, FilesystemDriver},
     process::TASK_LIST,
-    sync::SpinLock,
 };
 use alloc::{boxed::Box, format, string::ToString, sync::Arc, vec::Vec};
 use async_trait::async_trait;
@@ -58,30 +59,29 @@ struct ProcDirStream {
 #[async_trait]
 impl DirStream for ProcDirStream {
     async fn next_entry(&mut self) -> Result<Option<Dirent>> {
-        if self.idx < self.entries.len() {
-            let ent = self.entries[self.idx].clone();
+        Ok(if let Some(entry) = self.entries.get(self.idx).cloned() {
             self.idx += 1;
-            Ok(Some(ent))
+            Some(entry)
         } else {
-            Ok(None)
-        }
+            None
+        })
     }
 }
 
 struct ProcRootInode {
     id: InodeId,
-    attr: SpinLock<FileAttr>,
+    attr: FileAttr,
 }
 
 impl ProcRootInode {
     fn new() -> Self {
         Self {
             id: InodeId::from_fsid_and_inodeid(PROCFS_ID, 0),
-            attr: SpinLock::new(FileAttr {
+            attr: FileAttr {
                 file_type: FileType::Directory,
                 mode: FilePermissions::from_bits_retain(0o555),
                 ..FileAttr::default()
-            }),
+            },
         }
     }
 }
@@ -94,36 +94,30 @@ impl Inode for ProcRootInode {
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         // Lookup a PID directory.
-        let pid: u32 = if name == "self" {
+        let pid = if name == "self" {
             let current_task = current_task();
-            current_task.descriptor().tid().0
+            current_task.descriptor().tgid()
         } else {
-            name.parse()
-                .map_err(|_| FsError::NotFound)
-                .map_err(Into::<KernelError>::into)?
+            Tgid(
+                name.parse()
+                    .map_err(|_| FsError::NotFound)
+                    .map_err(Into::<KernelError>::into)?,
+            )
         };
 
         // Validate that the process actually exists.
-        if !TASK_LIST
-            .lock_save_irq()
-            .keys()
-            .any(|d| d.tgid().value() == pid)
-        {
+        if !TASK_LIST.lock_save_irq().keys().any(|d| d.tgid() == pid) {
             return Err(FsError::NotFound.into());
         }
 
-        let fs = PROCFS_INSTANCE
-            .lock_save_irq()
-            .as_ref()
-            .expect("ProcFS singleton not initialised")
-            .clone();
+        let fs = procfs();
 
         let inode_id = fs.alloc_inode_id();
         Ok(Arc::new(ProcTaskInode::new(pid, inode_id)))
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attr.lock_save_irq().clone())
+        Ok(self.attr.clone())
     }
 
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
@@ -133,7 +127,8 @@ impl Inode for ProcRootInode {
         for (idx, desc) in task_list.keys().enumerate() {
             // Use offset index as dirent offset.
             let name = desc.tgid().value().to_string();
-            let inode_id = InodeId::from_fsid_and_inodeid(PROCFS_ID, (idx + 1) as u64);
+            let inode_id =
+                InodeId::from_fsid_and_inodeid(PROCFS_ID, ((desc.tgid().0 + 1) * 100) as u64);
             entries.push(Dirent::new(
                 name,
                 inode_id,
@@ -141,19 +136,19 @@ impl Inode for ProcRootInode {
                 (idx + 1) as u64,
             ));
         }
+        let current_task = current_task();
         entries.push(Dirent::new(
             "self".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, 0), // placeholder
+            InodeId::from_fsid_and_inodeid(
+                PROCFS_ID,
+                ((current_task.process.tgid.0 + 1) * 100) as u64,
+            ),
             FileType::Directory,
             (entries.len() + 1) as u64,
         ));
 
         // honour start_offset
-        let entries = if (start_offset as usize) < entries.len() {
-            entries.into_iter().skip(start_offset as usize).collect()
-        } else {
-            Vec::new()
-        };
+        let entries = entries.into_iter().skip(start_offset as usize).collect();
 
         Ok(Box::new(ProcDirStream { entries, idx: 0 }))
     }
@@ -161,19 +156,19 @@ impl Inode for ProcRootInode {
 
 struct ProcTaskInode {
     id: InodeId,
-    attr: SpinLock<FileAttr>,
-    pid: u32,
+    attr: FileAttr,
+    pid: Tgid,
 }
 
 impl ProcTaskInode {
-    fn new(pid: u32, inode_id: InodeId) -> Self {
+    fn new(pid: Tgid, inode_id: InodeId) -> Self {
         Self {
             id: inode_id,
-            attr: SpinLock::new(FileAttr {
+            attr: FileAttr {
                 file_type: FileType::Directory,
                 mode: FilePermissions::from_bits_retain(0o555),
                 ..FileAttr::default()
-            }),
+            },
             pid,
         }
     }
@@ -186,12 +181,8 @@ impl Inode for ProcTaskInode {
     }
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
-        if let Some(file_type) = TaskFileType::from_filename(name) {
-            let fs = PROCFS_INSTANCE
-                .lock_save_irq()
-                .as_ref()
-                .expect("ProcFS singleton not initialised")
-                .clone();
+        if let Ok(file_type) = TaskFileType::try_from(name) {
+            let fs = procfs();
             let inode_id = fs.alloc_inode_id();
             Ok(Arc::new(ProcTaskFileInode::new(
                 self.pid, file_type, inode_id,
@@ -202,33 +193,33 @@ impl Inode for ProcTaskInode {
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attr.lock_save_irq().clone())
+        Ok(self.attr.clone())
     }
 
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
         let mut entries: Vec<Dirent> = Vec::new();
-        // Single entry: "status"
-        let inode_id = InodeId::from_fsid_and_inodeid(PROCFS_ID, 0); // placeholder
+        let inode_offset = ((self.pid.value() + 1) * 100) as u64;
         entries.push(Dirent::new(
             "status".to_string(),
-            inode_id,
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, inode_offset + 1),
             FileType::File,
             1,
         ));
-        entries.push(Dirent::new("comm".to_string(), inode_id, FileType::File, 2));
+        entries.push(Dirent::new(
+            "comm".to_string(),
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, inode_offset + 2),
+            FileType::File,
+            2,
+        ));
         entries.push(Dirent::new(
             "state".to_string(),
-            inode_id,
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, inode_offset + 3),
             FileType::File,
             3,
         ));
 
         // honour start_offset
-        let entries = if (start_offset as usize) < entries.len() {
-            entries.into_iter().skip(start_offset as usize).collect()
-        } else {
-            Vec::new()
-        };
+        let entries = entries.into_iter().skip(start_offset as usize).collect();
 
         Ok(Box::new(ProcDirStream { entries, idx: 0 }))
     }
@@ -240,13 +231,15 @@ enum TaskFileType {
     State,
 }
 
-impl TaskFileType {
-    fn from_filename(name: &str) -> Option<Self> {
-        match name {
-            "status" => Some(TaskFileType::Status),
-            "comm" => Some(TaskFileType::Comm),
-            "state" => Some(TaskFileType::State),
-            _ => None,
+impl TryFrom<&str> for TaskFileType {
+    type Error = ();
+
+    fn try_from(value: &str) -> core::result::Result<TaskFileType, Self::Error> {
+        match value {
+            "status" => Ok(TaskFileType::Status),
+            "comm" => Ok(TaskFileType::Comm),
+            "state" => Ok(TaskFileType::State),
+            _ => Err(()),
         }
     }
 }
@@ -254,19 +247,19 @@ impl TaskFileType {
 struct ProcTaskFileInode {
     id: InodeId,
     file_type: TaskFileType,
-    attr: SpinLock<FileAttr>,
-    pid: u32,
+    attr: FileAttr,
+    pid: Tgid,
 }
 
 impl ProcTaskFileInode {
-    fn new(pid: u32, file_type: TaskFileType, inode_id: InodeId) -> Self {
+    fn new(pid: Tgid, file_type: TaskFileType, inode_id: InodeId) -> Self {
         Self {
             id: inode_id,
-            attr: SpinLock::new(FileAttr {
+            attr: FileAttr {
                 file_type: FileType::File,
                 mode: FilePermissions::from_bits_retain(0o444),
                 ..FileAttr::default()
-            }),
+            },
             pid,
             file_type,
         }
@@ -284,7 +277,7 @@ impl Inode for ProcTaskFileInode {
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attr.lock_save_irq().clone())
+        Ok(self.attr.clone())
     }
 
     async fn readdir(&self, _start_offset: u64) -> Result<Box<dyn DirStream>> {
@@ -294,9 +287,8 @@ impl Inode for ProcTaskFileInode {
     async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
         let pid = self.pid;
         let task_list = TASK_LIST.lock_save_irq();
-        let id = task_list
-            .iter()
-            .find(|(desc, _)| desc.tgid().value() == pid);
+        // TODO: Does not obtain details for tasks that are on other CPUs
+        let id = task_list.iter().find(|(desc, _)| desc.tgid() == pid);
         let task_details = if let Some((desc, _)) = id {
             SCHED_STATE.borrow().run_queue.get(desc).cloned()
         } else {
@@ -337,7 +329,18 @@ Threads:\t{threads}\n",
     }
 }
 
-static PROCFS_INSTANCE: SpinLock<Option<Arc<ProcFs>>> = SpinLock::new(None);
+static PROCFS_INSTANCE: OnceLock<Arc<ProcFs>> = OnceLock::new();
+
+/// Initializes and/or returns the global singleton [`ProcFs`] instance.
+/// This is the main entry point for the rest of the kernel to interact with procfs.
+pub fn procfs() -> Arc<ProcFs> {
+    PROCFS_INSTANCE
+        .get_or_init(|| {
+            log::info!("devfs initialized");
+            ProcFs::new()
+        })
+        .clone()
+}
 
 pub struct ProcFsDriver;
 
@@ -345,13 +348,6 @@ impl ProcFsDriver {
     #[must_use]
     pub fn new() -> Self {
         Self
-    }
-
-    /// Returns the global singleton instance of ProcFs, initialising it on the
-    /// first call.
-    fn fs(&self) -> Arc<ProcFs> {
-        let mut guard = PROCFS_INSTANCE.lock_save_irq();
-        guard.get_or_insert_with(ProcFs::new).clone()
     }
 }
 
@@ -376,6 +372,6 @@ impl FilesystemDriver for ProcFsDriver {
             warn!("procfs should not be constructed with a block device");
             return Err(KernelError::InvalidValue);
         }
-        Ok(self.fs())
+        Ok(procfs())
     }
 }
