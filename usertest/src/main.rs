@@ -1,3 +1,5 @@
+use std::thread;
+
 fn test_sync() {
     print!("Testing sync syscall ...");
     unsafe {
@@ -201,6 +203,15 @@ fn test_rust_dir() {
     println!(" OK");
 }
 
+fn test_rust_thread() {
+    print!("Testing rust threads ...");
+
+    let handle = thread::spawn(|| 24);
+
+    assert_eq!(handle.join().unwrap(), 24);
+    println!(" OK");
+}
+
 fn run_test(test_fn: fn()) {
     // Fork a new process to run the test
     unsafe {
@@ -236,6 +247,7 @@ fn main() {
     run_test(test_futex);
     run_test(test_rust_file);
     run_test(test_rust_dir);
+    run_test(test_rust_thread);
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }
