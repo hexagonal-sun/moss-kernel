@@ -43,7 +43,7 @@ bitflags! {
 
 pub async fn sys_clone(
     flags: u32,
-    _newsp: usize,
+    newsp: UA,
     _arent_tidptr: UA,
     _child_tidptr: UA,
     _tls: usize,
@@ -53,12 +53,19 @@ pub async fn sys_clone(
     let new_task = {
         let current_task = current_task();
 
+        let mut user_ctx = *current_task.ctx.lock_save_irq().user();
+
+        // TODO: Make this arch indepdenant. The child returns '0' on clone.
+        user_ctx.x[0] = 0;
+
         let (tg, tid) = if flags.contains(CloneFlags::CLONE_THREAD) {
             if !flags.contains(CloneFlags::CLONE_SIGHAND & CloneFlags::CLONE_VM) {
                 // CLONE_THREAD requires both CLONE_SIGHAND and CLONE_VM to be
                 // set.
                 return Err(KernelError::InvalidValue);
             }
+            user_ctx.sp_el0 = newsp.value() as _;
+
             (
                 // A new task whtin this thread group.
                 current_task.process.clone(),
@@ -112,10 +119,6 @@ pub async fn sys_clone(
         };
 
         let creds = current_task.creds.lock_save_irq().clone();
-
-        let mut user_ctx = *current_task.ctx.lock_save_irq().user();
-        // TODO: Make this arch indepdenant. The child returns '0' on clone.
-        user_ctx.x[0] = 0;
 
         let new_sigmask = *current_task.sig_mask.lock_save_irq();
 

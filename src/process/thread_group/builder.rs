@@ -68,7 +68,10 @@ impl ThreadGroupBuilder {
                 .unwrap_or_else(|| Arc::new(SpinLock::new(ResourceLimits::default()))),
             pending_signals: SpinLock::new(SigSet::empty()),
             child_notifiers: ChildNotifiers::new(),
-            next_tid: AtomicU32::new(0),
+            // Don't start from '0'. Since clone expects the parent to return
+            // the tid and the child to return '0', if we started from '0' we
+            // couldn't then differentiate between a child and a parent.
+            next_tid: AtomicU32::new(1),
             state: SpinLock::new(ProcessState::Running),
             threads: SpinLock::new(BTreeMap::new()),
         });

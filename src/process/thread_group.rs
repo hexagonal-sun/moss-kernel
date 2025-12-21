@@ -108,11 +108,11 @@ impl ThreadGroup {
     // Return the next avilable thread id. Will never return a thread who's ID
     // == TGID, since that is defined as the main, root thread.
     pub fn next_tid(&self) -> Tid {
-        let mut v = self.next_tid.fetch_add(1, Ordering::SeqCst);
+        let mut v = self.next_tid.fetch_add(1, Ordering::Relaxed);
 
         // Skip the TGID.
         if v == self.tgid.value() {
-            v = self.next_tid.fetch_add(1, Ordering::SeqCst)
+            v = self.next_tid.fetch_add(1, Ordering::Relaxed)
         }
 
         Tid(v)
