@@ -44,6 +44,7 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::BadFd => EBADF,
         KernelError::InvalidValue => EINVAL,
         KernelError::Fault => EFAULT,
+        KernelError::TryAgain => EAGAIN,
         KernelError::BrokenPipe => EPIPE,
         KernelError::Fs(FsError::NotFound) => ENOENT,
         KernelError::NotATty => ENOTTY,

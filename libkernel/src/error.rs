@@ -162,6 +162,9 @@ pub enum KernelError {
     #[error("Buffer is full")]
     BufferFull,
 
+    #[error("Operation would block")]
+    TryAgain,
+
     #[error("No such process")]
     NoProcess,
 

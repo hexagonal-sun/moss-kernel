@@ -62,7 +62,7 @@ use crate::{
             umask::sys_umask,
             wait::sys_wait4,
         },
-        threading::{sys_set_robust_list, sys_set_tid_address},
+        threading::{sys_futex, sys_set_robust_list, sys_set_tid_address},
     },
     sched::current_task,
 };
@@ -172,6 +172,17 @@ pub async fn handle_syscall() {
         0x5d => sys_exit(arg1 as _),
         0x5e => sys_exit_group(arg1 as _),
         0x60 => sys_set_tid_address(VA::from_value(arg1 as _)).await,
+        0x62 => {
+            sys_futex(
+                TUA::from_value(arg1 as _),
+                arg2 as _,
+                arg3 as _,
+                VA::from_value(arg4 as _),
+                TUA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
         0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
