@@ -46,7 +46,7 @@ pub async fn sys_clone(
     newsp: UA,
     _arent_tidptr: UA,
     _child_tidptr: UA,
-    _tls: usize,
+    tls: usize,
 ) -> Result<usize> {
     let flags = CloneFlags::from_bits_truncate(flags);
 
@@ -57,6 +57,11 @@ pub async fn sys_clone(
 
         // TODO: Make this arch indepdenant. The child returns '0' on clone.
         user_ctx.x[0] = 0;
+
+        if flags.contains(CloneFlags::CLONE_SETTLS) {
+            // TODO: Make this arch indepdenant.
+            user_ctx.tpid_el0 = tls as _;
+        }
 
         let (tg, tid) = if flags.contains(CloneFlags::CLONE_THREAD) {
             if !flags.contains(CloneFlags::CLONE_SIGHAND & CloneFlags::CLONE_VM) {
