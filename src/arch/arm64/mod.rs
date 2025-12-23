@@ -15,7 +15,7 @@ use memory::{
     PAGE_OFFSET,
     address_space::Arm64ProcessAddressSpace,
     mmu::{Arm64KernelAddressSpace, KERN_ADDR_SPC},
-    uaccess::{Arm64CopyFromUser, Arm64CopyStrnFromUser, Arm64CopyToUser},
+    uaccess::{Arm64CopyFromUser, Arm64CopyStrnFromUser, Arm64CopyToUser, try_copy_from_user},
 };
 
 use crate::{
@@ -137,6 +137,10 @@ impl Arch for Aarch64 {
         len: usize,
     ) -> impl Future<Output = Result<()>> {
         Arm64CopyFromUser::new(src, dst, len)
+    }
+
+    unsafe fn try_copy_from_user(src: UA, dst: *mut (), len: usize) -> Result<()> {
+        try_copy_from_user(src, dst, len)
     }
 
     unsafe fn copy_to_user(

@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::{
     arch::{asm, global_asm},
     future::Future,
@@ -5,8 +6,6 @@ use core::{
     pin::Pin,
     task::{Context, Poll},
 };
-
-use alloc::boxed::Box;
 use libkernel::{
     error::{KernelError, Result},
     memory::address::UA,
@@ -21,8 +20,26 @@ unsafe impl Send for Arm64CopyFromUser {}
 unsafe impl Send for Arm64CopyToUser {}
 unsafe impl Send for Arm64CopyStrnFromUser {}
 
-pub const UACESS_ABORT_DENIED: u64 = 1;
-pub const UACESS_ABORT_DEFERRED: u64 = 2;
+#[derive(Debug)]
+pub enum UAccessResult {
+    Ok,
+    AbortDenied,
+    AbortDeferred,
+}
+
+impl From<u64> for UAccessResult {
+    fn from(value: u64) -> Self {
+        match value {
+            0 => UAccessResult::Ok,
+            1 => UAccessResult::AbortDenied,
+            2 => UAccessResult::AbortDeferred,
+            v => {
+                error!("Unknown exit status from uaccess fault handler: {v}");
+                UAccessResult::AbortDenied
+            }
+        }
+    }
+}
 
 /// A helper function to handle the common polling logic for uaccess operations.
 fn poll_uaccess<F>(
@@ -32,7 +49,7 @@ fn poll_uaccess<F>(
     mut do_copy: F,
 ) -> Poll<Result<usize>>
 where
-    F: FnMut(usize) -> (u64, usize, usize, usize),
+    F: FnMut(usize) -> (UAccessResult, usize, usize, usize),
 {
     // First, if a deferred fault has been set, poll that.
     loop {
@@ -52,19 +69,56 @@ where
         let (status, work_ptr, work_vtable, new_bytes_copied) = do_copy(*bytes_coped);
 
         match status {
-            0 => return Poll::Ready(Ok(new_bytes_copied)),
-            UACESS_ABORT_DENIED => return Poll::Ready(Err(KernelError::Fault)),
-            UACESS_ABORT_DEFERRED => {
+            UAccessResult::Ok => return Poll::Ready(Ok(new_bytes_copied)),
+            UAccessResult::AbortDenied => return Poll::Ready(Err(KernelError::Fault)),
+            UAccessResult::AbortDeferred => {
                 *bytes_coped = new_bytes_copied;
                 let ptr: *mut Fut =
                     unsafe { transmute((work_ptr as *mut (), work_vtable as *const ())) };
                 *deferred_fault = Some(unsafe { Box::into_pin(Box::from_raw(ptr)) });
             }
-            _ => {
-                error!("Unknown exit status from fault handler: {status}");
-                return Poll::Ready(Err(KernelError::Fault));
-            }
         }
+    }
+}
+
+fn do_copy_from_user(
+    src: UA,
+    dst: *const (),
+    len: usize,
+    mut bytes_copied: usize,
+) -> (UAccessResult, usize, usize, usize) {
+    let mut status: u64;
+    let mut work_ptr: usize;
+    let mut work_vtable: usize;
+
+    unsafe {
+        asm!(
+            "bl __do_copy_from_user",
+            in("x0") src.value(),
+            in("x1") dst,
+            inout("x2") bytes_copied,
+            in("x3") len,
+            lateout("x0") status,
+            lateout("x1") work_ptr,
+            lateout("x3") work_vtable,
+            // Clobbers
+            out("lr") _, out("x4") _
+        )
+    }
+
+    (
+        UAccessResult::from(status),
+        work_ptr,
+        work_vtable,
+        bytes_copied,
+    )
+}
+
+pub fn try_copy_from_user(src: UA, dst: *const (), len: usize) -> Result<()> {
+    match do_copy_from_user(src, dst, len, 0).0 {
+        UAccessResult::Ok => Ok(()),
+        UAccessResult::AbortDenied => Err(KernelError::Fault),
+        UAccessResult::AbortDeferred => Err(KernelError::Fault),
     }
 }
 
@@ -98,28 +152,7 @@ impl Future for Arm64CopyFromUser {
             &mut this.deferred_fault,
             &mut this.bytes_coped,
             cx,
-            |mut bytes_copied| {
-                let mut status: u64;
-                let mut work_ptr: usize;
-                let mut work_vtable: usize;
-
-                unsafe {
-                    asm!(
-                        "bl __do_copy_from_user",
-                        in("x0") this.src.value(),
-                        in("x1") this.dst,
-                        inout("x2") bytes_copied,
-                        in("x3") this.len,
-                        lateout("x0") status,
-                        lateout("x1") work_ptr,
-                        lateout("x3") work_vtable,
-                        // Clobbers
-                        out("lr") _, out("x4") _
-                    )
-                }
-
-                (status, work_ptr, work_vtable, bytes_copied)
-            },
+            |bytes_copied| do_copy_from_user(this.src, this.dst, this.len, bytes_copied),
         )
         .map(|x| x.map(|_| ()))
     }
@@ -175,7 +208,12 @@ impl Future for Arm64CopyStrnFromUser {
                     )
                 }
 
-                (status, work_ptr, work_vtable, bytes_copied)
+                (
+                    UAccessResult::from(status),
+                    work_ptr,
+                    work_vtable,
+                    bytes_copied,
+                )
             },
         )
     }
@@ -230,7 +268,12 @@ impl Future for Arm64CopyToUser {
                         out("lr") _, out("x4") _
                     )
                 }
-                (status, work_ptr, work_vtable, bytes_copied)
+                (
+                    UAccessResult::from(status),
+                    work_ptr,
+                    work_vtable,
+                    bytes_copied,
+                )
             },
         )
         .map(|x| x.map(|_| ()))

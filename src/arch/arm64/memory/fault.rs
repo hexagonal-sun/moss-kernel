@@ -6,7 +6,7 @@ use crate::{
             ExceptionState,
             esr::{AbortIss, Exception, IfscCategory},
         },
-        memory::uaccess::{UACESS_ABORT_DEFERRED, UACESS_ABORT_DENIED},
+        memory::uaccess::UAccessResult,
     },
     memory::fault::{FaultResolution, handle_demand_fault, handle_protection_fault},
     sched::{current_task, spawn_kernel_work},
@@ -69,7 +69,7 @@ fn handle_uacess_abort(exception: Exception, info: AbortIss, state: &mut Excepti
         // If the fault coldn't be resolved, signal to the uacess fixup that
         // the abort failed.
         Ok(FaultResolution::Denied) => {
-            state.x[0] = UACESS_ABORT_DENIED;
+            state.x[0] = UAccessResult::AbortDenied as _;
             state.elr_el1 = unsafe { __UACCESS_FIXUP.fixup.value() as u64 };
         }
         // If the page fault involves sleepy kernel work, we send that work
@@ -82,7 +82,7 @@ fn handle_uacess_abort(exception: Exception, info: AbortIss, state: &mut Excepti
             // components.
             let (data_ptr, vtable_ptr): (*mut (), *const ()) = unsafe { mem::transmute(ptr) };
 
-            state.x[0] = UACESS_ABORT_DEFERRED;
+            state.x[0] = UAccessResult::AbortDeferred as _;
             state.x[1] = data_ptr as _;
             state.x[3] = vtable_ptr as _;
             state.elr_el1 = unsafe { __UACCESS_FIXUP.fixup.value() as u64 };

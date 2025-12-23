@@ -55,6 +55,22 @@ pub async fn copy_from_user<T: UserCopyable>(src: TUA<T>) -> Result<T> {
     Ok(unsafe { uninit.assume_init() })
 }
 
+pub fn try_copy_from_user<T: UserCopyable>(src: TUA<T>) -> Result<T> {
+    let mut uninit: MaybeUninit<T> = MaybeUninit::uninit();
+
+    unsafe {
+        ArchImpl::try_copy_from_user(
+            src.to_untyped(),
+            uninit.as_mut_ptr() as *mut _ as *mut _,
+            core::mem::size_of::<T>(),
+        )
+    }?;
+
+    // SAFETY: If the `try_copy_from_user` completed successfully, then the copy
+    // from userspace completed.
+    Ok(unsafe { uninit.assume_init() })
+}
+
 pub async fn copy_obj_array_from_user<T: UserCopyable>(
     mut src: TUA<T>,
     len: usize,

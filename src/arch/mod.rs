@@ -85,6 +85,38 @@ pub trait Arch: CpuOps + VirtualMemory {
     unsafe fn copy_from_user(src: UA, dst: *mut (), len: usize)
     -> impl Future<Output = Result<()>>;
 
+    /// Tries to copy a block of memory from userspace to the kernel.
+    ///
+    /// This is the raw, unsafe primitive for transferring data from a
+    /// user-provided source address `src` into a kernel buffer `dst`. It is the
+    /// responsibility of this function to safely handle page faults. Unlike
+    /// `copy_from_user`, if handling the page fault requires the calling
+    /// process to sleep, a fault is returned. Therefore this function will
+    /// never sleep and is safe to be called while holding a `SpinLock`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `KernelError::Fault` if a page fault occurs while reading from
+    /// the userspace address `src` or if resolving the fault would require the
+    /// process to sleep.
+    ///
+    /// # Safety
+    ///
+    /// This function is profoundly `unsafe` and is a primary security boundary.
+    /// The caller MUST guarantee the following invariants about the `dst`
+    /// kernel pointer:
+    ///
+    /// 1.  `dst` must be a valid pointer.
+    /// 2.  The memory region `[dst, dst + len)` must be allocated, writable, and
+    ///     contained within kernel memory.
+    /// 3.  `dst` must be properly aligned for any subsequent access.
+    ///
+    /// Failure to uphold these invariants will result in undefined behavior,
+    /// likely leading to a kernel panic or memory corruption. Prefer using safe
+    /// wrappers like `copy_from_user<T: UserCopyable>` or
+    /// `copy_from_user_slice` whenever possible.
+    unsafe fn try_copy_from_user(src: UA, dst: *mut (), len: usize) -> Result<()>;
+
     /// Copies a block of memory from the kernel to userspace.
     ///
     /// This is the raw, unsafe primitive for transferring data from a kernel
