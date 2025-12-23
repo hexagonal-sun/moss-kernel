@@ -4,17 +4,17 @@ use core::mem::size_of;
 use crate::sched::current_task;
 use libkernel::{
     error::{KernelError, Result},
-    memory::address::{TUA, VA},
+    memory::address::TUA,
 };
 
 pub mod futex;
 
-pub async fn sys_set_tid_address(_tidptr: VA) -> Result<usize> {
-    let tid = current_task().tid;
+pub fn sys_set_tid_address(tidptr: TUA<u32>) -> Result<usize> {
+    let task = current_task();
 
-    // TODO: implement threading and this system call properly. For now, we just
-    // return the PID as the thread id.
-    Ok(tid.value() as _)
+    *task.child_tid_ptr.lock_save_irq() = Some(tidptr);
+
+    Ok(task.tid.value() as _)
 }
 
 #[repr(C)]
