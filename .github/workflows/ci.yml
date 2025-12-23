@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   workflow_dispatch:
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 jobs:
   build-test:
@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Use the toolchain from rust-toolchain.toml
       - name: Install Rust
@@ -35,7 +35,29 @@ jobs:
         run: cargo test -p libkernel --target x86_64-unknown-linux-gnu --all-features
 
       - name: Install dependencies
-        run: sudo apt update && sudo apt install qemu-system-aarch64 dosfstools mtools gcc-aarch64-linux-gnu
+        run: sudo apt update && sudo apt install qemu-system-aarch64 dosfstools mtools binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
+
+      - name: Install arm GNU toolchain
+        run: |
+          wget https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf.tar.xz
+          tar -xf arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf.tar.xz
+          mv arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf arm-gnu-toolchain
+          echo "${{ github.workspace }}/arm-gnu-toolchain/bin" >> $GITHUB_PATH
+
+      - name: Build Image
+        run: |
+          wget https://github.com/arihant2math/prebuilt-musl/raw/refs/heads/main/aarch64-linux-musl-cross.tgz
+          mkdir build
+          mv aarch64-linux-musl-cross.tgz ./build/
+          ls
+          ./scripts/build-deps.sh
+          ./scripts/create-image.sh
+
+      - name: Upload Image
+        uses: actions/upload-artifact@v6
+        with:
+          name: image
+          path: moss.img
 
       - name: Run userspace testing
         run: CARGO_TARGET_AARCH64_UNKNOWN_NONE_SOFTFLOAT_RUNNER=./scripts/qemu-test-runner.sh cargo run -r
