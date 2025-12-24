@@ -322,23 +322,25 @@ fn test_futex() {
 fn test_truncate() {
     print!("Testing truncate syscall ...");
     use std::fs::{self, File};
-    use std::io::{Read, Write, Seek};
-    
+    use std::io::{Read, Seek, Write};
+
     let path = "/tmp/truncate_test.txt";
     let mut file = File::create_new(path).expect("Failed to create file");
-    file.write_all(b"Hello, world!").expect("Failed to write to file");
+    file.write_all(b"Hello, world!")
+        .expect("Failed to write to file");
     unsafe {
         libc::truncate(std::ffi::CString::new(path).unwrap().as_ptr(), 5);
     }
-    
+
     let mut string = String::new();
     file.rewind().expect("Failed to rewind file");
-    file.read_to_string(&mut string).expect("Failed to read from file");
+    file.read_to_string(&mut string)
+        .expect("Failed to read from file");
     if string != "Hello" {
         println!("{string}");
         panic!("truncate failed");
     }
-    
+
     fs::remove_file(path).expect("Failed to delete file");
     println!(" OK");
 }
