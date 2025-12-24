@@ -13,6 +13,9 @@ fn test_sync() {
 }
 
 fn test_clock_sleep() {
+    use std::thread::sleep;
+    use std::time::{Duration, Instant};
+
     const SLEEP_LEN: Duration = Duration::from_millis(100);
 
     print!("Testing clock and sleep syscalls ...");
@@ -337,6 +340,7 @@ fn test_symlink() {
     let link = "/tmp/symlink_test_link";
     let c_path = std::ffi::CString::new(path).unwrap();
     let c_link = std::ffi::CString::new(link).unwrap();
+    let mut buffer = [1u8; 17];
 
     let mut file = File::create_new(path).expect("Failed to create file");
     file.write_all(b"Hello, world!")
@@ -354,6 +358,13 @@ fn test_symlink() {
             .expect("Failed to read from file");
         if string != "Hello, world!" {
             panic!("symlink failed");
+        }
+        let ret = libc::readlink(c_link.as_ptr(), buffer.as_mut_ptr(), buffer.len());
+        if ret < 0 {
+            panic!("readlink failed");
+        }
+        if buffer != *b"/tmp/symlink_test" {
+            panic!("readlink failed");
         }
     }
     fs::remove_file(path).expect("Failed to delete file");
