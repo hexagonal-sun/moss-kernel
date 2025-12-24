@@ -168,6 +168,9 @@ pub enum KernelError {
     #[error("No such process")]
     NoProcess,
 
+    #[error("Operation timed out")]
+    TimedOut,
+
     #[error("{0}")]
     Other(&'static str),
 }

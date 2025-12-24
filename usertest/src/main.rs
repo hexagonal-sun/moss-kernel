@@ -451,6 +451,24 @@ fn test_rust_mutex() {
     println!(" OK");
 }
 
+fn test_parking_lot_mutex_timeout() {
+    print!("Testing parking_lot mutex with timeout ...");
+    use parking_lot::Mutex;
+    use std::time::Duration;
+    let mtx = Arc::new(Mutex::new(()));
+    let mtx_clone = Arc::clone(&mtx);
+    let guard = mtx.lock();
+    // Now try to acquire the lock with a timeout in another thread
+    let handle = thread::spawn(move || {
+        let timeout = Duration::from_millis(100);
+        let result = mtx_clone.try_lock_for(timeout);
+        assert!(result.is_none(), "Expected to not acquire the lock");
+    });
+    handle.join().unwrap();
+    drop(guard);
+    println!(" OK");
+}
+
 fn run_test(test_fn: fn()) {
     // Fork a new process to run the test
     unsafe {
@@ -495,6 +513,7 @@ fn main() {
     run_test(test_rust_dir);
     run_test(test_rust_thread);
     run_test(test_rust_mutex);
+    run_test(test_parking_lot_mutex_timeout);
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }

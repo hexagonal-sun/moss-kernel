@@ -1,9 +1,15 @@
+use crate::clock::realtime::date;
+use crate::clock::timespec::TimeSpec;
+use crate::drivers::timer::sleep;
 use crate::sync::{OnceLock, SpinLock};
+use alloc::boxed::Box;
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
+use core::time::Duration;
+use futures::FutureExt;
 use key::FutexKey;
 use libkernel::{
     error::{KernelError, Result},
-    memory::address::{TUA, VA},
+    memory::address::TUA,
     sync::waker_set::WakerSet,
 };
 use wait::FutexWait;
@@ -60,7 +66,7 @@ pub async fn sys_futex(
     uaddr: TUA<u32>,
     op: i32,
     val: u32,
-    _timeout: VA,
+    timeout: TUA<TimeSpec>,
     _uaddr2: TUA<u32>,
     _val3: u32,
 ) -> Result<usize> {
@@ -74,13 +80,36 @@ pub async fn sys_futex(
     };
 
     // TODO: support bitset variants properly
+    let timeout = if timeout.is_null() {
+        None
+    } else {
+        let timeout = TimeSpec::copy_from_user(timeout).await?;
+        if matches!(cmd, FUTEX_WAIT_BITSET) {
+            Some(Duration::from(timeout) - date())
+        } else {
+            Some(Duration::from(timeout))
+        }
+    };
     match cmd {
         FUTEX_WAIT | FUTEX_WAIT_BITSET => {
             // Obtain (or create) the wait-queue for this futex word.
             let slot = get_or_create_queue(key);
 
             // Return 0 on success.
-            FutexWait::new(uaddr, val, slot).await.map(|_| 0)
+            if let Some(dur) = timeout {
+                let mut wait = FutexWait::new(uaddr, val, slot).fuse();
+                let mut sleep = Box::pin(sleep(dur).fuse());
+                futures::select_biased! {
+                    res = wait => {
+                        res.map(|_| 0)
+                    },
+                    _ = sleep => {
+                        Err(KernelError::TimedOut)
+                    }
+                }
+            } else {
+                FutexWait::new(uaddr, val, slot).await.map(|_| 0)
+            }
         }
 
         FUTEX_WAKE | FUTEX_WAKE_BITSET => Ok(wake_key(val as _, key)),

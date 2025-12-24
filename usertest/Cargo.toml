@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 libc = "0.2"
+parking_lot = "0.12"

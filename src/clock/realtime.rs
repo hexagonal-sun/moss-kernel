@@ -1,5 +1,5 @@
 use crate::{
-    drivers::timer::{Instant, now},
+    drivers::timer::{Instant, now, uptime},
     sync::SpinLock,
 };
 use core::time::Duration;
@@ -14,7 +14,7 @@ pub fn date() -> Duration {
         let duraton_since_ep_info = now - ep_info.1;
         ep_info.0 + duraton_since_ep_info
     } else {
-        Duration::new(0, 0)
+        uptime()
     }
 }
 

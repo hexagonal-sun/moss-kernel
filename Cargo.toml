@@ -20,7 +20,7 @@ async-trait = "0.1.88"
 getargs = { version = "0.5.0", default-features = false }
 ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
 bitflags = "2.9.1"
-futures = { version = "0.3.31", default-features = false, features = ["alloc"] }
+futures = { version = "0.3.31", default-features = false, features = ["alloc", "async-await"] }
 rand = { version = "0.9.2", default-features = false, features = ["small_rng"] }
 
 [profile.release]

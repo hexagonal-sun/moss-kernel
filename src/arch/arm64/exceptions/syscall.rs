@@ -190,7 +190,7 @@ pub async fn handle_syscall() {
                 TUA::from_value(arg1 as _),
                 arg2 as _,
                 arg3 as _,
-                VA::from_value(arg4 as _),
+                TUA::from_value(arg4 as _),
                 TUA::from_value(arg5 as _),
                 arg6 as _,
             )

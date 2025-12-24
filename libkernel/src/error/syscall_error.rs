@@ -38,6 +38,7 @@ pub const EDOM: isize = -33;
 pub const ERANGE: isize = -34;
 pub const EWOULDBLOCK: isize = -EAGAIN;
 pub const ENOSYS: isize = -38;
+pub const ETIMEDOUT: isize = -110;
 
 pub fn kern_err_to_syscall(err: KernelError) -> isize {
     match err {
@@ -51,6 +52,7 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::SeekPipe => ESPIPE,
         KernelError::NotSupported => ENOSYS,
         KernelError::NoMemory => ENOMEM,
+        KernelError::TimedOut => ETIMEDOUT,
         e => todo!("{e}"),
     }
 }
