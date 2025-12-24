@@ -113,13 +113,10 @@ impl SchedState {
         // Record the start time for the task we are about to run.
         *next_task.exec_start.lock_save_irq() = Some(now_inst);
 
-        // Context switch.
-        if let Some(previous_task) = previous_task {
-            let mut state = previous_task.state.lock_save_irq();
-
-            if *state == TaskState::Running {
-                *state = TaskState::Runnable;
-            }
+        // Context switch, the previous task's state should already been updated
+        // prior to calling this function.
+        if let Some(ref prev_task) = previous_task {
+            debug_assert_eq!(*prev_task.state.lock_save_irq(), TaskState::Runnable);
         }
 
         *next_task.state.lock_save_irq() = TaskState::Running;
