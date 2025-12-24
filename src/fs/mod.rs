@@ -454,6 +454,50 @@ impl VFS {
 
         Ok(())
     }
+
+    pub async fn link(
+        &self,
+        old_path: &Path,
+        new_path: &Path,
+        old_root: Arc<dyn Inode>,
+        new_root: Arc<dyn Inode>,
+        task: Arc<Task>,
+    ) -> Result<()> {
+        let target_inode = self
+            .resolve_path(old_path, old_root.clone(), task.clone())
+            .await?;
+
+        let attr = target_inode.getattr().await?;
+
+        if attr.file_type == FileType::Directory {
+            return Err(FsError::IsADirectory.into());
+        }
+
+        match self
+            .resolve_path(new_path, new_root.clone(), task.clone())
+            .await
+        {
+            Ok(_) => Err(FsError::AlreadyExists.into()),
+            Err(KernelError::Fs(FsError::NotFound)) => {
+                let name = new_path.file_name().ok_or(FsError::InvalidInput)?;
+
+                let parent_inode = if let Some(parent_path) = new_path.parent() {
+                    self.resolve_path(parent_path, new_root.clone(), task)
+                        .await?
+                } else {
+                    new_root.clone()
+                };
+
+                // verify that the parent inode is a directory
+                if parent_inode.getattr().await?.file_type != FileType::Directory {
+                    return Err(FsError::NotADirectory.into());
+                }
+
+                parent_inode.link(name, target_inode.clone()).await
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 pub static VFS: VFS = VFS::new();

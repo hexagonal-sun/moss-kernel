@@ -214,6 +214,11 @@ pub trait Inode: Send + Sync {
         Err(KernelError::NotSupported)
     }
 
+    /// Creates a new link to an inode in a directory.
+    async fn link(&self, _name: &str, _inode: Arc<dyn Inode>) -> Result<()> {
+        Err(KernelError::NotSupported)
+    }
+
     /// Reads the contents of a directory.
     async fn readdir(&self, _start_offset: u64) -> Result<Box<dyn DirStream>> {
         Err(FsError::NotADirectory.into())

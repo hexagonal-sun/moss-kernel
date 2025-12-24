@@ -281,6 +281,29 @@ fn test_write() {
     println!(" OK");
 }
 
+fn test_link() {
+    print!("Testing link syscall ..."); // actually tests linkat
+    let file = "/tmp/link_test";
+    let c_file = std::ffi::CString::new(file).unwrap();
+    let link = "/tmp/link_test_link";
+    let c_link = std::ffi::CString::new(link).unwrap();
+    unsafe {
+        let fd = libc::open(c_file.as_ptr(), libc::O_CREAT, 0o777);
+        if fd < 0 {
+            panic!("open failed");
+        }
+        libc::close(fd);
+
+        let ret = libc::link(c_file.as_ptr(), c_link.as_ptr());
+        if ret < 0 {
+            panic!("link failed");
+        }
+    }
+    fs::remove_file(file).expect("Failed to delete file");
+    fs::remove_file(link).expect("Failed to delete link");
+    println!(" OK");
+}
+
 fn test_futex() {
     print!("Testing futex syscall ...");
     let mut futex_word: libc::c_uint = 0;
@@ -484,7 +507,10 @@ fn run_test(test_fn: fn()) {
             let mut status = 0;
             libc::waitpid(pid, &mut status, 0);
             if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
-                panic!("Test failed in child process");
+                panic!(
+                    "Test failed in child process: {}",
+                    std::io::Error::last_os_error()
+                );
             }
         }
     }
@@ -506,6 +532,7 @@ fn main() {
     run_test(test_fork);
     run_test(test_read);
     run_test(test_write);
+    run_test(test_link);
     run_test(test_futex);
     run_test(test_truncate);
     run_test(test_ftruncate);

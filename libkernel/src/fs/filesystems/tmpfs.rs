@@ -113,6 +113,7 @@ where
     T: AddressTranslator<()>,
 {
     id: InodeId,
+    attr: SpinLockIrq<FileAttr, C>,
     inner: SpinLockIrq<TmpFsRegInner<C, G, T>, C>,
 }
 
@@ -125,6 +126,12 @@ where
     fn new(id: InodeId) -> Result<Self> {
         Ok(Self {
             id,
+            attr: SpinLockIrq::new(FileAttr {
+                file_type: FileType::File,
+                size: 0,
+                nlinks: 1,
+                ..Default::default()
+            }),
             inner: SpinLockIrq::new(TmpFsRegInner {
                 indirect_block: ClaimedPage::<C, G, T>::alloc_zeroed()?,
                 size: 0,
@@ -228,6 +235,7 @@ where
         if offset as usize > inner.size {
             inner.size = offset as usize;
         }
+        self.attr.lock_save_irq().size = inner.size as _;
 
         Ok(total_written)
     }
@@ -246,6 +254,7 @@ where
             // read_at logic, and write_at will fill them with zeroed pages when
             // touched.
             inner.size = new_size;
+            self.attr.lock_save_irq().size = size;
             return Ok(());
         }
 
@@ -297,17 +306,19 @@ where
 
             inner.size = new_size;
         }
+        self.attr.lock_save_irq().size = inner.size as _;
 
         Ok(())
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        let inner = self.inner.lock_save_irq();
-        Ok(FileAttr {
-            size: inner.size as u64,
-            // Populate other fields (perms, time) with defaults or store them in TmpFsReg
-            ..Default::default()
-        })
+        Ok(self.attr.lock_save_irq().clone())
+    }
+
+    async fn setattr(&self, attr: FileAttr) -> Result<()> {
+        self.inner.lock_save_irq().size = attr.size as _;
+        *self.attr.lock_save_irq() = attr;
+        Ok(())
     }
 }
 
@@ -445,6 +456,28 @@ where
         } else {
             Err(FsError::NotFound.into())
         }
+    }
+
+    async fn link(&self, name: &str, inode: Arc<dyn Inode>) -> Result<()> {
+        let mut attr = inode.getattr().await?;
+        let kind = attr.file_type;
+        attr.nlinks += 1;
+        inode.setattr(attr).await?;
+
+        let mut entries = self.entries.lock_save_irq();
+
+        if entries.iter().any(|e| e.name == name) {
+            return Err(FsError::AlreadyExists.into());
+        }
+
+        entries.push(TmpFsDirEnt {
+            name: name.to_string(),
+            id: inode.id(),
+            kind,
+            inode,
+        });
+
+        Ok(())
     }
 }
 

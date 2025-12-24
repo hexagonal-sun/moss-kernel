@@ -1,4 +1,4 @@
-use crate::{fs::VFS, process::fd_table::Fd, sched::current_task};
+use crate::{process::fd_table::Fd, sched::current_task};
 use alloc::sync::Arc;
 use libkernel::{
     error::{FsError, KernelError, Result},
@@ -8,6 +8,7 @@ use libkernel::{
 pub mod access;
 pub mod chmod;
 pub mod chown;
+pub mod link;
 pub mod mkdir;
 pub mod open;
 pub mod readlink;
@@ -31,7 +32,7 @@ async fn resolve_at_start_node(dirfd: Fd, path: &Path) -> Result<Arc<dyn Inode>>
 
     let start_node: Arc<dyn Inode> = if path.is_absolute() {
         // Absolute path ignores dirfd.
-        VFS.root_inode()
+        task.root.lock_save_irq().0.clone()
     } else if dirfd.is_atcwd() {
         // Path is relative to the current working directory.
         task.cwd.lock_save_irq().0.clone()
