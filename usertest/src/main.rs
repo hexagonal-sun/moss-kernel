@@ -319,6 +319,57 @@ fn test_futex() {
     println!(" OK");
 }
 
+fn test_truncate() {
+    print!("Testing truncate syscall ...");
+    use std::fs::{self, File};
+    use std::io::{Read, Write, Seek};
+    
+    let path = "/tmp/truncate_test.txt";
+    let mut file = File::create_new(path).expect("Failed to create file");
+    file.write_all(b"Hello, world!").expect("Failed to write to file");
+    unsafe {
+        libc::truncate(std::ffi::CString::new(path).unwrap().as_ptr(), 5);
+    }
+    
+    let mut string = String::new();
+    file.rewind().expect("Failed to rewind file");
+    file.read_to_string(&mut string).expect("Failed to read from file");
+    if string != "Hello" {
+        println!("{string}");
+        panic!("truncate failed");
+    }
+    
+    fs::remove_file(path).expect("Failed to delete file");
+    println!(" OK");
+}
+
+fn test_ftruncate() {
+    print!("Testing ftruncate syscall ...");
+    let file = "/tmp/ftruncate_test.txt";
+    let c_file = std::ffi::CString::new(file).unwrap();
+    let data = b"Hello, world!";
+    let mut buffer = [1u8; 5];
+    unsafe {
+        let fd = libc::open(c_file.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o777);
+        let ret = libc::write(fd, data.as_ptr() as *const libc::c_void, data.len());
+        if ret < 0 || ret as usize != data.len() {
+            panic!("write failed");
+        }
+        libc::ftruncate(fd, 5);
+        libc::lseek(fd, 0, libc::SEEK_SET);
+        let ret = libc::read(fd, buffer.as_mut_ptr() as *mut libc::c_void, buffer.len());
+        if ret < 0 || ret as usize != 5 {
+            panic!("read failed");
+        }
+        if &buffer != b"Hello" {
+            panic!("ftruncate failed");
+        }
+        libc::close(fd);
+    }
+    fs::remove_file(file).expect("Failed to delete file");
+    println!(" OK");
+}
+
 fn test_rust_file() {
     print!("Testing rust file operations ...");
     use std::fs::{self, File};
@@ -436,6 +487,8 @@ fn main() {
     run_test(test_read);
     run_test(test_write);
     run_test(test_futex);
+    run_test(test_truncate);
+    run_test(test_ftruncate);
     run_test(test_rust_file);
     run_test(test_rust_dir);
     run_test(test_rust_thread);
