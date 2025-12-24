@@ -44,7 +44,6 @@ fn schedule() {
     }
 
     let previous_task = current_task();
-    *previous_task.last_run.lock_save_irq() = now();
     let mut sched_state = SCHED_STATE.borrow_mut();
     let next_task = sched_state.find_next_runnable_task();
 
@@ -89,6 +88,10 @@ impl SchedState {
         next_task: Arc<Task>,
     ) -> Result<()> {
         let now_inst = now().expect("System timer not initialised");
+
+        if let Some(ref prev_task) = previous_task {
+            *prev_task.last_run.lock_save_irq() = Some(now_inst);
+        }
 
         if let Some(ref prev_task) = previous_task
             && Arc::ptr_eq(&next_task, prev_task)
