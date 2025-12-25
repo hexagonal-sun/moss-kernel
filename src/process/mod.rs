@@ -14,7 +14,7 @@ use creds::Credentials;
 use ctx::{Context, UserCtx};
 use fd_table::FileDescriptorTable;
 use libkernel::memory::address::TUA;
-use libkernel::{VirtualMemory, fs::Inode};
+use libkernel::{CpuOps, VirtualMemory, fs::Inode};
 use libkernel::{
     fs::pathbuf::PathBuf,
     memory::{
@@ -193,6 +193,7 @@ pub struct Task {
     pub state: Arc<SpinLock<TaskState>>,
     pub robust_list: SpinLock<Option<TUA<RobustListHead>>>,
     pub child_tid_ptr: SpinLock<Option<TUA<u32>>>,
+    pub last_cpu: SpinLock<usize>,
 }
 
 impl Task {
@@ -229,6 +230,7 @@ impl Task {
             last_run: SpinLock::new(None),
             robust_list: SpinLock::new(None),
             child_tid_ptr: SpinLock::new(None),
+            last_cpu: SpinLock::new(ArchImpl::id()),
         }
     }
 
@@ -259,6 +261,7 @@ impl Task {
             last_run: SpinLock::new(None),
             robust_list: SpinLock::new(None),
             child_tid_ptr: SpinLock::new(None),
+            last_cpu: SpinLock::new(ArchImpl::id()),
         }
     }
 

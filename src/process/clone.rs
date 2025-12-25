@@ -1,4 +1,5 @@
 use super::{ctx::Context, thread_group::signal::SigSet};
+use crate::arch::ArchImpl;
 use crate::memory::uaccess::copy_to_user;
 use crate::{
     process::{TASK_LIST, Task, TaskState},
@@ -8,6 +9,7 @@ use crate::{
 use bitflags::bitflags;
 use libkernel::memory::address::TUA;
 use libkernel::{
+    CpuOps,
     error::{KernelError, Result},
     memory::address::UA,
 };
@@ -154,6 +156,7 @@ pub async fn sys_clone(
             } else {
                 None
             }),
+            last_cpu: SpinLock::new(ArchImpl::id()),
         }
     };
 
