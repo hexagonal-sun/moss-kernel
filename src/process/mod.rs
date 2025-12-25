@@ -119,7 +119,7 @@ pub enum TaskState {
     Runnable,
     Woken,
     Stopped,
-    Sleeping,
+    Sleeping(usize),
     Finished,
 }
 
@@ -130,7 +130,7 @@ impl Display for TaskState {
             TaskState::Runnable => "R",
             TaskState::Woken => "W",
             TaskState::Stopped => "T",
-            TaskState::Sleeping => "S",
+            TaskState::Sleeping(_) => "S",
             TaskState::Finished => "Z",
         };
         write!(f, "{}", state_str)

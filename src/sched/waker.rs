@@ -1,4 +1,10 @@
-use crate::process::{TASK_LIST, TaskDescriptor, TaskState};
+use libkernel::CpuOps;
+
+use crate::{
+    arch::ArchImpl,
+    interrupts::cpu_messenger::{self, Message},
+    process::{TASK_LIST, TaskDescriptor, TaskState},
+};
 use core::task::{RawWaker, RawWakerVTable, Waker};
 
 unsafe fn clone_waker(data: *const ()) -> RawWaker {
@@ -15,9 +21,14 @@ unsafe fn wake_waker(data: *const ()) {
         let mut state = proc.lock_save_irq();
         match *state {
             // If the task has been put to sleep, then wake it up.
-            TaskState::Sleeping => {
+            TaskState::Sleeping(task_cpu_id) => {
+                if task_cpu_id != ArchImpl::id() {
+                    cpu_messenger::message_cpu(task_cpu_id, Message::Reschedule).unwrap();
+                }
+
                 *state = TaskState::Runnable;
             }
+
             // If the task is running, mark it so it doesn't actually go to
             // sleep when poll returns. This covers the small race-window
             // between a future returning `Poll::Pending` and the sched setting

@@ -14,6 +14,7 @@ use crate::{
 };
 use alloc::boxed::Box;
 use core::{ptr, task::Poll};
+use libkernel::CpuOps;
 
 enum State {
     PickNewTask,
@@ -120,7 +121,9 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             match *task_state {
                                 // The main path we expect to take to sleep the
                                 // task.
-                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                TaskState::Running => {
+                                    *task_state = TaskState::Sleeping(ArchImpl::id())
+                                }
                                 // If we were woken between the future returning
                                 // `Poll::Pending` and acquiring the lock above,
                                 // the waker will have put us into this state.
@@ -189,7 +192,9 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             match *task_state {
                                 // The main path we expect to take to sleep the
                                 // task.
-                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                TaskState::Running => {
+                                    *task_state = TaskState::Sleeping(ArchImpl::id())
+                                }
                                 // If we were woken between the future returning
                                 // `Poll::Pending` and acquiring the lock above,
                                 // the waker will have put us into this state.
@@ -268,7 +273,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             for thr_weak in process.threads.lock_save_irq().values() {
                                 if let Some(thr) = thr_weak.upgrade() {
                                     let mut st = thr.state.lock_save_irq();
-                                    if *st == TaskState::Sleeping {
+                                    if matches!(*st, TaskState::Sleeping(_)) {
                                         *st = TaskState::Runnable;
                                     }
                                 }
