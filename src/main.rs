@@ -2,7 +2,6 @@
 #![no_main]
 #![feature(used_with_arg)]
 #![feature(likely_unlikely)]
-#![feature(sync_unsafe_cell)]
 
 use alloc::{
     boxed::Box,

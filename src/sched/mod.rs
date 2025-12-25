@@ -1,11 +1,12 @@
 use crate::drivers::timer::{Instant, now, schedule_preempt};
+use crate::interrupts::cpu_messenger::{Message, message_cpu};
 use crate::{
     arch::{Arch, ArchImpl},
+    per_cpu,
     process::{TASK_LIST, Task, TaskDescriptor, TaskState},
     sync::OnceLock,
 };
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
-use core::cell::SyncUnsafeCell;
 use core::cmp::Ordering;
 use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
@@ -28,8 +29,9 @@ impl CpuId {
 }
 
 // TODO: arbitrary cap.
-pub static SCHED_STATES: [SyncUnsafeCell<Option<SchedState>>; 128] =
-    [const { SyncUnsafeCell::new(None) }; 128];
+per_cpu! {
+    static SCHED_STATE: SchedState = SchedState::new;
+}
 
 /// Default time-slice (in milliseconds) assigned to runnable tasks.
 const DEFAULT_TIME_SLICE_MS: u64 = 4;
@@ -43,54 +45,11 @@ pub const VT_ONE: u128 = 1u128 << VT_FIXED_SHIFT;
 /// Two virtual-time instants whose integer parts differ by no more than this constant are considered equal.
 pub const VCLOCK_EPSILON: u128 = VT_ONE;
 
-fn get_sched_state() -> &'static mut SchedState {
-    let cpu_id = CpuId::this();
-    let idx = cpu_id.value();
-    debug_assert!(idx < SCHED_STATES.len(), "CPU id out of bounds");
-
-    // Get a mutable reference to the Option<SchedState> stored in the static array.
-    let slot: &mut Option<SchedState> = unsafe { &mut *SCHED_STATES[idx].get() };
-
-    if slot.is_none() {
-        *slot = Some(SchedState::new());
-    }
-
-    slot.as_mut().expect("SchedState not initialized")
-}
-
-fn get_sched_state_by_id(cpu_id: CpuId) -> Option<&'static mut SchedState> {
-    let idx = cpu_id.value();
-    debug_assert!(idx < SCHED_STATES.len(), "CPU id out of bounds");
-
-    // Get a mutable reference to the Option<SchedState> stored in the static array.
-    let slot: &mut Option<SchedState> = unsafe { &mut *SCHED_STATES[idx].get() };
-
-    if slot.is_none() {
-        *slot = Some(SchedState::new());
-    }
-
-    slot.as_mut()
-}
-
-fn with_cpu_sched_state(cpu_id: CpuId, f: impl FnOnce(&mut SchedState)) {
-    let Some(sched_state) = get_sched_state_by_id(cpu_id) else {
-        log::error!("No sched state for CPU {:?}", cpu_id);
-        return;
-    };
-    f(sched_state);
-}
-
 pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>> {
-    for slot in SCHED_STATES.iter() {
-        let slot: &mut Option<SchedState> = unsafe { &mut *slot.get() };
-
-        if let Some(sched_state) = slot.as_mut()
-            && let Some(task) = sched_state.run_queue.get(descriptor)
-        {
-            return Some(task.clone());
-        }
+    if let Some(task) = SCHED_STATE.borrow().run_queue.get(descriptor) {
+        return Some(task.clone());
     }
-
+    // TODO: Ping other CPUs to find the task.
     None
 }
 
@@ -106,14 +65,21 @@ pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>>
 /// 3. If the selected process is the same as the currently running one, no
 ///    switch occurs.
 /// 4. If a new process is selected, it handles the state transitions (`Running`
-///    -&gt; `Runnable` for the old task, `Runnable` -&gt; `Running` for the new task)
-///    and performs the architecture-specific context switch.
+///   > `Runnable` for the old task, `Runnable` > `Running` for the new task)
+///   > and performs the architecture-specific context switch.
 ///
 /// # Returns
 ///
 /// Nothing, but the CPU context will be set to the next runnable task. See
 /// `userspace_return` for how this is invoked.
 fn schedule() {
+    if SCHED_STATE.try_borrow_mut().is_none() {
+        log::warn!(
+            "Scheduler reentrancy detected on CPU {}",
+            CpuId::this().value()
+        );
+        return;
+    }
     // Mark the current task as runnable so it's considered for scheduling in
     // the next time-slice.
     {
@@ -126,7 +92,7 @@ fn schedule() {
     }
 
     let previous_task = current_task();
-    let sched_state = get_sched_state();
+    let mut sched_state = SCHED_STATE.borrow_mut();
 
     // Bring the virtual clock up-to-date so that eligibility tests use the
     // most recent value.
@@ -178,11 +144,13 @@ fn get_next_cpu() -> CpuId {
 }
 
 /// Insert the given task onto a CPU's run queue.
-pub fn insert_task(task: Arc<Task>, cpu: Option<CpuId>) {
-    let cpu = cpu.unwrap_or_else(get_next_cpu);
-    with_cpu_sched_state(cpu, |sched_state| {
-        sched_state.add_task(task);
-    });
+pub fn insert_task(task: Arc<Task>) {
+    SCHED_STATE.borrow_mut().add_task(task);
+}
+
+pub fn insert_task_cross_cpu(task: Arc<Task>) {
+    let cpu = get_next_cpu();
+    message_cpu(cpu.value(), Message::PutTask(task)).expect("Failed to send task to CPU");
 }
 
 pub struct SchedState {
@@ -427,7 +395,8 @@ impl SchedState {
 }
 
 pub fn current_task() -> Arc<Task> {
-    get_sched_state()
+    SCHED_STATE
+        .borrow()
         .running_task
         .as_ref()
         .expect("Current task called before initial task created")
@@ -446,7 +415,7 @@ pub fn sched_init() {
         .activate();
 
     *init_task.state.lock_save_irq() = TaskState::Running;
-    get_sched_state().running_task = Some(idle_task.clone());
+    SCHED_STATE.borrow_mut().running_task = Some(idle_task.clone());
 
     {
         let mut task_list = TASK_LIST.lock_save_irq();
@@ -455,22 +424,24 @@ pub fn sched_init() {
         task_list.insert(init_task.descriptor(), Arc::downgrade(&init_task.state));
     }
 
-    insert_task(idle_task, Some(CpuId::this()));
-    insert_task(init_task.clone(), Some(CpuId::this()));
+    insert_task(idle_task);
+    insert_task(init_task.clone());
 
-    get_sched_state()
+    SCHED_STATE
+        .borrow_mut()
         .switch_to_task(None, init_task)
         .expect("Failed to switch to init task");
 }
 
 pub fn sched_init_secondary() {
     let idle_task = get_idle_task();
-    get_sched_state().running_task = Some(idle_task.clone());
+    SCHED_STATE.borrow_mut().running_task = Some(idle_task.clone());
 
     // Important to ensure that the idle task is in the TASK_LIST for this CPU.
-    insert_task(idle_task.clone(), Some(CpuId::this()));
+    insert_task(idle_task.clone());
 
-    get_sched_state()
+    SCHED_STATE
+        .borrow_mut()
         .switch_to_task(None, idle_task)
         .expect("Failed to switch to idle task");
 }
