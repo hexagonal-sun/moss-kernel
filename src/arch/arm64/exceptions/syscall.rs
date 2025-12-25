@@ -16,6 +16,7 @@ use crate::{
                 stat::sys_newfstatat,
                 symlink::sys_symlinkat,
                 unlink::sys_unlinkat,
+                utime::sys_utimensat,
             },
             chdir::{sys_chdir, sys_chroot, sys_fchdir, sys_getcwd},
             chmod::sys_fchmod,
@@ -201,6 +202,14 @@ pub async fn handle_syscall() {
         }
         0x50 => sys_fstat(arg1.into(), TUA::from_value(arg2 as _)).await,
         0x51 => sys_sync().await,
+        0x58 => {
+            sys_utimensat(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+            )
+            .await
+        }
         0x5d => sys_exit(arg1 as _).await,
         0x5e => sys_exit_group(arg1 as _),
         0x60 => sys_set_tid_address(TUA::from_value(arg1 as _)),

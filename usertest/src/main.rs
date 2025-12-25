@@ -1,5 +1,7 @@
 use std::{
+    ffi::{CStr, CString},
     fs,
+    mem::MaybeUninit,
     sync::{Arc, Barrier, Mutex},
     thread,
 };
@@ -27,7 +29,7 @@ fn test_clock_sleep() {
 
 fn test_opendir() {
     print!("Testing opendir syscall ...");
-    let path = std::ffi::CString::new("/").unwrap();
+    let path = CString::new("/").unwrap();
     unsafe {
         let dir = libc::opendir(path.as_ptr());
         if dir.is_null() {
@@ -40,7 +42,7 @@ fn test_opendir() {
 
 fn test_readdir() {
     print!("Testing readdir syscall ...");
-    let path = std::ffi::CString::new("/").unwrap();
+    let path = CString::new("/").unwrap();
     unsafe {
         let dir = libc::opendir(path.as_ptr());
         if dir.is_null() {
@@ -64,7 +66,7 @@ fn test_readdir() {
 
 fn test_chdir() {
     print!("Testing chdir syscall ...");
-    let path = std::ffi::CString::new("/dev").unwrap();
+    let path = CString::new("/dev").unwrap();
     let mut buffer = [1u8; 16];
     unsafe {
         if libc::chdir(path.as_ptr()) != 0 {
@@ -78,7 +80,7 @@ fn test_chdir() {
         {
             panic!("getcwd failed");
         }
-        if std::ffi::CStr::from_ptr(buffer.as_ptr()).to_string_lossy() != "/dev" {
+        if CStr::from_ptr(buffer.as_ptr()).to_string_lossy() != "/dev" {
             panic!("chdir failed");
         }
     }
@@ -87,7 +89,7 @@ fn test_chdir() {
 
 fn test_fchdir() {
     print!("Testing fchdir syscall ...");
-    let path = std::ffi::CString::new("/dev").unwrap();
+    let path = CString::new("/dev").unwrap();
     let mut buffer = [1u8; 16];
     unsafe {
         let fd = libc::open(path.as_ptr(), libc::O_RDONLY);
@@ -105,7 +107,7 @@ fn test_fchdir() {
         {
             panic!("getcwd failed");
         }
-        if std::ffi::CStr::from_ptr(buffer.as_ptr()).to_string_lossy() != "/dev" {
+        if CStr::from_ptr(buffer.as_ptr()).to_string_lossy() != "/dev" {
             panic!("fchdir failed");
         }
         libc::close(fd);
@@ -116,8 +118,8 @@ fn test_fchdir() {
 fn test_chroot() {
     print!("Testing chroot syscall ...");
     let file = "/bin/busybox";
-    let c_file = std::ffi::CString::new(file).unwrap();
-    let path = std::ffi::CString::new("/dev").unwrap();
+    let c_file = CString::new(file).unwrap();
+    let path = CString::new("/dev").unwrap();
     unsafe {
         if libc::chroot(path.as_ptr()) != 0 {
             panic!("chroot failed");
@@ -134,8 +136,8 @@ fn test_chroot() {
 fn test_chmod() {
     print!("Testing chmod syscall ..."); // this actually tests fchmodat
     let dir_path = "/tmp/chmod_test";
-    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
-    let mut buffer = std::mem::MaybeUninit::uninit();
+    let c_dir_path = CString::new(dir_path).unwrap();
+    let mut buffer = MaybeUninit::uninit();
 
     fs::create_dir(dir_path).expect("Failed to create directory");
 
@@ -158,8 +160,8 @@ fn test_chmod() {
 fn test_fchmod() {
     print!("Testing fchmod syscall ...");
     let dir_path = "/tmp/fchmod_test";
-    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
-    let mut buffer = std::mem::MaybeUninit::uninit();
+    let c_dir_path = CString::new(dir_path).unwrap();
+    let mut buffer = MaybeUninit::uninit();
 
     fs::create_dir(dir_path).expect("Failed to create directory");
 
@@ -187,8 +189,8 @@ fn test_fchmod() {
 fn test_chown() {
     print!("Testing chown syscall ..."); // this actually tests fchownat
     let dir_path = "/tmp/chown_test";
-    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
-    let mut buffer = std::mem::MaybeUninit::uninit();
+    let c_dir_path = CString::new(dir_path).unwrap();
+    let mut buffer = MaybeUninit::uninit();
 
     fs::create_dir(dir_path).expect("Failed to create directory");
 
@@ -211,8 +213,8 @@ fn test_chown() {
 fn test_fchown() {
     print!("Testing fchown syscall ...");
     let dir_path = "/tmp/fchown_test";
-    let c_dir_path = std::ffi::CString::new(dir_path).unwrap();
-    let mut buffer = std::mem::MaybeUninit::uninit();
+    let c_dir_path = CString::new(dir_path).unwrap();
+    let mut buffer = MaybeUninit::uninit();
 
     fs::create_dir(dir_path).expect("Failed to create directory");
 
@@ -258,7 +260,7 @@ fn test_fork() {
 fn test_read() {
     print!("Testing read syscall ...");
     let file = "/dev/zero";
-    let c_file = std::ffi::CString::new(file).unwrap();
+    let c_file = CString::new(file).unwrap();
     let mut buffer = [1u8; 16];
     unsafe {
         let fd = libc::open(c_file.as_ptr(), libc::O_RDONLY);
@@ -278,7 +280,7 @@ fn test_read() {
 fn test_write() {
     print!("Testing write syscall ...");
     let file = "/dev/null";
-    let c_file = std::ffi::CString::new(file).unwrap();
+    let c_file = CString::new(file).unwrap();
     let data = b"Hello, world!";
     unsafe {
         let fd = libc::open(c_file.as_ptr(), libc::O_WRONLY);
@@ -298,10 +300,10 @@ fn test_link() {
     print!("Testing link syscall ..."); // actually tests linkat
     let path = "/tmp/link_test";
     let link = "/tmp/link_test_link";
-    let c_path = std::ffi::CString::new(path).unwrap();
-    let c_link = std::ffi::CString::new(link).unwrap();
-    let mut stat_targetbuf = std::mem::MaybeUninit::uninit();
-    let mut stat_linkbuf = std::mem::MaybeUninit::uninit();
+    let c_path = CString::new(path).unwrap();
+    let c_link = CString::new(link).unwrap();
+    let mut stat_targetbuf = MaybeUninit::uninit();
+    let mut stat_linkbuf = MaybeUninit::uninit();
 
     unsafe {
         let fd = libc::open(c_path.as_ptr(), libc::O_CREAT, 0o777);
@@ -338,8 +340,8 @@ fn test_symlink() {
     print!("Testing symlink syscall ..."); // actually tests symlinkat
     let path = "/tmp/symlink_test";
     let link = "/tmp/symlink_test_link";
-    let c_path = std::ffi::CString::new(path).unwrap();
-    let c_link = std::ffi::CString::new(link).unwrap();
+    let c_path = CString::new(path).unwrap();
+    let c_link = CString::new(link).unwrap();
     let mut buffer = [1u8; 17];
 
     let mut file = File::create_new(path).expect("Failed to create file");
@@ -420,7 +422,7 @@ fn test_truncate() {
     file.write_all(b"Hello, world!")
         .expect("Failed to write to file");
     unsafe {
-        libc::truncate(std::ffi::CString::new(path).unwrap().as_ptr(), 5);
+        libc::truncate(CString::new(path).unwrap().as_ptr(), 5);
     }
 
     let mut string = String::new();
@@ -439,7 +441,7 @@ fn test_truncate() {
 fn test_ftruncate() {
     print!("Testing ftruncate syscall ...");
     let file = "/tmp/ftruncate_test.txt";
-    let c_file = std::ffi::CString::new(file).unwrap();
+    let c_file = CString::new(file).unwrap();
     let data = b"Hello, world!";
     let mut buffer = [1u8; 5];
     unsafe {
@@ -456,6 +458,64 @@ fn test_ftruncate() {
         }
         if &buffer != b"Hello" {
             panic!("ftruncate failed");
+        }
+        libc::close(fd);
+    }
+    fs::remove_file(file).expect("Failed to delete file");
+    println!(" OK");
+}
+
+fn test_utimens() {
+    print!("Testing utimens syscall ...");
+    let file = "/tmp/utimens_test";
+    let c_file = CString::new(file).unwrap();
+    let mut buffer = MaybeUninit::uninit();
+
+    let mut times = [libc::timespec {
+        tv_sec: 1766620800,
+        tv_nsec: 1,
+    }; 2]; // 1 ns after dec 25 2025
+    unsafe {
+        let fd = libc::open(c_file.as_ptr(), libc::O_CREAT, 0o777);
+        if fd < 0 {
+            panic!("open failed");
+        }
+        let ret = libc::utimensat(libc::AT_FDCWD, c_file.as_ptr(), times.as_mut_ptr(), 0);
+        if ret < 0 {
+            panic!("utimensat failed");
+        }
+        let ret = libc::stat(c_file.as_ptr(), buffer.as_mut_ptr());
+        if ret < 0 {
+            panic!("stat failed");
+        }
+        let stat = buffer.assume_init();
+        if stat.st_atime != times[0].tv_sec
+            || stat.st_atime_nsec != times[0].tv_nsec
+            || stat.st_mtime != times[1].tv_sec
+            || stat.st_mtime_nsec != times[1].tv_nsec
+        {
+            panic!("utimensat failed");
+        }
+
+        times = [libc::timespec {
+            tv_sec: 1767225600,
+            tv_nsec: 5000,
+        }; 2]; // 5000 ns after jan 1 2026
+        let ret = libc::futimens(fd, times.as_mut_ptr());
+        if ret < 0 {
+            panic!("futimens failed");
+        }
+        let ret = libc::stat(c_file.as_ptr(), buffer.as_mut_ptr());
+        if ret < 0 {
+            panic!("stat failed");
+        }
+        let stat = buffer.assume_init();
+        if stat.st_atime != times[0].tv_sec
+            || stat.st_atime_nsec != times[0].tv_nsec
+            || stat.st_mtime != times[1].tv_sec
+            || stat.st_mtime_nsec != times[1].tv_nsec
+        {
+            panic!("utimensat failed");
         }
         libc::close(fd);
     }
@@ -606,6 +666,7 @@ fn main() {
     run_test(test_futex);
     run_test(test_truncate);
     run_test(test_ftruncate);
+    run_test(test_utimens);
     run_test(test_rust_file);
     run_test(test_rust_dir);
     run_test(test_rust_thread);

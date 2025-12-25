@@ -15,6 +15,7 @@ pub mod readlink;
 pub mod stat;
 pub mod symlink;
 pub mod unlink;
+pub mod utime;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
