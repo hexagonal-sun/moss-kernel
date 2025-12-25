@@ -9,7 +9,7 @@ use libkernel::{
 use crate::{
     clock::{realtime::date, timespec::TimeSpec},
     current_task,
-    fs::{VFS, syscalls::at::resolve_at_start_node},
+    fs::syscalls::at::{AtFlags, resolve_at_start_node, resolve_path_flags},
     memory::uaccess::{copy_from_user, cstr::UserCStr},
     process::fd_table::Fd,
 };
@@ -18,6 +18,7 @@ pub async fn sys_utimensat(
     dirfd: Fd,
     path: TUA<c_char>,
     times: TUA<[TimeSpec; 2]>,
+    flags: i32,
 ) -> Result<usize> {
     let task = current_task();
 
@@ -34,8 +35,9 @@ pub async fn sys_utimensat(
 
         let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
         let start_node = resolve_at_start_node(dirfd, path).await?;
+        let flags = AtFlags::from_bits_retain(flags);
 
-        VFS.resolve_path(path, start_node, task).await?
+        resolve_path_flags(dirfd, path, start_node, task, flags).await?
     };
 
     let mut attr = node.getattr().await?;

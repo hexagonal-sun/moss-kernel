@@ -114,6 +114,7 @@ pub async fn handle_syscall() {
                 TUA::from_value(arg2 as _),
                 arg3.into(),
                 TUA::from_value(arg4 as _),
+                arg5 as _,
             )
             .await
         }
@@ -124,13 +125,22 @@ pub async fn handle_syscall() {
         0x32 => sys_fchdir(arg1.into()).await,
         0x33 => sys_chroot(TUA::from_value(arg1 as _)).await,
         0x34 => sys_fchmod(arg1.into(), arg2 as _).await,
-        0x35 => sys_fchmodat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
+        0x35 => {
+            sys_fchmodat(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+            )
+            .await
+        }
         0x36 => {
             sys_fchownat(
                 arg1.into(),
                 TUA::from_value(arg2 as _),
                 arg3.into(),
                 arg4.into(),
+                arg5 as _,
             )
             .await
         }
@@ -207,6 +217,7 @@ pub async fn handle_syscall() {
                 arg1.into(),
                 TUA::from_value(arg2 as _),
                 TUA::from_value(arg3 as _),
+                arg4 as _,
             )
             .await
         }

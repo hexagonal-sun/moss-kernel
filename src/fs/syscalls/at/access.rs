@@ -1,5 +1,8 @@
 use super::{AtFlags, resolve_at_start_node};
-use crate::{fs::VFS, memory::uaccess::cstr::UserCStr, process::fd_table::Fd, sched::current_task};
+use crate::{
+    fs::syscalls::at::resolve_path_flags, memory::uaccess::cstr::UserCStr, process::fd_table::Fd,
+    sched::current_task,
+};
 use core::ffi::c_char;
 use libkernel::{
     error::Result,
@@ -18,8 +21,8 @@ pub async fn sys_faccessat2(dirfd: Fd, path: TUA<c_char>, mode: i32, flags: i32)
     let access_mode = AccessMode::from_bits_retain(mode);
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let start_node = resolve_at_start_node(dirfd, path).await?;
-    let node = VFS.resolve_path(path, start_node, task.clone()).await?;
     let at_flags = AtFlags::from_bits_retain(flags);
+    let node = resolve_path_flags(dirfd, path, start_node, task.clone(), at_flags).await?;
 
     // If mode is F_OK (value 0), the check is for the file's existence.
     // Reaching this point means we found the file, so we can return success.
