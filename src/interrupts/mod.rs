@@ -68,14 +68,10 @@ pub trait InterruptHandler: Send + Sync {
     fn handle_irq(&self, desc: InterruptDescriptor);
 }
 
-struct InterruptManagerInner {
-    claimed_interrupts: BTreeMap<InterruptDescriptor, ClaimedInterrupt>,
-    controller: Arc<SpinLock<dyn InterruptController>>,
-}
-
 pub struct InterruptManager {
     name: &'static str,
-    inner: SpinLock<InterruptManagerInner>,
+    controller: Arc<SpinLock<dyn InterruptController>>,
+    claimed_interrupts: SpinLock<BTreeMap<InterruptDescriptor, ClaimedInterrupt>>,
 }
 
 impl InterruptManager {
@@ -88,10 +84,8 @@ impl InterruptManager {
 
         Arc::new(Self {
             name,
-            inner: SpinLock::new(InterruptManagerInner {
-                claimed_interrupts: BTreeMap::new(),
-                controller: driver,
-            }),
+            claimed_interrupts: SpinLock::new(BTreeMap::new()),
+            controller: driver,
         })
     }
 
@@ -99,9 +93,7 @@ impl InterruptManager {
         &self,
         iter: &mut dyn Iterator<Item = u32>,
     ) -> Result<InterruptConfig> {
-        self.inner
-            .lock_save_irq()
-            .controller
+        self.controller
             .lock_save_irq()
             .parse_fdt_interrupt_regs(iter)
     }
@@ -115,9 +107,9 @@ impl InterruptManager {
         T: 'static + Send + Sync + Driver + InterruptHandler,
         FConstructor: FnOnce(ClaimedInterrupt) -> T,
     {
-        let mut inner = self.inner.lock_save_irq();
+        let mut claimed_int = self.claimed_interrupts.lock_save_irq();
 
-        if inner.claimed_interrupts.contains_key(&config.descriptor) {
+        if claimed_int.contains_key(&config.descriptor) {
             return Err(KernelError::InUse);
         }
 
@@ -130,12 +122,12 @@ impl InterruptManager {
 
             let driver = constructor(handle.clone());
 
-            inner.claimed_interrupts.insert(config.descriptor, handle);
+            claimed_int.insert(config.descriptor, handle);
 
             driver
         });
 
-        inner.controller.lock_save_irq().enable_interrupt(config);
+        self.controller.lock_save_irq().enable_interrupt(config);
 
         debug!(
             "Device {} claimed interrupt: {:?}",
@@ -147,37 +139,39 @@ impl InterruptManager {
     }
 
     fn remove_interrupt(&self, desc: InterruptDescriptor) {
-        let mut inner = self.inner.lock_save_irq();
-        inner.claimed_interrupts.remove(&desc);
-        inner.controller.lock_save_irq().disable_interrupt(desc);
-    }
+        let mut claimed_int = self.claimed_interrupts.lock_save_irq();
 
-    pub fn handle_interrupt(&self) {
-        let mut inner = self.inner.lock_save_irq();
-        let ctx = inner.controller.lock_save_irq().read_active_interrupt();
-
-        if let Some(ctx) = ctx {
-            let desc = ctx.descriptor();
-            if let Some(irq_handle) = inner.claimed_interrupts.get_mut(&desc) {
-                match irq_handle.handler.upgrade() {
-                    Some(x) => x.handle_irq(ctx.descriptor()),
-                    None => warn!("IRQ fired for stale IRQ handle"),
-                }
-            }
+        if claimed_int.remove(&desc).is_some() {
+            self.controller.lock_save_irq().disable_interrupt(desc);
         }
     }
 
+    fn get_active_handler(&self) -> Option<(Arc<dyn InterruptHandler>, InterruptDescriptor)> {
+        let mut claimed_ints = self.claimed_interrupts.lock_save_irq();
+
+        let ctx = self.controller.lock_save_irq().read_active_interrupt()?;
+        let desc = ctx.descriptor();
+        let irq = claimed_ints.get_mut(&desc)?;
+        let handler = irq.handler.upgrade()?;
+
+        Some((handler, desc))
+    }
+
+    pub fn handle_interrupt(&self) {
+        let Some((handler, desc)) = self.get_active_handler() else {
+            warn!("IRQ fired for stale IRQ handle");
+            return;
+        };
+
+        handler.handle_irq(desc);
+    }
+
     pub fn raise_ipi(&self, cpu: usize) {
-        let inner = self.inner.lock_save_irq();
-        inner.controller.lock_save_irq().raise_ipi(cpu);
+        self.controller.lock_save_irq().raise_ipi(cpu);
     }
 
     pub fn enable_core(&self, cpu_id: usize) {
-        self.inner
-            .lock_save_irq()
-            .controller
-            .lock_save_irq()
-            .enable_core(cpu_id);
+        self.controller.lock_save_irq().enable_core(cpu_id);
     }
 }
 
