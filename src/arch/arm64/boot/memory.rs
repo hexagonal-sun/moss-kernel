@@ -158,7 +158,7 @@ pub fn setup_stack_and_heap(pgtbl_base: TPA<PgTableArray<L0Table>>) -> Result<VA
     )?;
 
     unsafe {
-        HEAP_ALLOCATOR.lock().init(
+        HEAP_ALLOCATOR.0.lock_save_irq().init(
             heap_virt_region.start_address().as_ptr_mut().cast(),
             heap_virt_region.size(),
         )
