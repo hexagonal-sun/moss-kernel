@@ -75,6 +75,9 @@ pub enum FsError {
     #[error("The file or directory already exists.")]
     AlreadyExists,
 
+    #[error("The directory is not empty.")]
+    DirectoryNotEmpty,
+
     #[error("Invalid input parameters.")]
     InvalidInput,
 
@@ -98,6 +101,9 @@ pub enum FsError {
 
     #[error("Too many symbolic links encountered")]
     Loop,
+
+    #[error("Attempted to rename from cross device")]
+    CrossDevice,
 }
 
 #[derive(Error, Debug, PartialEq, Eq, Clone)]

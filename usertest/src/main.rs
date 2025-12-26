@@ -144,7 +144,7 @@ fn test_chmod() {
     let mode = libc::S_IRUSR | libc::S_IWUSR | libc::S_IXUSR;
     unsafe {
         if libc::chmod(c_dir_path.as_ptr(), mode) != 0 {
-            panic!("chown failed");
+            panic!("chmod failed");
         }
         if libc::stat(c_dir_path.as_ptr(), buffer.as_mut_ptr()) != 0 {
             panic!("stat failed");
@@ -371,6 +371,42 @@ fn test_symlink() {
     }
     fs::remove_file(path).expect("Failed to delete file");
     fs::remove_file(link).expect("Failed to delete link");
+    println!(" OK");
+}
+
+fn test_rename() {
+    use std::fs::{self, File};
+    use std::io::{Read, Write};
+
+    print!("Testing rename syscall ...");
+    let old_path = "/tmp/rename_test";
+    let new_path = "/tmp/rename_test_new";
+    let c_old_path = CString::new(old_path).unwrap();
+    let c_new_path = CString::new(new_path).unwrap();
+
+    let mut file = File::create_new(old_path).expect("Failed to create file");
+    file.write_all(b"Hello, world!")
+        .expect("Failed to write to file");
+
+    unsafe {
+        let ret = libc::rename(c_old_path.as_ptr(), c_new_path.as_ptr());
+        if ret < 0 {
+            panic!("rename failed");
+        }
+        let fd = libc::open(c_old_path.as_ptr(), libc::O_RDONLY);
+        if fd != -1 {
+            panic!("open failed");
+        }
+    }
+    let mut file = File::open(new_path).expect("Failed to open file");
+    let mut string = String::new();
+    file.read_to_string(&mut string)
+        .expect("Failed to read from file");
+    if string != "Hello, world!" {
+        panic!("rename failed");
+    }
+
+    fs::remove_file(new_path).expect("Failed to delete file");
     println!(" OK");
 }
 
@@ -663,6 +699,7 @@ fn main() {
     run_test(test_write);
     run_test(test_link);
     run_test(test_symlink);
+    run_test(test_rename);
     run_test(test_futex);
     run_test(test_truncate);
     run_test(test_ftruncate);

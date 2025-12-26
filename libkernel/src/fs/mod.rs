@@ -19,6 +19,8 @@ pub mod filesystems;
 pub mod path;
 pub mod pathbuf;
 
+use core::any::Any;
+
 use crate::{
     driver::CharDevDescriptor,
     error::{FsError, KernelError, Result},
@@ -164,7 +166,7 @@ pub trait BlockDevice: Send + Sync {
 /// operations are stateless from the VFS's perspective; for instance, `read_at`
 /// takes an explicit offset instead of using a hidden cursor.
 #[async_trait]
-pub trait Inode: Send + Sync {
+pub trait Inode: Send + Sync + Any {
     /// Get the unique ID for this inode.
     fn id(&self) -> InodeId;
 
@@ -223,6 +225,30 @@ pub trait Inode: Send + Sync {
     /// Creates a new symlink
     async fn symlink(&self, _name: &str, _target: &Path) -> Result<()> {
         Err(KernelError::NotSupported)
+    }
+
+    async fn rename_from(
+        &self,
+        _old_parent: Arc<dyn Inode>,
+        _old_name: &str,
+        _new_name: &str,
+        _no_replace: bool,
+    ) -> Result<()> {
+        Err(KernelError::NotSupported)
+    }
+
+    async fn exchange(
+        &self,
+        _first_name: &str,
+        _second_parent: Arc<dyn Inode>,
+        _second_name: &str,
+    ) -> Result<()> {
+        Err(KernelError::NotSupported)
+    }
+
+    /// Checks if a directory is empty.
+    async fn dir_is_empty(&self) -> Result<bool> {
+        Err(FsError::NotADirectory.into())
     }
 
     /// Reads the contents of a directory.

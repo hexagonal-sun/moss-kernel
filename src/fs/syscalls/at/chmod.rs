@@ -1,7 +1,7 @@
 use core::ffi::c_char;
 
 use libkernel::{
-    error::{KernelError, Result},
+    error::Result,
     fs::{attr::FilePermissions, path::Path},
     memory::address::TUA,
 };
@@ -15,9 +15,6 @@ use crate::{
 
 pub async fn sys_fchmodat(dirfd: Fd, path: TUA<c_char>, mode: u16, flags: i32) -> Result<usize> {
     let flags = AtFlags::from_bits_retain(flags);
-    if flags.contains(AtFlags::AT_SYMLINK_NOFOLLOW) {
-        return Err(KernelError::NotSupported); // per fchmodat(2) this is not supported
-    }
 
     let mut buf = [0; 1024];
 

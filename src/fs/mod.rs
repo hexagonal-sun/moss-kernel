@@ -558,6 +558,31 @@ impl VFS {
             Err(e) => Err(e),
         }
     }
+
+    pub async fn rename(
+        &self,
+        old_parent_inode: Arc<dyn Inode>,
+        old_name: &str,
+        new_parent_inode: Arc<dyn Inode>,
+        new_name: &str,
+        no_replace: bool,
+    ) -> Result<()> {
+        new_parent_inode
+            .rename_from(old_parent_inode, old_name, new_name, no_replace)
+            .await
+    }
+
+    pub async fn exchange(
+        &self,
+        old_parent_inode: Arc<dyn Inode>,
+        old_name: &str,
+        new_parent_inode: Arc<dyn Inode>,
+        new_name: &str,
+    ) -> Result<()> {
+        old_parent_inode
+            .exchange(old_name, new_parent_inode, new_name)
+            .await
+    }
 }
 
 pub static VFS: VFS = VFS::new();

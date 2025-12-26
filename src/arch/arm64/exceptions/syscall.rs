@@ -13,6 +13,7 @@ use crate::{
                 mkdir::sys_mkdirat,
                 open::sys_openat,
                 readlink::sys_readlinkat,
+                rename::{sys_renameat, sys_renameat2},
                 stat::sys_newfstatat,
                 symlink::sys_symlinkat,
                 unlink::sys_unlinkat,
@@ -115,6 +116,15 @@ pub async fn handle_syscall() {
                 arg3.into(),
                 TUA::from_value(arg4 as _),
                 arg5 as _,
+            )
+            .await
+        }
+        0x26 => {
+            sys_renameat(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3.into(),
+                TUA::from_value(arg4 as _),
             )
             .await
         }
@@ -340,6 +350,16 @@ pub async fn handle_syscall() {
                 arg2 as _,
                 TUA::from_value(arg3 as _),
                 TUA::from_value(arg4 as _),
+            )
+            .await
+        }
+        0x114 => {
+            sys_renameat2(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3.into(),
+                TUA::from_value(arg4 as _),
+                arg5 as _,
             )
             .await
         }

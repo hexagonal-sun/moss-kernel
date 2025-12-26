@@ -16,6 +16,7 @@ pub mod link;
 pub mod mkdir;
 pub mod open;
 pub mod readlink;
+pub mod rename;
 pub mod stat;
 pub mod symlink;
 pub mod unlink;

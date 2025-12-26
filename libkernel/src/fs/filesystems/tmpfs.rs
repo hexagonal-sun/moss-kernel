@@ -505,6 +505,143 @@ where
 
         Ok(())
     }
+
+    async fn rename_from(
+        &self,
+        old_parent: Arc<dyn Inode>,
+        old_name: &str,
+        new_name: &str,
+        no_replace: bool,
+    ) -> Result<()> {
+        if old_name == new_name && old_parent.id().inode_id() == self.id().inode_id() {
+            return Ok(());
+        }
+
+        let old_parent = Arc::downcast::<TmpFsDirInode<C, G, T>>(old_parent)
+            .map_err(|_| FsError::CrossDevice)?;
+
+        let new_name = new_name.to_owned();
+        if old_parent.id().inode_id() == self.id().inode_id() {
+            let mut entries = self.entries.lock_save_irq();
+            if no_replace && entries.iter().any(|e| e.name == new_name) {
+                return Err(FsError::AlreadyExists.into());
+            }
+
+            let new_entry = entries.iter().position(|e| e.name == new_name);
+
+            entries
+                .iter_mut()
+                .find(|e| e.name == old_name)
+                .ok_or(FsError::NotFound)?
+                .name = new_name;
+
+            if let Some(new_entry) = new_entry {
+                entries.remove(new_entry);
+            }
+
+            return Ok(());
+        }
+
+        // prevent deadlocks
+        let (mut lock1, mut lock2) = if old_parent.id().inode_id() > self.id().inode_id() {
+            (
+                old_parent.entries.lock_save_irq(),
+                self.entries.lock_save_irq(),
+            )
+        } else {
+            (
+                self.entries.lock_save_irq(),
+                old_parent.entries.lock_save_irq(),
+            )
+        };
+
+        let (old_parent, new_parent) = if old_parent.id().inode_id() > self.id().inode_id() {
+            (&mut lock1, &mut lock2)
+        } else {
+            (&mut lock2, &mut lock1)
+        };
+
+        if no_replace && new_parent.iter().any(|e| e.name == new_name) {
+            return Err(FsError::AlreadyExists.into());
+        } else if let Some(entry) = new_parent.iter().position(|e| e.name == new_name) {
+            new_parent.remove(entry);
+        }
+
+        let idx = old_parent
+            .iter()
+            .position(|e| e.name == old_name)
+            .ok_or(FsError::NotFound)?;
+        let mut entry = old_parent.remove(idx);
+        entry.name = new_name;
+        new_parent.push(entry);
+
+        Ok(())
+    }
+
+    async fn exchange(
+        &self,
+        first_name: &str,
+        second_parent: Arc<dyn Inode>,
+        second_name: &str,
+    ) -> Result<()> {
+        if first_name == second_name && self.id().inode_id() == second_parent.id().inode_id() {
+            return Ok(());
+        }
+
+        let second_parent = Arc::downcast::<TmpFsDirInode<C, G, T>>(second_parent)
+            .map_err(|_| FsError::CrossDevice)?;
+
+        if self.id().inode_id() == second_parent.id().inode_id() {
+            let mut entries = self.entries.lock_save_irq();
+            let first = entries.iter().position(|e| e.name == first_name);
+            let second = entries.iter().position(|e| e.name == second_name);
+            if let Some(first) = first
+                && let Some(second) = second
+            {
+                entries[first].name = second_name.to_owned();
+                entries[second].name = first_name.to_owned();
+                return Ok(());
+            } else {
+                return Err(FsError::NotFound.into());
+            }
+        }
+
+        // prevent deadlocks
+        let (mut lock1, mut lock2) = if self.id().inode_id() > second_parent.id().inode_id() {
+            (
+                self.entries.lock_save_irq(),
+                second_parent.entries.lock_save_irq(),
+            )
+        } else {
+            (
+                second_parent.entries.lock_save_irq(),
+                self.entries.lock_save_irq(),
+            )
+        };
+
+        let (first_parent, second_parent) = if self.id().inode_id() > second_parent.id().inode_id()
+        {
+            (&mut lock1, &mut lock2)
+        } else {
+            (&mut lock2, &mut lock1)
+        };
+
+        if let Some(first) = first_parent.iter().position(|e| e.name == first_name)
+            && let Some(second) = second_parent.iter().position(|e| e.name == second_name)
+        {
+            let first = first_parent.remove(first);
+            let second = second_parent.remove(second);
+            first_parent.push(second);
+            second_parent.push(first);
+            Ok(())
+        } else {
+            Err(FsError::NotFound.into())
+        }
+    }
+
+    async fn dir_is_empty(&self) -> Result<bool> {
+        Ok(self.entries.lock_save_irq().is_empty())
+    }
 }
 
 impl<C, G, T> TmpFsDirInode<C, G, T>
