@@ -2,7 +2,7 @@ use crate::{process::ProcVM, sched::current_task};
 use alloc::boxed::Box;
 use libkernel::{
     PageInfo, UserAddressSpace,
-    error::Result,
+    error::{KernelError, MapError, Result},
     memory::{address::VA, permissions::PtePermissions, proc_vm::vmarea::AccessKind},
 };
 
@@ -74,20 +74,48 @@ pub fn handle_demand_fault(
                 return Ok(());
             }
 
-            vm.mm_mut().address_space_mut().map_page(
-                new_page.leak(),
+            match vm.mm_mut().address_space_mut().map_page(
+                new_page.pa().to_pfn(),
                 page_va,
                 PtePermissions::from(vma.permissions()),
-            )
+            ) {
+                Ok(_) => {
+                    // We mapped our page, leak it for reclimation by the
+                    // address-space tear-down code.
+                    new_page.leak();
+
+                    Ok(())
+                }
+                Err(KernelError::MappingError(MapError::AlreadyMapped)) => {
+                    // Another CPU mapped the page for us, since we've validated the
+                    // VMA is still valid and the same mapping code has been
+                    // executed, it's guarenteed that the correct page will have
+                    // been mapped by the other CPU.
+                    //
+                    // Do not leak the page, since it's not going to be used.
+                    Ok(())
+                }
+                e => e,
+            }
         })))
     } else {
         // Anonymous mapping, no need to defer.
-        vm.mm_mut()
-            .address_space_mut()
-            .map_page(new_page.leak(), page_va, vma.permissions().into())
-            .unwrap();
-
-        Ok(FaultResolution::Resolved)
+        match vm.mm_mut().address_space_mut().map_page(
+            new_page.pa().to_pfn(),
+            page_va,
+            vma.permissions().into(),
+        ) {
+            Ok(()) => {
+                // As per logic above.
+                new_page.leak();
+                Ok(FaultResolution::Resolved)
+            }
+            Err(KernelError::MappingError(MapError::AlreadyMapped)) => {
+                // As per logic above.
+                Ok(FaultResolution::Resolved)
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
