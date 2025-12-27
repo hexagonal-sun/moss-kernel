@@ -15,6 +15,7 @@ use crate::{
                 readlink::sys_readlinkat,
                 rename::{sys_renameat, sys_renameat2},
                 stat::sys_newfstatat,
+                statx::sys_statx,
                 symlink::sys_symlinkat,
                 unlink::sys_unlinkat,
                 utime::sys_utimensat,
@@ -417,6 +418,16 @@ pub async fn handle_syscall() {
                 arg3 as _,
                 arg4 as _,
                 arg5 as _,
+            )
+            .await
+        }
+        0x123 => {
+            sys_statx(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+                TUA::from_value(arg5 as _),
             )
             .await
         }

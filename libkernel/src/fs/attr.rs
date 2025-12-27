@@ -52,6 +52,7 @@ pub struct FileAttr {
     pub block_size: u32,
     pub blocks: u64,
     pub atime: Duration, // Access time (e.g., seconds since epoch)
+    pub btime: Duration, // Creation time
     pub mtime: Duration, // Modification time
     pub ctime: Duration, // Change time
     pub file_type: FileType,
@@ -69,6 +70,7 @@ impl Default for FileAttr {
             block_size: 0,
             blocks: 0,
             atime: Duration::new(0, 0),
+            btime: Duration::new(0, 0),
             mtime: Duration::new(0, 0),
             ctime: Duration::new(0, 0),
             file_type: FileType::File,

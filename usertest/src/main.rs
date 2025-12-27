@@ -563,6 +563,93 @@ fn test_utimens() {
     println!(" OK");
 }
 
+fn test_statx() {
+    #[repr(C)]
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct StatX {
+        pub stx_mask: u32,
+        pub stx_blksize: u32,
+        pub stx_attributes: u64,
+        pub stx_nlink: u32,
+        pub stx_uid: u32,
+        pub stx_gid: u32,
+        pub stx_mode: u16,
+        pub __pad1: u16,
+        pub stx_ino: u64,
+        pub stx_size: u64,
+        pub stx_blocks: u64,
+        pub stx_attributes_mask: u64,
+        pub stx_atime: StatXTimestamp,
+        pub stx_btime: StatXTimestamp,
+        pub stx_ctime: StatXTimestamp,
+        pub stx_mtime: StatXTimestamp,
+        pub stx_rdev_major: u32,
+        pub stx_rdev_minor: u32,
+        pub stx_dev_major: u32,
+        pub stx_dev_minor: u32,
+        pub stx_mnt_id: u64,
+        pub stx_dio_mem_align: u32,
+        pub stx_dio_offset_align: u32,
+        pub stx_subvol: u64,
+        pub stx_atomic_write_unit_min: u32,
+        pub stx_atomic_write_unit_max: u32,
+        pub stx_atomic_write_segments_max: u32,
+        pub stx_dio_read_offset_align: u32,
+        pub stx_atomic_write_unit_max_opt: u32,
+        pub __unused1: u64,
+        pub __unused2: u64,
+        pub __unused3: u64,
+        pub __unused4: u64,
+        pub __unused5: u64,
+        pub __unused6: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Debug, Default, Clone, Copy)]
+    pub struct StatXTimestamp {
+        pub tv_sec: i64,
+        pub tv_nsec: u32,
+        pub __pad1: i32,
+    }
+
+    print!("Testing statx syscall ...");
+    let file = "/tmp/statx_test";
+    let c_file = CString::new(file).unwrap();
+    let data = b"Hello, world!";
+    let mut buffer = MaybeUninit::uninit();
+    unsafe {
+        let fd = libc::open(c_file.as_ptr(), libc::O_WRONLY | libc::O_CREAT, 0o644);
+        if fd < 0 {
+            panic!("open failed");
+        }
+        let ret = libc::write(fd, data.as_ptr() as *const libc::c_void, data.len());
+        if ret < 0 {
+            panic!("write failed");
+        }
+        libc::close(fd);
+        let ret = libc::syscall(
+            libc::SYS_statx,
+            libc::AT_FDCWD,
+            c_file.as_ptr(),
+            0,
+            0x000007ff as libc::c_uint,
+            buffer.as_mut_ptr(),
+        );
+        if ret < 0 {
+            panic!("statx failed");
+        }
+        let statx: StatX = buffer.assume_init();
+        assert_eq!(statx.stx_mask, 0x000007ff);
+        assert_eq!(statx.stx_nlink, 1);
+        assert_eq!(statx.stx_mode as u32, libc::S_IFREG | 0o644);
+        assert_eq!(statx.stx_uid, libc::getuid());
+        assert_eq!(statx.stx_gid, libc::getgid());
+        assert_eq!(statx.stx_size, data.len() as u64);
+    }
+    fs::remove_file(file).expect("Failed to delete file");
+    println!(" OK");
+}
+
 fn test_rust_file() {
     print!("Testing rust file operations ...");
     use std::fs::{self, File};
@@ -708,6 +795,7 @@ fn main() {
     run_test(test_truncate);
     run_test(test_ftruncate);
     run_test(test_utimens);
+    run_test(test_statx);
     run_test(test_rust_file);
     run_test(test_rust_dir);
     run_test(test_rust_thread);

@@ -106,6 +106,20 @@ pub enum FileType {
     Socket,
 }
 
+impl From<FileType> for u32 {
+    fn from(file_type: FileType) -> Self {
+        match file_type {
+            FileType::Directory => 0o040000,
+            FileType::CharDevice(_) => 0o020000,
+            FileType::BlockDevice(_) => 0o060000,
+            FileType::File => 0o100000,
+            FileType::Fifo => 0o010000,
+            FileType::Symlink => 0o120000,
+            FileType::Socket => 0o140000,
+        }
+    }
+}
+
 /// A stateful, streaming iterator for reading directory entries.
 #[async_trait]
 pub trait DirStream: Send + Sync {

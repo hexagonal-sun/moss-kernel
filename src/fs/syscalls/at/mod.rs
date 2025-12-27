@@ -18,6 +18,7 @@ pub mod open;
 pub mod readlink;
 pub mod rename;
 pub mod stat;
+pub mod statx;
 pub mod symlink;
 pub mod unlink;
 pub mod utime;

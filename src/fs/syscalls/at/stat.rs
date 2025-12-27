@@ -7,7 +7,7 @@ use crate::{
 use core::ffi::c_char;
 use libkernel::{
     error::Result,
-    fs::{FileType, attr::FileAttr, path::Path},
+    fs::{attr::FileAttr, path::Path},
     memory::address::TUA,
 };
 
@@ -42,20 +42,10 @@ unsafe impl UserCopyable for Stat {}
 
 impl From<FileAttr> for Stat {
     fn from(value: FileAttr) -> Self {
-        let type_val = match value.file_type {
-            FileType::Directory => 0o040000,
-            FileType::CharDevice(_) => 0o020000,
-            FileType::BlockDevice(_) => 0o060000,
-            FileType::File => 0o100000,
-            FileType::Fifo => 0o010000,
-            FileType::Symlink => 0o120000,
-            FileType::Socket => 0o140000,
-        };
-
         Self {
             st_dev: value.id.fs_id(),
             st_ino: value.id.inode_id(),
-            st_mode: value.mode.bits() as u32 | type_val,
+            st_mode: value.mode.bits() as u32 | u32::from(value.file_type),
             st_nlink: value.nlinks,
             st_uid: value.uid.into(),
             st_gid: value.gid.into(),

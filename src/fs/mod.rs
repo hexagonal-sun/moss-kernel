@@ -583,6 +583,14 @@ impl VFS {
             .exchange(old_name, new_parent_inode, new_name)
             .await
     }
+
+    pub fn is_mount_root(&self, id: InodeId) -> bool {
+        self.state
+            .lock_save_irq()
+            .mounts
+            .values()
+            .any(|mount| mount.root_inode.id() == id)
+    }
 }
 
 pub static VFS: VFS = VFS::new();

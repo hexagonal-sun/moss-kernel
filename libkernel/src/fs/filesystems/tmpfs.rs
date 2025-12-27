@@ -126,13 +126,14 @@ where
     G: PageAllocGetter<C>,
     T: AddressTranslator<()>,
 {
-    fn new(id: InodeId) -> Result<Self> {
+    fn new(id: InodeId, mode: FilePermissions) -> Result<Self> {
         Ok(Self {
             id,
             attr: SpinLockIrq::new(FileAttr {
                 file_type: FileType::File,
                 size: 0,
                 nlinks: 1,
+                mode,
                 ..Default::default()
             }),
             inner: SpinLockIrq::new(TmpFsRegInner {
@@ -434,7 +435,7 @@ where
         let inode_id = InodeId::from_fsid_and_inodeid(fs.id(), new_id);
 
         let inode: Arc<dyn Inode> = match file_type {
-            FileType::File => Arc::new(TmpFsReg::<C, G, T>::new(inode_id)?),
+            FileType::File => Arc::new(TmpFsReg::<C, G, T>::new(inode_id, mode)?),
             FileType::Directory => TmpFsDirInode::<C, G, T>::new(new_id, self.fs.clone(), mode),
             _ => return Err(KernelError::NotSupported),
         };
@@ -817,7 +818,11 @@ mod tests {
     ) {
         init_allocator();
         let fs = TmpFs::new(0);
-        let reg = TmpFsReg::new(InodeId::from_fsid_and_inodeid(0, 1024)).unwrap();
+        let reg = TmpFsReg::new(
+            InodeId::from_fsid_and_inodeid(0, 1024),
+            FilePermissions::all(),
+        )
+        .unwrap();
         (fs, reg)
     }
 
