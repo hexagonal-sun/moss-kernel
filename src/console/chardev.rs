@@ -28,7 +28,7 @@ impl OpenableDevice for TtyDev {
         Ok(task
             .fd_table
             .lock_save_irq()
-            .get(Fd(0))
+            .get_file(Fd(0))
             .ok_or(FsError::NoDevice)?)
     }
 }

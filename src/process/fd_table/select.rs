@@ -84,7 +84,7 @@ pub async fn sys_pselect6(
         let file = task
             .fd_table
             .lock_save_irq()
-            .get(fd)
+            .get_file(fd)
             .ok_or(KernelError::BadFd)?;
 
         read_fds.push((

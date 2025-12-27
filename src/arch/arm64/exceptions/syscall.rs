@@ -37,6 +37,10 @@ use crate::{
         brk::sys_brk,
         mmap::{sys_mmap, sys_mprotect, sys_munmap},
     },
+    net::syscalls::{
+        recv::sys_recvfrom, send::sys_sendto, sys_accept, sys_bind, sys_connect, sys_listen,
+        sys_shutdown, sys_socket,
+    },
     process::{
         clone::sys_clone,
         creds::{
@@ -299,7 +303,34 @@ pub async fn handle_syscall() {
         0xb1 => sys_getegid().map_err(|e| match e {}),
         0xb2 => sys_gettid().map_err(|e| match e {}),
         0xb3 => sys_sysinfo(TUA::from_value(arg1 as _)).await,
-        0xc6 => Err(KernelError::NotSupported),
+        0xc6 => sys_socket(arg1 as _, arg2 as _, arg3 as _).await,
+        0xc8 => sys_bind(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
+        0xc9 => sys_listen(arg1.into(), arg2 as _).await,
+        0xca => sys_accept(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
+        0xcb => sys_connect(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
+        0xce => {
+            sys_sendto(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
+        0xcf => {
+            sys_recvfrom(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
+        0xd2 => sys_shutdown(arg1.into(), arg2 as _).await,
         0xd6 => sys_brk(VA::from_value(arg1 as _))
             .await
             .map_err(|e| match e {}),

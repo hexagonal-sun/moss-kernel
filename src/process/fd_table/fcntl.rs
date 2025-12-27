@@ -3,7 +3,7 @@ use libkernel::error::{KernelError, Result};
 
 use crate::{process::fd_table::FdFlags, sched::current_task};
 
-use super::Fd;
+use super::{Fd, FileDescriptorEntryItem};
 
 const F_DUPFD: u32 = 0; // Duplicate file descriptor.
 const F_GETFD: u32 = 1; // Get file descriptor flags.
@@ -48,8 +48,12 @@ pub async fn sys_fcntl(fd: Fd, op: u32, arg: usize) -> Result<usize> {
                     .get_mut(fd.as_raw() as usize)
                     .and_then(|entry| entry.as_mut())
                     .ok_or(KernelError::BadFd)?;
-
-                fd.file.clone()
+                match fd.item.clone() {
+                    FileDescriptorEntryItem::File(file) => file,
+                    FileDescriptorEntryItem::Socket(_) => {
+                        return Err(KernelError::InvalidValue);
+                    }
+                }
             };
 
             Ok(open_fd.flags().await.bits() as _)

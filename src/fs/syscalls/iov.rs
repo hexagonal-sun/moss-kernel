@@ -22,7 +22,7 @@ pub async fn sys_writev(fd: Fd, iov_ptr: TUA<IoVec>, no_iov: usize) -> Result<us
     let file = current_task()
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_file(fd)
         .ok_or(KernelError::BadFd)?;
 
     let iovs = copy_obj_array_from_user(iov_ptr, no_iov).await?;
@@ -36,7 +36,7 @@ pub async fn sys_readv(fd: Fd, iov_ptr: TUA<IoVec>, no_iov: usize) -> Result<usi
     let file = current_task()
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_file(fd)
         .ok_or(KernelError::BadFd)?;
 
     let iovs = copy_obj_array_from_user(iov_ptr, no_iov).await?;

@@ -15,8 +15,8 @@ pub async fn sys_sendfile(
         let task = current_task();
         let fds = task.fd_table.lock_save_irq();
 
-        let reader = fds.get(in_fd).ok_or(KernelError::BadFd)?;
-        let writer = fds.get(out_fd).ok_or(KernelError::BadFd)?;
+        let reader = fds.get_file(in_fd).ok_or(KernelError::BadFd)?;
+        let writer = fds.get_file(out_fd).ok_or(KernelError::BadFd)?;
 
         (reader, writer)
     };

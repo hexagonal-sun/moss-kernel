@@ -8,7 +8,7 @@ pub async fn sys_write(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
     let file = current_task()
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_file(fd)
         .ok_or(KernelError::BadFd)?;
 
     let (ops, ctx) = &mut *file.lock().await;
@@ -20,7 +20,7 @@ pub async fn sys_read(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
     let file = current_task()
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_file(fd)
         .ok_or(KernelError::BadFd)?;
 
     let (ops, ctx) = &mut *file.lock().await;

@@ -92,7 +92,7 @@ pub async fn sys_mmap(
         let fd = current_task()
             .fd_table
             .lock_save_irq()
-            .get(fd)
+            .get_file(fd)
             .ok_or(KernelError::BadFd)?;
 
         let inode = fd.inode().ok_or(KernelError::BadFd)?;

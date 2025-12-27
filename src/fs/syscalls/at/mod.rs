@@ -48,7 +48,7 @@ async fn resolve_at_start_node(dirfd: Fd, path: &Path) -> Result<Arc<dyn Inode>>
         let file = task
             .fd_table
             .lock_save_irq()
-            .get(dirfd)
+            .get_file(dirfd)
             .ok_or(KernelError::BadFd)?;
 
         let inode = file.inode().ok_or(KernelError::NotSupported)?;

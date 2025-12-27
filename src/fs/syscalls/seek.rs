@@ -19,7 +19,7 @@ pub async fn sys_lseek(fd: Fd, offset: isize, whence: i32) -> Result<usize> {
     let fd = current_task()
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_file(fd)
         .ok_or(KernelError::BadFd)?;
 
     let (ops, ctx) = &mut *fd.lock().await;

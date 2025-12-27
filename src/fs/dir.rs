@@ -128,7 +128,7 @@ pub async fn sys_getdents64(fd: Fd, mut ubuf: UA, size: u32) -> Result<usize> {
     let file = task
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_file(fd)
         .ok_or(KernelError::BadFd)?;
 
     let (ops, ctx) = &mut *file.lock().await;

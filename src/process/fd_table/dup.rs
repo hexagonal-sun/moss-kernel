@@ -37,7 +37,7 @@ pub fn sys_dup3(oldfd: Fd, newfd: Fd, flags: u32) -> Result<usize> {
     files.insert_at(
         newfd,
         FileDescriptorEntry {
-            file: old_file.clone(),
+            item: old_file.clone(),
             flags: if flags.contains(OpenFlags::O_CLOEXEC) {
                 FdFlags::CLOEXEC
             } else {

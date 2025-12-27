@@ -1,3 +1,5 @@
+use crate::net::open_socket::OpenSocket;
+use crate::process::fd_table::select::PollFlags;
 use crate::{fs::open_file::OpenFile, memory::uaccess::UserCopyable};
 use alloc::{sync::Arc, vec::Vec};
 use libkernel::error::{FsError, Result};
@@ -40,8 +42,40 @@ bitflags::bitflags! {
 }
 
 #[derive(Clone)]
+pub enum FileDescriptorEntryItem {
+    File(Arc<OpenFile>),
+    Socket(Arc<OpenSocket>),
+}
+
+impl FileDescriptorEntryItem {
+    pub async fn poll(
+        &self,
+        flags: PollFlags,
+    ) -> impl Future<Output = Result<PollFlags>> + Send + use<> {
+        match self {
+            FileDescriptorEntryItem::File(file) => file.poll(flags).await,
+            FileDescriptorEntryItem::Socket(socket) => {
+                todo!();
+            }
+        }
+    }
+}
+
+impl From<Arc<OpenFile>> for FileDescriptorEntryItem {
+    fn from(file: Arc<OpenFile>) -> Self {
+        FileDescriptorEntryItem::File(file)
+    }
+}
+
+impl From<Arc<OpenSocket>> for FileDescriptorEntryItem {
+    fn from(socket: Arc<OpenSocket>) -> Self {
+        FileDescriptorEntryItem::Socket(socket)
+    }
+}
+
+#[derive(Clone)]
 pub struct FileDescriptorEntry {
-    file: Arc<OpenFile>,
+    item: FileDescriptorEntryItem,
     flags: FdFlags,
 }
 
@@ -67,19 +101,43 @@ impl FileDescriptorTable {
     }
 
     /// Gets the file object associated with a given file descriptor.
-    pub fn get(&self, fd: Fd) -> Option<Arc<OpenFile>> {
+    pub fn get(&self, fd: Fd) -> Option<FileDescriptorEntryItem> {
         self.entries
             .get(fd.0 as usize)
             .and_then(|entry| entry.as_ref())
-            .map(|entry| entry.file.clone())
+            .map(|entry| entry.item.clone())
+    }
+
+    pub fn get_file(&self, fd: Fd) -> Option<Arc<OpenFile>> {
+        match self
+            .entries
+            .get(fd.0 as usize)
+            .and_then(|entry| entry.as_ref())
+            .map(|entry| entry.item.clone())?
+        {
+            FileDescriptorEntryItem::File(file) => Some(file),
+            _ => None,
+        }
+    }
+
+    pub fn get_socket(&self, fd: Fd) -> Option<Arc<OpenSocket>> {
+        match self
+            .entries
+            .get(fd.0 as usize)
+            .and_then(|entry| entry.as_ref())
+            .map(|entry| entry.item.clone())?
+        {
+            FileDescriptorEntryItem::Socket(socket) => Some(socket),
+            _ => None,
+        }
     }
 
     /// Inserts a new file into the table, returning the new file descriptor.
-    pub fn insert(&mut self, file: Arc<OpenFile>) -> Result<Fd> {
+    pub fn insert(&mut self, item: impl Into<FileDescriptorEntryItem>) -> Result<Fd> {
         let fd = self.find_free_fd()?;
 
         let entry = FileDescriptorEntry {
-            file,
+            item: item.into(),
             flags: FdFlags::default(),
         };
 
@@ -103,7 +161,7 @@ impl FileDescriptorTable {
 
     /// Removes a file descriptor from the table, returning the file if it
     /// existed.
-    pub fn remove(&mut self, fd: Fd) -> Option<Arc<OpenFile>> {
+    pub fn remove(&mut self, fd: Fd) -> Option<FileDescriptorEntryItem> {
         let fd_idx = fd.0 as usize;
 
         if let Some(entry) = self.entries.get_mut(fd_idx)
@@ -111,7 +169,7 @@ impl FileDescriptorTable {
         {
             // Update the hint to speed up the next search.
             self.next_fd_hint = self.next_fd_hint.min(fd_idx);
-            return Some(old_entry.file);
+            return Some(old_entry.item);
         }
 
         None

@@ -38,6 +38,7 @@ mod fs;
 mod interrupts;
 mod kernel;
 mod memory;
+mod net;
 mod process;
 mod sched;
 mod sync;
