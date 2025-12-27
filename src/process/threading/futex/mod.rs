@@ -80,18 +80,19 @@ pub async fn sys_futex(
     };
 
     // TODO: support bitset variants properly
-    let timeout = if timeout.is_null() {
-        None
-    } else {
-        let timeout = TimeSpec::copy_from_user(timeout).await?;
-        if matches!(cmd, FUTEX_WAIT_BITSET) {
-            Some(Duration::from(timeout) - date())
-        } else {
-            Some(Duration::from(timeout))
-        }
-    };
     match cmd {
         FUTEX_WAIT | FUTEX_WAIT_BITSET => {
+            let timeout = if timeout.is_null() {
+                None
+            } else {
+                let timeout = TimeSpec::copy_from_user(timeout).await?;
+                if matches!(cmd, FUTEX_WAIT_BITSET) {
+                    Some(Duration::from(timeout) - date())
+                } else {
+                    Some(Duration::from(timeout))
+                }
+            };
+
             // Obtain (or create) the wait-queue for this futex word.
             let slot = get_or_create_queue(key);
 
