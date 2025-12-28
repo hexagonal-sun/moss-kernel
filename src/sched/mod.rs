@@ -321,7 +321,7 @@ impl SchedState {
         {
             let mut deadline_guard = next_task.deadline.lock_save_irq();
             // Refresh deadline if none is set or the previous deadline has elapsed.
-            if deadline_guard.is_none_or(|d| d <= now_inst) {
+            if deadline_guard.is_none_or(|d| d <= now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS)) {
                 *deadline_guard = Some(now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS));
             }
             if let Some(d) = *deadline_guard {
