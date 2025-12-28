@@ -85,6 +85,10 @@ impl VfsState {
             .get(inode_id)
             .map(|mount| mount.root_inode.clone())
     }
+
+    fn get_fs(&self, inode_id: InodeId) -> Option<Arc<dyn Filesystem>> {
+        self.filesystems.get(&inode_id.fs_id()).cloned()
+    }
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -611,5 +615,15 @@ impl VFS {
         }
 
         Ok(())
+    }
+
+    /// Syncs the filesystem that contains the given inode.
+    pub async fn sync(&self, inode: Arc<dyn Inode>) -> Result<()> {
+        let fs = self
+            .state
+            .lock_save_irq()
+            .get_fs(inode.id())
+            .ok_or(FsError::NoDevice)?;
+        fs.sync().await
     }
 }

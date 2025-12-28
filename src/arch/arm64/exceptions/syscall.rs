@@ -30,7 +30,7 @@ use crate::{
             seek::sys_lseek,
             splice::sys_sendfile,
             stat::sys_fstat,
-            sync::sys_sync,
+            sync::{sys_fdatasync, sys_fsync, sys_sync, sys_syncfs},
             trunc::{sys_ftruncate, sys_truncate},
         },
     },
@@ -259,6 +259,8 @@ pub async fn handle_syscall() {
         }
         0x50 => sys_fstat(arg1.into(), TUA::from_value(arg2 as _)).await,
         0x51 => sys_sync().await,
+        0x52 => sys_fsync(arg1.into()).await,
+        0x53 => sys_fdatasync(arg1.into()).await,
         0x58 => {
             sys_utimensat(
                 arg1.into(),
@@ -390,6 +392,7 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x10b => sys_syncfs(arg1.into()).await,
         0x114 => {
             sys_renameat2(
                 arg1.into(),

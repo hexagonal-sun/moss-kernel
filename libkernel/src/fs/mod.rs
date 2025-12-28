@@ -241,6 +241,7 @@ pub trait Inode: Send + Sync + Any {
         Err(KernelError::NotSupported)
     }
 
+    /// Renames an inode originating from an old parent directory.
     async fn rename_from(
         &self,
         _old_parent: Arc<dyn Inode>,
@@ -251,6 +252,7 @@ pub trait Inode: Send + Sync + Any {
         Err(KernelError::NotSupported)
     }
 
+    /// Exchanges two inodes.
     async fn exchange(
         &self,
         _first_name: &str,
@@ -273,5 +275,21 @@ pub trait Inode: Send + Sync + Any {
     /// Reads the path of a symlink.
     async fn readlink(&self) -> Result<PathBuf> {
         Err(KernelError::NotSupported)
+    }
+
+    /// Flushes all modified data, including metadata, to the disk device containing the inode.
+    ///
+    /// The default implementation is a no-op so that read-only filesystems do
+    /// not need to override it.
+    async fn sync(&self) -> Result<()> {
+        self.datasync().await
+    }
+
+    /// Flushes modified data, excluding metadata, to the disk device containing the inode.
+    ///
+    /// The default implementation is a no-op so that read-only filesystems do
+    /// not need to override it.
+    async fn datasync(&self) -> Result<()> {
+        Ok(())
     }
 }
