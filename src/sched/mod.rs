@@ -469,8 +469,3 @@ pub fn sys_sched_yield() -> Result<usize> {
     schedule();
     Ok(0)
 }
-
-#[inline(always)]
-pub fn sched_yield() {
-    schedule();
-}
