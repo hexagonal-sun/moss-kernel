@@ -12,10 +12,88 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::{Ref, RefCell, RefMut};
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
+use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use log::info;
 
 use crate::CpuOps;
+
+/// A wrapper for a RefCell guard (G) that restores interrupts on drop.
+pub struct IrqGuard<G, CPU: CpuOps> {
+    guard: ManuallyDrop<G>,
+    flags: usize,
+    _phantom: PhantomData<CPU>,
+}
+
+impl<G, CPU: CpuOps> IrqGuard<G, CPU> {
+    fn new(guard: G, flags: usize) -> Self {
+        Self {
+            guard: ManuallyDrop::new(guard),
+            flags,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<G, CPU: CpuOps> Drop for IrqGuard<G, CPU> {
+    fn drop(&mut self) {
+        // Enaure we drop the refcell guard prior to restoring interrupts.
+        unsafe { ManuallyDrop::drop(&mut self.guard) };
+
+        CPU::restore_interrupt_state(self.flags);
+    }
+}
+
+impl<G, CPU: CpuOps> Deref for IrqGuard<G, CPU>
+where
+    G: Deref,
+{
+    type Target = G::Target;
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+impl<G, CPU: CpuOps> DerefMut for IrqGuard<G, CPU>
+where
+    G: DerefMut,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+
+pub struct IrqSafeRefMut<'a, T, CPU: CpuOps> {
+    borrow: ManuallyDrop<RefMut<'a, T>>,
+    flags: usize,
+    _phantom: PhantomData<CPU>,
+}
+
+impl<'a, T, CPU: CpuOps> core::ops::Deref for IrqSafeRefMut<'a, T, CPU> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.borrow
+    }
+}
+
+impl<'a, T, CPU: CpuOps> core::ops::DerefMut for IrqSafeRefMut<'a, T, CPU> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.borrow
+    }
+}
+
+impl<'a, T, CPU: CpuOps> Drop for IrqSafeRefMut<'a, T, CPU> {
+    fn drop(&mut self) {
+        // Ensure we release the refcell lock prior to enabling interrupts.
+        unsafe {
+            ManuallyDrop::drop(&mut self.borrow);
+        }
+        CPU::restore_interrupt_state(self.flags);
+    }
+}
 
 /// A trait for type-erased initialization of `PerCpu` variables.
 ///
@@ -75,8 +153,10 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     ///
     /// # Panics
     /// Panics if the value is already mutably borrowed.
-    pub fn borrow(&self) -> Ref<'_, T> {
-        self.get_cell().borrow()
+    #[track_caller]
+    pub fn borrow(&self) -> IrqGuard<Ref<'_, T>, CPU> {
+        let flags = CPU::disable_interrupts();
+        IrqGuard::new(self.get_cell().borrow(), flags)
     }
 
     /// Mutably borrows the per-CPU data.
@@ -85,8 +165,37 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     ///
     /// # Panics
     /// Panics if the value is already borrowed (mutably or immutably).
-    pub fn borrow_mut(&self) -> RefMut<'_, T> {
-        self.get_cell().borrow_mut()
+    #[track_caller]
+    pub fn borrow_mut(&self) -> IrqGuard<RefMut<'_, T>, CPU> {
+        let flags = CPU::disable_interrupts();
+        IrqGuard::new(self.get_cell().borrow_mut(), flags)
+    }
+
+    /// Attempts to immutably borrow the per-CPU data.
+    #[track_caller]
+    pub fn try_borrow(&self) -> Option<IrqGuard<Ref<'_, T>, CPU>> {
+        let flags = CPU::disable_interrupts();
+
+        match self.get_cell().try_borrow().ok() {
+            Some(guard) => Some(IrqGuard::new(guard, flags)),
+            None => {
+                CPU::restore_interrupt_state(flags);
+                None
+            }
+        }
+    }
+
+    #[track_caller]
+    pub fn try_borrow_mut(&self) -> Option<IrqGuard<RefMut<'_, T>, CPU>> {
+        let flags = CPU::disable_interrupts();
+
+        match self.get_cell().try_borrow_mut().ok() {
+            Some(guard) => Some(IrqGuard::new(guard, flags)),
+            None => {
+                CPU::restore_interrupt_state(flags);
+                None
+            }
+        }
     }
 
     /// A convenience method to execute a closure with a mutable reference.
@@ -194,16 +303,12 @@ mod tests {
         }
 
         fn disable_interrupts() -> usize {
-            unimplemented!()
+            0
         }
 
-        fn restore_interrupt_state(_flags: usize) {
-            unimplemented!()
-        }
+        fn restore_interrupt_state(_flags: usize) {}
 
-        fn enable_interrupts() {
-            unimplemented!()
-        }
+        fn enable_interrupts() {}
     }
 
     #[test]
