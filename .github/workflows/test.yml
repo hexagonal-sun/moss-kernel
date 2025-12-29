@@ -19,8 +19,14 @@ jobs:
         uses: actions/checkout@v6
       - name: Build dockerfile
         run: docker build -t moss .
+      # If all features are disabled
       - name: Run tests inside docker container
-        run: docker run moss "/bin/bash" -c "cargo run -r --no-default-features --features ${{ matrix.smp-feature }} -- /bin/usertest" >> out.log
+        if: ${{ matrix.smp-feature == '' }}
+        run: docker run moss "/bin/bash" -c "cargo run -r --no-default-features -- /bin/usertest" >> out.log
+      # If any feature is enabled
+      - name: Run tests inside docker container
+        if: ${{ matrix.smp-feature == 'smp' }}
+        run: docker run moss "/bin/bash" -c "cargo run -r --no-default-features --features "${{ matrix.smp-feature }}" -- /bin/usertest" >> out.log
       - name: Display test output
         run: cat out.log
       - name: Check for success line
