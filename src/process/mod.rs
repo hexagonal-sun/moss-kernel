@@ -182,7 +182,7 @@ pub struct Task {
     pub ctx: SpinLock<Context>,
     pub sig_mask: SpinLock<SigSet>,
     pub pending_signals: SpinLock<SigSet>,
-    pub vruntime: SpinLock<u128>,
+    pub v_runtime: SpinLock<u128>,
     /// Virtual time at which the task becomes eligible (v_ei).
     pub v_eligible: SpinLock<u128>,
     /// Virtual deadline (v_di) used by the EEVDF scheduler.
@@ -222,7 +222,7 @@ impl Task {
             vm: Arc::new(SpinLock::new(vm)),
             sig_mask: SpinLock::new(SigSet::empty()),
             pending_signals: SpinLock::new(SigSet::empty()),
-            vruntime: SpinLock::new(0),
+            v_runtime: SpinLock::new(0),
             v_eligible: SpinLock::new(0),
             v_deadline: SpinLock::new(0),
             exec_start: SpinLock::new(None),
@@ -249,7 +249,7 @@ impl Task {
             )),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             pending_signals: SpinLock::new(SigSet::empty()),
-            vruntime: SpinLock::new(0),
+            v_runtime: SpinLock::new(0),
             v_eligible: SpinLock::new(0),
             v_deadline: SpinLock::new(0),
             exec_start: SpinLock::new(None),

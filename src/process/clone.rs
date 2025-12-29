@@ -142,7 +142,7 @@ pub async fn sys_clone(
             priority: current_task.priority,
             sig_mask: SpinLock::new(new_sigmask),
             pending_signals: SpinLock::new(SigSet::empty()),
-            vruntime: SpinLock::new(0),
+            v_runtime: SpinLock::new(0),
             v_eligible: SpinLock::new(0),
             v_deadline: SpinLock::new(0),
             exec_start: SpinLock::new(None),

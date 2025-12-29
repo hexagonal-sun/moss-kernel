@@ -296,7 +296,7 @@ impl SchedState {
                 let delta = now_inst - start;
                 let w = prev_task.weight() as u128;
                 let dv = ((delta.as_nanos() as u128) << VT_FIXED_SHIFT) / w;
-                *prev_task.vruntime.lock_save_irq() += dv;
+                *prev_task.v_runtime.lock_save_irq() += dv;
                 dv
             } else {
                 0
@@ -376,8 +376,8 @@ impl SchedState {
                 let vd2 = *proc2.v_deadline.lock_save_irq();
 
                 vd1.cmp(&vd2).then_with(|| {
-                    let vr1 = *proc1.vruntime.lock_save_irq();
-                    let vr2 = *proc2.vruntime.lock_save_irq();
+                    let vr1 = *proc1.v_runtime.lock_save_irq();
+                    let vr2 = *proc2.v_runtime.lock_save_irq();
 
                     vr1.cmp(&vr2).then_with(|| {
                         let last_run1 = proc1.last_run.lock_save_irq();
