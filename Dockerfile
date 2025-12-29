@@ -11,6 +11,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 # Copy just ./scripts/
 RUN mkdir /moss
+WORKDIR /moss
 RUN mkdir /moss/scripts
 COPY ./scripts /moss/scripts
 RUN ./scripts/download-arm-toolchain.sh /tmp/arm-toolchain.tar.xz
@@ -19,7 +20,6 @@ RUN tar -xf /tmp/arm-toolchain.tar.xz -C /opt/arm-toolchain --strip-components=1
 
 # Copy the current directory contents into the container at /moss
 COPY . /moss
-WORKDIR /moss
 
 # Install ARM toolchain
 ENV PATH="/opt/arm-toolchain/bin:${PATH}"
