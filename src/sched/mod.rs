@@ -45,14 +45,6 @@ pub const VT_ONE: u128 = 1u128 << VT_FIXED_SHIFT;
 /// Two virtual-time instants whose integer parts differ by no more than this constant are considered equal.
 pub const VCLOCK_EPSILON: u128 = VT_ONE;
 
-pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>> {
-    if let Some(task) = SCHED_STATE.borrow().run_queue.get(descriptor) {
-        return Some(task.clone());
-    }
-    // TODO: Ping other CPUs to find the task.
-    None
-}
-
 /// Schedule a new task.
 ///
 /// This function is the core of the kernel's scheduler. It is responsible for
@@ -431,8 +423,8 @@ pub fn sched_init() {
     {
         let mut task_list = TASK_LIST.lock_save_irq();
 
-        task_list.insert(idle_task.descriptor(), Arc::downgrade(&idle_task.state));
-        task_list.insert(init_task.descriptor(), Arc::downgrade(&init_task.state));
+        task_list.insert(idle_task.descriptor(), Arc::downgrade(&idle_task));
+        task_list.insert(init_task.descriptor(), Arc::downgrade(&init_task));
     }
 
     insert_task(idle_task);

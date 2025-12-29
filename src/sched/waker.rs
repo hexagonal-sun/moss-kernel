@@ -9,10 +9,10 @@ unsafe fn clone_waker(data: *const ()) -> RawWaker {
 unsafe fn wake_waker(data: *const ()) {
     let desc = TaskDescriptor::from_ptr(data);
 
-    if let Some(proc) = TASK_LIST.lock_save_irq().get(&desc)
-        && let Some(proc) = proc.upgrade()
+    if let Some(task) = TASK_LIST.lock_save_irq().get(&desc)
+        && let Some(task) = task.upgrade()
     {
-        let mut state = proc.lock_save_irq();
+        let mut state = task.state.lock_save_irq();
         match *state {
             // If the task has been put to sleep, then wake it up.
             TaskState::Sleeping => {

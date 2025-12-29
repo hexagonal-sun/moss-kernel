@@ -1,5 +1,5 @@
 use super::{
-    TaskState,
+    TASK_LIST, TaskState,
     thread_group::{ProcessState, Tgid, ThreadGroup, signal::SigId, wait::ChildState},
     threading::futex::{self, key::FutexKey},
 };
@@ -124,6 +124,8 @@ pub async fn sys_exit(exit_code: usize) -> Result<usize> {
         .values()
         .filter(|t| t.upgrade().is_some())
         .count();
+
+    TASK_LIST.lock_save_irq().remove(&task.descriptor());
 
     if live_tasks <= 1 {
         // We are the last task. This is equivalent to an exit_group. The exit

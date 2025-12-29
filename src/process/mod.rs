@@ -306,7 +306,14 @@ impl Task {
     }
 }
 
-pub static TASK_LIST: SpinLock<BTreeMap<TaskDescriptor, Weak<SpinLock<TaskState>>>> =
+pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>> {
+    TASK_LIST
+        .lock_save_irq()
+        .get(descriptor)
+        .and_then(|x| x.upgrade())
+}
+
+pub static TASK_LIST: SpinLock<BTreeMap<TaskDescriptor, Weak<Task>>> =
     SpinLock::new(BTreeMap::new());
 
 unsafe impl Send for Task {}

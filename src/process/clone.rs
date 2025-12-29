@@ -159,13 +159,13 @@ pub async fn sys_clone(
         }
     };
 
-    TASK_LIST
-        .lock_save_irq()
-        .insert(new_task.descriptor(), Arc::downgrade(&new_task.state));
-
     let tid = new_task.tid;
 
     let task = Arc::new(new_task);
+
+    TASK_LIST
+        .lock_save_irq()
+        .insert(task.descriptor(), Arc::downgrade(&task));
 
     sched::insert_task_cross_cpu(task.clone());
 
