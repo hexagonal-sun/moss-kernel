@@ -7,7 +7,10 @@ use crate::{
 use libkernel::{
     error::Result,
     memory::address::TUA,
-    proc::ids::{Gid, Uid},
+    proc::{
+        caps::Capabilities,
+        ids::{Gid, Uid},
+    },
 };
 
 unsafe impl UserCopyable for Uid {}
@@ -21,6 +24,7 @@ pub struct Credentials {
     gid: Gid,
     egid: Gid,
     sgid: Gid,
+    pub(super) caps: Capabilities,
 }
 
 impl Credentials {
@@ -32,6 +36,7 @@ impl Credentials {
             gid: Gid::new_root_group(),
             egid: Gid::new_root_group(),
             sgid: Gid::new_root_group(),
+            caps: Capabilities::new_root(),
         }
     }
 
@@ -57,6 +62,10 @@ impl Credentials {
 
     pub fn sgid(&self) -> Gid {
         self.sgid
+    }
+
+    pub fn caps(&self) -> Capabilities {
+        self.caps
     }
 }
 

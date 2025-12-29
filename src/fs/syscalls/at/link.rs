@@ -4,6 +4,7 @@ use libkernel::{
     error::{FsError, KernelError, Result},
     fs::{FileType, path::Path},
     memory::address::TUA,
+    proc::caps::CapabilitiesFlags,
 };
 
 use crate::{
@@ -34,6 +35,16 @@ pub async fn sys_linkat(
     // linkat implicitly does not follow symlinks unless specified.
     if !flags.contains(AtFlags::AT_SYMLINK_FOLLOW) {
         flags.insert(AtFlags::AT_SYMLINK_NOFOLLOW);
+    }
+
+    if flags.contains(AtFlags::AT_EMPTY_PATH)
+        && !task
+            .creds
+            .lock_save_irq()
+            .caps()
+            .is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH)
+    {
+        return Err(FsError::NotFound.into()); // weird error but thats what linkat(2) says
     }
 
     let old_path = Path::new(

@@ -29,6 +29,7 @@ use thread_group::{
     signal::{SigId, SigSet, SignalState},
 };
 
+pub mod caps;
 pub mod clone;
 pub mod creds;
 pub mod ctx;

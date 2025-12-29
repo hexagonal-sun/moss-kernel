@@ -1,3 +1,4 @@
+use super::at::chmod::can_chmod;
 use libkernel::{
     error::{KernelError, Result},
     fs::attr::FilePermissions,
@@ -16,6 +17,10 @@ pub async fn sys_fchmod(fd: Fd, mode: u16) -> Result<usize> {
 
     let inode = file.inode().ok_or(KernelError::BadFd)?;
     let mut attr = inode.getattr().await?;
+
+    if !can_chmod(task, attr.uid) {
+        return Err(KernelError::NotPermitted);
+    }
 
     attr.mode = mode;
     inode.setattr(attr).await?;

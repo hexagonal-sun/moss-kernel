@@ -1,6 +1,9 @@
 use crate::{
     error::{KernelError, Result},
-    proc::ids::{Gid, Uid},
+    proc::{
+        caps::{Capabilities, CapabilitiesFlags},
+        ids::{Gid, Uid},
+    },
 };
 
 use super::{FileType, InodeId};
@@ -88,8 +91,20 @@ impl FileAttr {
     /// # Arguments
     /// * `uid` - The user-ID that will be checked against this file's uid field.
     /// * `gid` - The group-ID that will be checked against this file's uid field.
+    /// * `caps` - The capabilities of the user.
     /// * `requested_mode` - A bitmask of `AccessMode` flags (`R_OK`, `W_OK`, `X_OK`) to check.
-    pub fn check_access(&self, uid: Uid, gid: Gid, requested_mode: AccessMode) -> Result<()> {
+    pub fn check_access(
+        &self,
+        uid: Uid,
+        gid: Gid,
+        caps: Capabilities,
+        requested_mode: AccessMode,
+    ) -> Result<()> {
+        // For filesystem related tasks, the CAP_DAC_OVERRIDE bypasses all permission checks.
+        if caps.is_capable(CapabilitiesFlags::CAP_DAC_OVERRIDE) {
+            return Ok(());
+        }
+
         // root (UID 0) bypasses most permission checks. For execute, at
         // least one execute bit must be set.
         if uid.is_root() {
@@ -119,6 +134,7 @@ impl FileAttr {
 
         if requested_mode.contains(AccessMode::R_OK)
             && !perms_to_check.contains(FilePermissions::S_IRUSR)
+            && !caps.is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH)
         {
             return Err(KernelError::NotPermitted);
         }
@@ -129,6 +145,8 @@ impl FileAttr {
         }
         if requested_mode.contains(AccessMode::X_OK)
             && !perms_to_check.contains(FilePermissions::S_IXUSR)
+            && (self.file_type != FileType::Directory // CAP_DAC_READ_SEARCH allows directory search as well
+                || !caps.is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH))
         {
             return Err(KernelError::NotPermitted);
         }
@@ -164,8 +182,13 @@ mod tests {
     fn root_can_read_without_perms() {
         let file = setup_file(FilePermissions::empty());
         assert!(
-            file.check_access(ROOT_UID, ROOT_GID, AccessMode::R_OK)
-                .is_ok()
+            file.check_access(
+                ROOT_UID,
+                ROOT_GID,
+                Capabilities::new_empty(),
+                AccessMode::R_OK
+            )
+            .is_ok()
         );
     }
 
@@ -173,15 +196,25 @@ mod tests {
     fn root_can_write_without_perms() {
         let file = setup_file(FilePermissions::empty());
         assert!(
-            file.check_access(ROOT_UID, ROOT_GID, AccessMode::W_OK)
-                .is_ok()
+            file.check_access(
+                ROOT_UID,
+                ROOT_GID,
+                Capabilities::new_empty(),
+                AccessMode::W_OK
+            )
+            .is_ok()
         );
     }
 
     #[test]
     fn root_cannot_execute_if_no_exec_bits_are_set() {
         let file = setup_file(FilePermissions::S_IRUSR | FilePermissions::S_IWUSR);
-        let result = file.check_access(ROOT_UID, ROOT_GID, AccessMode::X_OK);
+        let result = file.check_access(
+            ROOT_UID,
+            ROOT_GID,
+            Capabilities::new_empty(),
+            AccessMode::X_OK,
+        );
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
@@ -189,8 +222,13 @@ mod tests {
     fn root_can_execute_if_owner_exec_bit_is_set() {
         let file = setup_file(FilePermissions::S_IXUSR);
         assert!(
-            file.check_access(ROOT_UID, ROOT_GID, AccessMode::X_OK)
-                .is_ok()
+            file.check_access(
+                ROOT_UID,
+                ROOT_GID,
+                Capabilities::new_empty(),
+                AccessMode::X_OK
+            )
+            .is_ok()
         );
     }
 
@@ -198,8 +236,13 @@ mod tests {
     fn root_can_execute_if_group_exec_bit_is_set() {
         let file = setup_file(FilePermissions::S_IXGRP);
         assert!(
-            file.check_access(ROOT_UID, ROOT_GID, AccessMode::X_OK)
-                .is_ok()
+            file.check_access(
+                ROOT_UID,
+                ROOT_GID,
+                Capabilities::new_empty(),
+                AccessMode::X_OK
+            )
+            .is_ok()
         );
     }
 
@@ -207,8 +250,13 @@ mod tests {
     fn root_can_execute_if_other_exec_bit_is_set() {
         let file = setup_file(FilePermissions::S_IXOTH);
         assert!(
-            file.check_access(ROOT_UID, ROOT_GID, AccessMode::X_OK)
-                .is_ok()
+            file.check_access(
+                ROOT_UID,
+                ROOT_GID,
+                Capabilities::new_empty(),
+                AccessMode::X_OK
+            )
+            .is_ok()
         );
     }
 
@@ -216,15 +264,25 @@ mod tests {
     fn owner_can_read_when_permitted() {
         let file = setup_file(FilePermissions::S_IRUSR);
         assert!(
-            file.check_access(OWNER_UID, OWNER_GID, AccessMode::R_OK)
-                .is_ok()
+            file.check_access(
+                OWNER_UID,
+                OWNER_GID,
+                Capabilities::new_empty(),
+                AccessMode::R_OK
+            )
+            .is_ok()
         );
     }
 
     #[test]
     fn owner_cannot_read_when_denied() {
         let file = setup_file(FilePermissions::S_IWUSR | FilePermissions::S_IXUSR);
-        let result = file.check_access(OWNER_UID, OWNER_GID, AccessMode::R_OK);
+        let result = file.check_access(
+            OWNER_UID,
+            OWNER_GID,
+            Capabilities::new_empty(),
+            AccessMode::R_OK,
+        );
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
@@ -232,15 +290,25 @@ mod tests {
     fn owner_can_write_when_permitted() {
         let file = setup_file(FilePermissions::S_IWUSR);
         assert!(
-            file.check_access(OWNER_UID, OWNER_GID, AccessMode::W_OK)
-                .is_ok()
+            file.check_access(
+                OWNER_UID,
+                OWNER_GID,
+                Capabilities::new_empty(),
+                AccessMode::W_OK
+            )
+            .is_ok()
         );
     }
 
     #[test]
     fn owner_cannot_write_when_denied() {
         let file = setup_file(FilePermissions::S_IRUSR);
-        let result = file.check_access(OWNER_UID, OWNER_GID, AccessMode::W_OK);
+        let result = file.check_access(
+            OWNER_UID,
+            OWNER_GID,
+            Capabilities::new_empty(),
+            AccessMode::W_OK,
+        );
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
@@ -250,14 +318,17 @@ mod tests {
             FilePermissions::S_IRUSR | FilePermissions::S_IWUSR | FilePermissions::S_IXUSR,
         );
         let mode = AccessMode::R_OK | AccessMode::W_OK | AccessMode::X_OK;
-        assert!(file.check_access(OWNER_UID, OWNER_GID, mode).is_ok());
+        assert!(
+            file.check_access(OWNER_UID, OWNER_GID, Capabilities::new_empty(), mode)
+                .is_ok()
+        );
     }
 
     #[test]
     fn owner_access_denied_if_one_of_many_perms_is_missing() {
         let file = setup_file(FilePermissions::S_IRUSR | FilePermissions::S_IXUSR);
         let mode = AccessMode::R_OK | AccessMode::W_OK | AccessMode::X_OK; // Requesting Write is denied
-        let result = file.check_access(OWNER_UID, OWNER_GID, mode);
+        let result = file.check_access(OWNER_UID, OWNER_GID, Capabilities::new_empty(), mode);
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
@@ -265,22 +336,37 @@ mod tests {
     fn group_member_can_read_when_permitted() {
         let file = setup_file(FilePermissions::S_IRGRP);
         assert!(
-            file.check_access(GROUP_MEMBER_UID, FILE_GROUP_GID, AccessMode::R_OK)
-                .is_ok()
+            file.check_access(
+                GROUP_MEMBER_UID,
+                FILE_GROUP_GID,
+                Capabilities::new_empty(),
+                AccessMode::R_OK
+            )
+            .is_ok()
         );
     }
 
     #[test]
     fn group_member_cannot_write_when_owner_can() {
         let file = setup_file(FilePermissions::S_IWUSR | FilePermissions::S_IRGRP);
-        let result = file.check_access(GROUP_MEMBER_UID, FILE_GROUP_GID, AccessMode::W_OK);
+        let result = file.check_access(
+            GROUP_MEMBER_UID,
+            FILE_GROUP_GID,
+            Capabilities::new_empty(),
+            AccessMode::W_OK,
+        );
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
     #[test]
     fn group_member_cannot_read_when_denied() {
         let file = setup_file(FilePermissions::S_IWGRP);
-        let result = file.check_access(GROUP_MEMBER_UID, FILE_GROUP_GID, AccessMode::R_OK);
+        let result = file.check_access(
+            GROUP_MEMBER_UID,
+            FILE_GROUP_GID,
+            Capabilities::new_empty(),
+            AccessMode::R_OK,
+        );
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
@@ -288,22 +374,37 @@ mod tests {
     fn other_can_execute_when_permitted() {
         let file = setup_file(FilePermissions::S_IXOTH);
         assert!(
-            file.check_access(OTHER_UID, OTHER_GID, AccessMode::X_OK)
-                .is_ok()
+            file.check_access(
+                OTHER_UID,
+                OTHER_GID,
+                Capabilities::new_empty(),
+                AccessMode::X_OK
+            )
+            .is_ok()
         );
     }
 
     #[test]
     fn other_cannot_read_when_only_owner_and_group_can() {
         let file = setup_file(FilePermissions::S_IRUSR | FilePermissions::S_IRGRP);
-        let result = file.check_access(OTHER_UID, OTHER_GID, AccessMode::R_OK);
+        let result = file.check_access(
+            OTHER_UID,
+            OTHER_GID,
+            Capabilities::new_empty(),
+            AccessMode::R_OK,
+        );
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
     #[test]
     fn other_cannot_write_when_denied() {
         let file = setup_file(FilePermissions::S_IROTH);
-        let result = file.check_access(OTHER_UID, OTHER_GID, AccessMode::W_OK);
+        let result = file.check_access(
+            OTHER_UID,
+            OTHER_GID,
+            Capabilities::new_empty(),
+            AccessMode::W_OK,
+        );
         assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 
@@ -312,8 +413,13 @@ mod tests {
         // Checking for nothing should always succeed if the file exists.
         let file = setup_file(FilePermissions::empty());
         assert!(
-            file.check_access(OTHER_UID, OTHER_GID, AccessMode::empty())
-                .is_ok()
+            file.check_access(
+                OTHER_UID,
+                OTHER_GID,
+                Capabilities::new_empty(),
+                AccessMode::empty()
+            )
+            .is_ok()
         );
     }
 
@@ -322,8 +428,66 @@ mod tests {
         let file = setup_file(FilePermissions::S_IROTH); // Only other can read
         // This user is not the owner and not in the file's group.
         assert!(
-            file.check_access(GROUP_MEMBER_UID, OTHER_GID, AccessMode::R_OK)
-                .is_ok()
+            file.check_access(
+                GROUP_MEMBER_UID,
+                OTHER_GID,
+                Capabilities::new_empty(),
+                AccessMode::R_OK
+            )
+            .is_ok()
         );
+    }
+
+    #[test]
+    fn cap_dac_override_can_read_write_exec_without_perms() {
+        let file = setup_file(FilePermissions::empty());
+        let mode = AccessMode::R_OK | AccessMode::W_OK | AccessMode::X_OK;
+        assert!(
+            file.check_access(
+                ROOT_UID,
+                ROOT_GID,
+                Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_OVERRIDE),
+                mode,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn cap_dac_read_search_can_read_without_perms() {
+        let file = setup_file(FilePermissions::empty());
+        assert!(
+            file.check_access(
+                OTHER_UID,
+                OTHER_GID,
+                Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_READ_SEARCH),
+                AccessMode::R_OK,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn cap_dac_read_search_cannot_write_without_perms() {
+        let file = setup_file(FilePermissions::empty());
+        let result = file.check_access(
+            OTHER_UID,
+            OTHER_GID,
+            Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_READ_SEARCH),
+            AccessMode::W_OK,
+        );
+        assert!(matches!(result, Err(KernelError::NotPermitted)));
+    }
+
+    #[test]
+    fn cap_dac_read_search_cannot_exec_without_perms() {
+        let file = setup_file(FilePermissions::empty());
+        let result = file.check_access(
+            OTHER_UID,
+            OTHER_GID,
+            Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_READ_SEARCH),
+            AccessMode::X_OK,
+        );
+        assert!(matches!(result, Err(KernelError::NotPermitted)));
     }
 }

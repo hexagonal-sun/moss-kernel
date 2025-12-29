@@ -10,6 +10,7 @@ use libkernel::{
     error::{KernelError, Result},
     fs::path::Path,
     memory::address::{TUA, UA},
+    proc::caps::CapabilitiesFlags,
 };
 
 pub async fn sys_getcwd(buf: UA, len: usize) -> Result<usize> {
@@ -43,10 +44,15 @@ pub async fn sys_chdir(path: TUA<c_char>) -> Result<usize> {
 }
 
 pub async fn sys_chroot(path: TUA<c_char>) -> Result<usize> {
+    let task = current_task();
+    task.creds
+        .lock_save_irq()
+        .caps()
+        .check_capable(CapabilitiesFlags::CAP_SYS_CHROOT)?;
+
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task();
     let current_path = task.root.lock_save_irq().0.clone();
     let new_path = task.root.lock_save_irq().1.join(path);
 

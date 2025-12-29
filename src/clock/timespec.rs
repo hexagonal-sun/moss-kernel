@@ -10,8 +10,8 @@ use crate::memory::uaccess::{UserCopyable, copy_from_user};
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct TimeSpec {
-    tv_sec: i64,
-    tv_nsec: u64,
+    pub tv_sec: i64,
+    pub tv_nsec: u64,
 }
 
 unsafe impl UserCopyable for TimeSpec {}

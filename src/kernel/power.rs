@@ -1,7 +1,16 @@
-use crate::{ArchImpl, arch::Arch};
-use libkernel::error::{KernelError, Result};
+use crate::{ArchImpl, arch::Arch, sched::current_task};
+use libkernel::{
+    error::{KernelError, Result},
+    proc::caps::CapabilitiesFlags,
+};
 
 pub async fn sys_reboot(magic: u32, magic2: u32, op: u32, _arg: usize) -> Result<usize> {
+    current_task()
+        .creds
+        .lock_save_irq()
+        .caps()
+        .check_capable(CapabilitiesFlags::CAP_SYS_BOOT)?;
+
     const LINUX_REBOOT_MAGIC1: u32 = 0xfee1_dead;
     const LINUX_REBOOT_MAGIC2: u32 = 672274793;
     const LINUX_REBOOT_MAGIC2A: u32 = 852072454;

@@ -9,6 +9,7 @@ use libkernel::error::{FsError, KernelError, Result};
 use libkernel::fs::attr::FilePermissions;
 use libkernel::fs::path::Path;
 use libkernel::fs::{BlockDevice, FS_ID_START, FileType, Filesystem, Inode, InodeId, OpenFlags};
+use libkernel::proc::caps::CapabilitiesFlags;
 use open_file::OpenFile;
 use reg::RegFile;
 
@@ -506,14 +507,28 @@ impl VFS {
 
         // Determine the parent directory inode in which to perform the unlink.
         let parent_inode = if let Some(parent_path) = path.parent() {
-            self.resolve_path(parent_path, root.clone(), task).await?
+            self.resolve_path(parent_path, root.clone(), task.clone())
+                .await?
         } else {
             root.clone()
         };
 
+        let parent_attr = parent_inode.getattr().await?;
+
         // Ensure the parent really is a directory.
-        if parent_inode.getattr().await?.file_type != FileType::Directory {
+        if parent_attr.file_type != FileType::Directory {
             return Err(FsError::NotADirectory.into());
+        }
+
+        {
+            let creds = task.creds.lock_save_irq();
+
+            if attr.mode.contains(FilePermissions::S_ISVTX)
+                && attr.uid != creds.euid()
+                && parent_attr.uid != creds.euid()
+            {
+                creds.caps().check_capable(CapabilitiesFlags::CAP_FOWNER)?;
+            }
         }
 
         // Extract the final component (name) and perform the unlink on the parent.

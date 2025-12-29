@@ -41,5 +41,7 @@ pub async fn sys_faccessat2(dirfd: Fd, path: TUA<c_char>, mode: i32, flags: i32)
         (creds.uid(), creds.gid())
     };
 
-    attrs.check_access(uid, gid, access_mode).map(|_| 0)
+    attrs
+        .check_access(uid, gid, creds.caps(), access_mode)
+        .map(|_| 0)
 }
