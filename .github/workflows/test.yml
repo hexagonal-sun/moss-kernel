@@ -10,6 +10,9 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        smp-feature: [ "", "smp" ]
 
     steps:
       - name: Checkout repository
@@ -17,7 +20,7 @@ jobs:
       - name: Build dockerfile
         run: docker build -t moss .
       - name: Run tests inside docker container
-        run: docker run moss "/bin/bash" -c "cargo run -r -- /bin/usertest" >> out.log
+        run: docker run moss "/bin/bash" -c "cargo run -r --no-default-features --features ${{ matrix.smp-feature }} -- /bin/usertest" >> out.log
       - name: Display test output
         run: cat out.log
       - name: Check for success line
@@ -25,5 +28,5 @@ jobs:
       - name: Upload test output as artifact
         uses: actions/upload-artifact@v6
         with:
-          name: test-output
+          name: test-output-${{ matrix.smp-feature || 'up' }}
           path: out.log
