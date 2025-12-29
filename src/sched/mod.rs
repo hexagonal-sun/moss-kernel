@@ -135,6 +135,7 @@ pub fn spawn_kernel_work(fut: impl Future<Output = ()> + 'static + Send) {
         .put_kernel_work(Box::pin(fut));
 }
 
+#[cfg(feature = "smp")]
 fn get_next_cpu() -> CpuId {
     static NEXT_CPU: AtomicUsize = AtomicUsize::new(0);
 
@@ -144,11 +145,17 @@ fn get_next_cpu() -> CpuId {
     CpuId(cpu_id)
 }
 
+#[cfg(not(feature = "smp"))]
+fn get_next_cpu() -> CpuId {
+    CpuId::this()
+}
+
 /// Insert the given task onto a CPU's run queue.
 pub fn insert_task(task: Arc<Task>) {
     SCHED_STATE.borrow_mut().add_task(task);
 }
 
+#[cfg(feature = "smp")]
 pub fn insert_task_cross_cpu(task: Arc<Task>) {
     let cpu = get_next_cpu();
     if cpu == CpuId::this() {
@@ -156,6 +163,11 @@ pub fn insert_task_cross_cpu(task: Arc<Task>) {
     } else {
         message_cpu(cpu.value(), Message::PutTask(task)).expect("Failed to send task to CPU");
     }
+}
+
+#[cfg(not(feature = "smp"))]
+pub fn insert_task_cross_cpu(task: Arc<Task>) {
+    insert_task(task);
 }
 
 pub struct SchedState {
