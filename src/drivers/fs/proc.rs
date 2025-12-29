@@ -10,6 +10,7 @@ use crate::{
 use alloc::{boxed::Box, format, string::ToString, sync::Arc, vec::Vec};
 use async_trait::async_trait;
 use core::sync::atomic::{AtomicU64, Ordering};
+use libkernel::fs::pathbuf::PathBuf;
 use libkernel::{
     error::{FsError, KernelError, Result},
     fs::{
@@ -217,6 +218,12 @@ impl Inode for ProcTaskInode {
             FileType::File,
             3,
         ));
+        entries.push(Dirent::new(
+            "cwd".to_string(),
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, inode_offset + 4),
+            FileType::Symlink,
+            4,
+        ));
 
         // honour start_offset
         let entries = entries.into_iter().skip(start_offset as usize).collect();
@@ -228,6 +235,7 @@ impl Inode for ProcTaskInode {
 enum TaskFileType {
     Status,
     Comm,
+    Cwd,
     State,
 }
 
@@ -239,6 +247,7 @@ impl TryFrom<&str> for TaskFileType {
             "status" => Ok(TaskFileType::Status),
             "comm" => Ok(TaskFileType::Comm),
             "state" => Ok(TaskFileType::State),
+            "cwd" => Ok(TaskFileType::Cwd),
             _ => Err(()),
         }
     }
@@ -256,7 +265,12 @@ impl ProcTaskFileInode {
         Self {
             id: inode_id,
             attr: FileAttr {
-                file_type: FileType::File,
+                file_type: match file_type {
+                    TaskFileType::Status | TaskFileType::Comm | TaskFileType::State => {
+                        FileType::File
+                    }
+                    TaskFileType::Cwd => FileType::Symlink,
+                },
                 mode: FilePermissions::from_bits_retain(0o444),
                 ..FileAttr::default()
             },
@@ -312,6 +326,7 @@ Threads:\t{tasks}\n",
                 ),
                 TaskFileType::Comm => format!("{name}\n", name = name.as_str()),
                 TaskFileType::State => format!("{state}\n"),
+                TaskFileType::Cwd => task.cwd.lock_save_irq().clone().1.as_str().to_string(),
             }
         } else {
             "State:\tGone\n".to_string()
@@ -326,6 +341,26 @@ Threads:\t{tasks}\n",
         buf[..end].copy_from_slice(slice);
         Ok(end)
     }
+
+    async fn readlink(&self) -> Result<PathBuf> {
+        if let TaskFileType::Cwd = self.file_type {
+            let pid = self.pid;
+            let task_list = TASK_LIST.lock_save_irq();
+            let id = task_list.iter().find(|(desc, _)| desc.tgid() == pid);
+            let task_details = if let Some((desc, _)) = id {
+                find_task_by_descriptor(desc)
+            } else {
+                None
+            };
+            return if let Some(task) = task_details {
+                let cwd = task.cwd.lock_save_irq();
+                Ok(cwd.1.clone())
+            } else {
+                Err(FsError::NotFound.into())
+            };
+        }
+        Err(KernelError::NotSupported)
+    }
 }
 
 static PROCFS_INSTANCE: OnceLock<Arc<ProcFs>> = OnceLock::new();
@@ -335,7 +370,7 @@ static PROCFS_INSTANCE: OnceLock<Arc<ProcFs>> = OnceLock::new();
 pub fn procfs() -> Arc<ProcFs> {
     PROCFS_INSTANCE
         .get_or_init(|| {
-            log::info!("devfs initialized");
+            log::info!("procfs initialized");
             ProcFs::new()
         })
         .clone()

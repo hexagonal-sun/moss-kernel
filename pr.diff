@@ -1,0 +1,1589 @@
+diff --git a/libkernel/src/sync/per_cpu.rs b/libkernel/src/sync/per_cpu.rs
+index 4f4d085..baa12e8 100644
+--- a/libkernel/src/sync/per_cpu.rs
++++ b/libkernel/src/sync/per_cpu.rs
+@@ -12,11 +12,89 @@ use alloc::boxed::Box;
+ use alloc::vec::Vec;
+ use core::cell::{Ref, RefCell, RefMut};
+ use core::marker::PhantomData;
++use core::mem::ManuallyDrop;
++use core::ops::{Deref, DerefMut};
+ use core::sync::atomic::{AtomicPtr, Ordering};
+ use log::info;
+
+ use crate::CpuOps;
+
++/// A wrapper for a RefCell guard (G) that restores interrupts on drop.
++pub struct IrqGuard<G, CPU: CpuOps> {
++    guard: ManuallyDrop<G>,
++    flags: usize,
++    _phantom: PhantomData<CPU>,
++}
++
++impl<G, CPU: CpuOps> IrqGuard<G, CPU> {
++    fn new(guard: G, flags: usize) -> Self {
++        Self {
++            guard: ManuallyDrop::new(guard),
++            flags,
++            _phantom: PhantomData,
++        }
++    }
++}
++
++impl<G, CPU: CpuOps> Drop for IrqGuard<G, CPU> {
++    fn drop(&mut self) {
++        // Enaure we drop the refcell guard prior to restoring interrupts.
++        unsafe { ManuallyDrop::drop(&mut self.guard) };
++
++        CPU::restore_interrupt_state(self.flags);
++    }
++}
++
++impl<G, CPU: CpuOps> Deref for IrqGuard<G, CPU>
++where
++    G: Deref,
++{
++    type Target = G::Target;
++
++    fn deref(&self) -> &Self::Target {
++        &self.guard
++    }
++}
++
++impl<G, CPU: CpuOps> DerefMut for IrqGuard<G, CPU>
++where
++    G: DerefMut,
++{
++    fn deref_mut(&mut self) -> &mut Self::Target {
++        &mut self.guard
++    }
++}
++
++pub struct IrqSafeRefMut<'a, T, CPU: CpuOps> {
++    borrow: ManuallyDrop<RefMut<'a, T>>,
++    flags: usize,
++    _phantom: PhantomData<CPU>,
++}
++
++impl<'a, T, CPU: CpuOps> core::ops::Deref for IrqSafeRefMut<'a, T, CPU> {
++    type Target = T;
++
++    fn deref(&self) -> &Self::Target {
++        &self.borrow
++    }
++}
++
++impl<'a, T, CPU: CpuOps> core::ops::DerefMut for IrqSafeRefMut<'a, T, CPU> {
++    fn deref_mut(&mut self) -> &mut Self::Target {
++        &mut self.borrow
++    }
++}
++
++impl<'a, T, CPU: CpuOps> Drop for IrqSafeRefMut<'a, T, CPU> {
++    fn drop(&mut self) {
++        // Ensure we release the refcell lock prior to enabling interrupts.
++        unsafe {
++            ManuallyDrop::drop(&mut self.borrow);
++        }
++        CPU::restore_interrupt_state(self.flags);
++    }
++}
++
+ /// A trait for type-erased initialization of `PerCpu` variables.
+ ///
+ /// This allows the global initialization loop to call `init` on any `PerCpu<T>`
+@@ -75,8 +153,10 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
+     ///
+     /// # Panics
+     /// Panics if the value is already mutably borrowed.
+-    pub fn borrow(&self) -> Ref<'_, T> {
+-        self.get_cell().borrow()
++    #[track_caller]
++    pub fn borrow(&self) -> IrqGuard<Ref<'_, T>, CPU> {
++        let flags = CPU::disable_interrupts();
++        IrqGuard::new(self.get_cell().borrow(), flags)
+     }
+
+     /// Mutably borrows the per-CPU data.
+@@ -85,8 +165,37 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
+     ///
+     /// # Panics
+     /// Panics if the value is already borrowed (mutably or immutably).
+-    pub fn borrow_mut(&self) -> RefMut<'_, T> {
+-        self.get_cell().borrow_mut()
++    #[track_caller]
++    pub fn borrow_mut(&self) -> IrqGuard<RefMut<'_, T>, CPU> {
++        let flags = CPU::disable_interrupts();
++        IrqGuard::new(self.get_cell().borrow_mut(), flags)
++    }
++
++    /// Attempts to immutably borrow the per-CPU data.
++    #[track_caller]
++    pub fn try_borrow(&self) -> Option<IrqGuard<Ref<'_, T>, CPU>> {
++        let flags = CPU::disable_interrupts();
++
++        match self.get_cell().try_borrow().ok() {
++            Some(guard) => Some(IrqGuard::new(guard, flags)),
++            None => {
++                CPU::restore_interrupt_state(flags);
++                None
++            }
++        }
++    }
++
++    #[track_caller]
++    pub fn try_borrow_mut(&self) -> Option<IrqGuard<RefMut<'_, T>, CPU>> {
++        let flags = CPU::disable_interrupts();
++
++        match self.get_cell().try_borrow_mut().ok() {
++            Some(guard) => Some(IrqGuard::new(guard, flags)),
++            None => {
++                CPU::restore_interrupt_state(flags);
++                None
++            }
++        }
+     }
+
+     /// A convenience method to execute a closure with a mutable reference.
+@@ -94,6 +203,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
+     ///
+     /// # Panics
+     /// Panics if the value is already borrowed.
++    #[track_caller]
+     pub fn with_mut<F, R>(&self, f: F) -> R
+     where
+         F: FnOnce(&mut T) -> R,
+@@ -194,16 +304,12 @@ mod tests {
+         }
+
+         fn disable_interrupts() -> usize {
+-            unimplemented!()
++            0
+         }
+
+-        fn restore_interrupt_state(_flags: usize) {
+-            unimplemented!()
+-        }
++        fn restore_interrupt_state(_flags: usize) {}
+
+-        fn enable_interrupts() {
+-            unimplemented!()
+-        }
++        fn enable_interrupts() {}
+     }
+
+     #[test]
+diff --git a/src/arch/arm64/boot/memory.rs b/src/arch/arm64/boot/memory.rs
+index 598187b..87999b3 100644
+--- a/src/arch/arm64/boot/memory.rs
++++ b/src/arch/arm64/boot/memory.rs
+@@ -158,7 +158,7 @@ pub fn setup_stack_and_heap(pgtbl_base: TPA<PgTableArray<L0Table>>) -> Result<VA
+     )?;
+
+     unsafe {
+-        HEAP_ALLOCATOR.lock().init(
++        HEAP_ALLOCATOR.0.lock_save_irq().init(
+             heap_virt_region.start_address().as_ptr_mut().cast(),
+             heap_virt_region.size(),
+         )
+diff --git a/src/arch/arm64/boot/mod.rs b/src/arch/arm64/boot/mod.rs
+index 73afff3..82c5e66 100644
+--- a/src/arch/arm64/boot/mod.rs
++++ b/src/arch/arm64/boot/mod.rs
+@@ -2,6 +2,7 @@ use super::{
+     exceptions::{ExceptionState, secondary_exceptions_init},
+     memory::{fixmap::FIXMAPS, mmu::setup_kern_addr_space},
+ };
++use crate::drivers::timer::kick_current_cpu;
+ use crate::{
+     arch::{ArchImpl, arm64::exceptions::exceptions_init},
+     console::setup_console_logger,
+@@ -40,7 +41,7 @@ mod exception_level;
+ mod logical_map;
+ mod memory;
+ mod paging_bootstrap;
+-mod secondary;
++pub(super) mod secondary;
+
+ global_asm!(include_str!("start.s"));
+
+@@ -148,6 +149,9 @@ fn arch_init_secondary(ctx_frame: *mut ExceptionState) -> *mut ExceptionState {
+         ic.enable_core(ArchImpl::id());
+     }
+
++    // Arm the per-CPU system timer so this core starts receiving timer IRQs.
++    kick_current_cpu();
++
+     ArchImpl::enable_interrupts();
+
+     secondary_booted();
+diff --git a/src/arch/arm64/memory/mod.rs b/src/arch/arm64/memory/mod.rs
+index 1198e28..89d165b 100644
+--- a/src/arch/arm64/memory/mod.rs
++++ b/src/arch/arm64/memory/mod.rs
+@@ -1,5 +1,12 @@
++use core::{
++    alloc::{GlobalAlloc, Layout},
++    ptr::NonNull,
++};
++
+ use libkernel::memory::address::{PA, VA};
+-use linked_list_allocator::LockedHeap;
++use linked_list_allocator::Heap;
++
++use crate::sync::SpinLock;
+
+ pub mod address_space;
+ pub mod fault;
+@@ -17,8 +24,28 @@ pub const EXCEPTION_BASE: VA = VA::from_value(0xffff_e000_0000_0000);
+ const BOGUS_START: PA = PA::from_value(usize::MAX);
+ static mut KIMAGE_START: PA = BOGUS_START;
+
++pub struct SpinlockHeap(pub SpinLock<Heap>);
++
+ #[global_allocator]
+-pub static HEAP_ALLOCATOR: LockedHeap = LockedHeap::empty();
++pub static HEAP_ALLOCATOR: SpinlockHeap = SpinlockHeap(SpinLock::new(Heap::empty()));
++
++unsafe impl GlobalAlloc for SpinlockHeap {
++    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
++        self.0
++            .lock_save_irq()
++            .allocate_first_fit(layout)
++            .ok()
++            .map_or(core::ptr::null_mut(), |allocation| allocation.as_ptr())
++    }
++
++    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
++        unsafe {
++            self.0
++                .lock_save_irq()
++                .deallocate(NonNull::new_unchecked(ptr), layout)
++        }
++    }
++}
+
+ #[macro_export]
+ macro_rules! ksym_pa {
+diff --git a/src/arch/arm64/mod.rs b/src/arch/arm64/mod.rs
+index 5dba458..5f37246 100644
+--- a/src/arch/arm64/mod.rs
++++ b/src/arch/arm64/mod.rs
+@@ -90,6 +90,10 @@ impl Arch for Aarch64 {
+         "aarch64"
+     }
+
++    fn cpu_count() -> usize {
++        boot::secondary::cpu_count()
++    }
++
+     fn do_signal(
+         sig: SigId,
+         action: UserspaceSigAction,
+diff --git a/src/arch/mod.rs b/src/arch/mod.rs
+index 81e7611..243bcab 100644
+--- a/src/arch/mod.rs
++++ b/src/arch/mod.rs
+@@ -27,6 +27,8 @@ pub trait Arch: CpuOps + VirtualMemory {
+
+     fn name() -> &'static str;
+
++    fn cpu_count() -> usize;
++
+     /// Prepares the initial context for a new user-space thread. This sets up
+     /// the stack frame so that when we context-switch to it, it will begin
+     /// execution at the specified `entry_point`.
+diff --git a/src/drivers/fs/proc.rs b/src/drivers/fs/proc.rs
+index d7ff231..81951fa 100644
+--- a/src/drivers/fs/proc.rs
++++ b/src/drivers/fs/proc.rs
+@@ -1,7 +1,7 @@
+ #![allow(clippy::module_name_repetitions)]
+
+ use crate::process::thread_group::Tgid;
+-use crate::sched::{SCHED_STATE, current_task};
++use crate::sched::{current_task, find_task_by_descriptor};
+ use crate::sync::OnceLock;
+ use crate::{
+     drivers::{Driver, FilesystemDriver},
+@@ -287,10 +287,9 @@ impl Inode for ProcTaskFileInode {
+     async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
+         let pid = self.pid;
+         let task_list = TASK_LIST.lock_save_irq();
+-        // TODO: Does not obtain details for tasks that are on other CPUs
+         let id = task_list.iter().find(|(desc, _)| desc.tgid() == pid);
+         let task_details = if let Some((desc, _)) = id {
+-            SCHED_STATE.borrow().run_queue.get(desc).cloned()
++            find_task_by_descriptor(desc)
+         } else {
+             None
+         };
+@@ -305,11 +304,11 @@ State:\t{state}
+ Tgid:\t{tgid}
+ FDSize:\t{fd_size}
+ Pid:\t{pid}
+-Threads:\t{threads}\n",
++Tasks:\t{tasks}\n",
+                     name = name.as_str(),
+                     tgid = task.process.tgid,
+                     fd_size = task.fd_table.lock_save_irq().len(),
+-                    threads = task.process.threads.lock_save_irq().len(),
++                    tasks = task.process.tasks.lock_save_irq().len(),
+                 ),
+                 TaskFileType::Comm => format!("{name}\n", name = name.as_str()),
+                 TaskFileType::State => format!("{state}\n"),
+diff --git a/src/drivers/interrupts/arm_gic_v3.rs b/src/drivers/interrupts/arm_gic_v3.rs
+index 7181649..8abc2aa 100644
+--- a/src/drivers/interrupts/arm_gic_v3.rs
++++ b/src/drivers/interrupts/arm_gic_v3.rs
+@@ -411,6 +411,12 @@ impl InterruptController for ArmGicV3 {
+                 trigger: TriggerMode::EdgeRising,
+             });
+         }
++
++        // Also enable the timer
++        self.enable_interrupt(InterruptConfig {
++            descriptor: InterruptDescriptor::Ppi(14),
++            trigger: TriggerMode::EdgeRising,
++        });
+     }
+
+     fn parse_fdt_interrupt_regs(
+diff --git a/src/drivers/timer/mod.rs b/src/drivers/timer/mod.rs
+index 8ea2c07..ab12f1f 100644
+--- a/src/drivers/timer/mod.rs
++++ b/src/drivers/timer/mod.rs
+@@ -1,3 +1,8 @@
++use super::Driver;
++use crate::interrupts::{InterruptDescriptor, InterruptHandler};
++use crate::per_cpu;
++use crate::sync::OnceLock;
++use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
+ use core::{
+     future::poll_fn,
+     ops::{Add, Sub},
+@@ -5,15 +10,6 @@ use core::{
+     time::Duration,
+ };
+
+-use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
+-
+-use crate::{
+-    interrupts::{InterruptDescriptor, InterruptHandler},
+-    sync::{OnceLock, SpinLock},
+-};
+-
+-use super::Driver;
+-
+ pub mod armv8_arch;
+
+ /// Represents a fixed point in monotonic time.
+@@ -34,7 +30,7 @@ enum WakeupKind {
+     Task(Waker),
+
+     /// This wake up is for the kernel's preemption mechanism.
+-    _Preempt,
++    Preempt,
+ }
+
+ struct WakeupEvent {
+@@ -105,14 +101,13 @@ pub trait HwTimer: Send + Sync + Driver {
+     /// Return an instant that represents this instant.
+     fn now(&self) -> Instant;
+
+-    /// Schedules an interrupt to occur at `when`. If when is `None`, timer
+-    /// interrupts should be disabled.
++    /// Schedules an interrupt to occur at `when` on *this* CPU. If when is
++    /// `None`, timer interrupts should be disabled.
+     fn schedule_interrupt(&self, when: Option<Instant>);
+ }
+
+ pub struct SysTimer {
+     start_time: Instant,
+-    wakeup_q: SpinLock<BinaryHeap<WakeupEvent>>,
+     driver: Arc<dyn HwTimer>,
+ }
+
+@@ -124,7 +119,7 @@ impl Driver for SysTimer {
+
+ impl InterruptHandler for SysTimer {
+     fn handle_irq(&self, _desc: InterruptDescriptor) {
+-        let mut wake_q = self.wakeup_q.lock_save_irq();
++        let mut wake_q = WAKEUP_Q.borrow_mut();
+
+         while let Some(next_event) = wake_q.peek() {
+             if next_event.when <= self.driver.now() {
+@@ -132,7 +127,10 @@ impl InterruptHandler for SysTimer {
+
+                 match event.what {
+                     WakeupKind::Task(waker) => waker.wake(),
+-                    WakeupKind::_Preempt => todo!(),
++                    WakeupKind::Preempt => {
++                        // Do nothing, the IRQ return-to-userspace code will
++                        // call schedule() for us.
++                    }
+                 }
+             } else {
+                 // The next event is in the future, so we're done.
+@@ -140,9 +138,15 @@ impl InterruptHandler for SysTimer {
+             }
+         }
+
+-        // Reschedule based on the new head of the queue.
+-        self.driver
+-            .schedule_interrupt(wake_q.peek().map(|e| e.when));
++        // Always re-arm: either next task/event, or a periodic/preemption tick.
++        let next_deadline = wake_q.peek().map(|e| e.when).or_else(|| {
++            // fallback: schedule a preemption tick in 50 ms
++            // TODO: Remove when feeling more secure about scheduling
++            let when = self.driver.now() + Duration::from_millis(50);
++            Some(when)
++        });
++
++        self.driver.schedule_interrupt(next_deadline);
+     }
+ }
+
+@@ -154,7 +158,6 @@ impl SysTimer {
+     fn from_driver(driver: Arc<dyn HwTimer>) -> Self {
+         Self {
+             start_time: driver.now(),
+-            wakeup_q: SpinLock::new(BinaryHeap::new()),
+             driver,
+         }
+     }
+@@ -163,19 +166,19 @@ impl SysTimer {
+         let when = self.driver.now() + duration;
+
+         poll_fn(|cx| {
+-            let mut wake_q = self.wakeup_q.lock_save_irq();
+-
+             if self.driver.now() >= when {
+                 Poll::Ready(())
+             } else {
+-                wake_q.push(WakeupEvent {
++                let mut wakeup_q = WAKEUP_Q.borrow_mut();
++
++                wakeup_q.push(WakeupEvent {
+                     when,
+                     what: WakeupKind::Task(cx.waker().clone()),
+                 });
+
+                 // After pushing, we must update the hardware timer in case our
+                 // new event is the earliest one.
+-                if let Some(next_event) = wake_q.peek() {
++                if let Some(next_event) = wakeup_q.peek() {
+                     self.driver.schedule_interrupt(Some(next_event.when));
+                 }
+
+@@ -184,6 +187,37 @@ impl SysTimer {
+         })
+         .await
+     }
++
++    /// Schedule a preemption event for the current CPU.
++    pub fn schedule_preempt(&self, when: Instant) {
++        let mut wake_q = WAKEUP_Q.borrow_mut();
++
++        // Insert the pre-emption event.
++        wake_q.push(WakeupEvent {
++            when,
++            what: WakeupKind::Preempt,
++        });
++
++        // Ensure the hardware timer is armed for the earliest event.
++        if let Some(next_event) = wake_q.peek() {
++            self.driver.schedule_interrupt(Some(next_event.when));
++        }
++    }
++
++    /// Arms the hardware timer on the current CPU so that the next scheduled
++    /// `WakeupEvent` (or the fallback pre-emption tick) will fire.
++    /// Secondary CPUs should call this right after they have enabled their
++    /// interrupt controller so that they start receiving timer interrupts.
++    pub fn kick_current_cpu(&self) {
++        let wake_q = WAKEUP_Q.borrow_mut();
++
++        let next_deadline = wake_q.peek().map(|e| e.when).or_else(|| {
++            // Fallback: re-use the same 15 ms periodic tick as the primary CPU.
++            Some(self.driver.now() + Duration::from_millis(15))
++        });
++
++        self.driver.schedule_interrupt(next_deadline);
++    }
+ }
+
+ /// Convenience function for obtaining the current system time. If no
+@@ -213,4 +247,38 @@ pub async fn sleep(duration: Duration) {
+     }
+ }
+
++/// Arms the per-CPU hardware timer for the current core.
++/// See [`SysTimer::kick_current_cpu`]
++pub fn kick_current_cpu() {
++    if let Some(timer) = SYS_TIMER.get() {
++        timer.kick_current_cpu();
++    }
++}
++
++/// Arms a pre-emption timer for the running task on this CPU.
++/// Called by the scheduler every time it issues a new eligible virtual deadline.
++pub fn schedule_preempt(when: Instant) {
++    if let Some(timer) = SYS_TIMER.get() {
++        timer.schedule_preempt(when);
++    }
++}
++
++pub fn schedule_force_preempt() {
++    // Schedule a preemption event if none are scheduled
++    let when = now().unwrap() + Duration::from_millis(5);
++
++    if let Some(next_event) = WAKEUP_Q.borrow().peek()
++        && next_event.when <= when
++    {
++        // An event is already scheduled before our forced preemption
++        return;
++    }
++
++    schedule_preempt(when);
++}
++
+ static SYS_TIMER: OnceLock<Arc<SysTimer>> = OnceLock::new();
++
++per_cpu! {
++    static WAKEUP_Q: BinaryHeap<WakeupEvent> = BinaryHeap::new;
++}
+diff --git a/src/interrupts/cpu_messenger.rs b/src/interrupts/cpu_messenger.rs
+index b936f42..37437f9 100644
+--- a/src/interrupts/cpu_messenger.rs
++++ b/src/interrupts/cpu_messenger.rs
+@@ -1,9 +1,14 @@
+ //! A module for sending messages between CPUs, utilising IPIs.
+
++use super::{
++    ClaimedInterrupt, InterruptConfig, InterruptDescriptor, InterruptHandler, get_interrupt_root,
++};
++use crate::process::Task;
+ use crate::{
+     arch::ArchImpl,
+     drivers::Driver,
+     kernel::kpipe::KBuf,
++    sched,
+     sync::{OnceLock, SpinLock},
+ };
+ use alloc::{sync::Arc, vec::Vec};
+@@ -13,14 +18,9 @@ use libkernel::{
+ };
+ use log::{info, warn};
+
+-use super::{
+-    ClaimedInterrupt, InterruptConfig, InterruptDescriptor, InterruptHandler, get_interrupt_root,
+-};
+-
+ #[derive(Clone)]
+ pub enum Message {
+-    // Reschedule,
+-    // PutTask(Arc<Task>),
++    PutTask(Arc<Task>),
+     Ping(u32),
+ }
+
+@@ -47,8 +47,7 @@ impl InterruptHandler for CpuMessenger {
+             .try_pop();
+
+         match message {
+-            // Some(Message::Reschedule) => return, // We reschedule when returning from an IRQ.
+-            // Some(Message::PutTask(task)) => sched::insert_task(task),
++            Some(Message::PutTask(task)) => sched::insert_task(task),
+             Some(Message::Ping(cpu_id)) => {
+                 info!("CPU {} recieved ping from CPU {}", ArchImpl::id(), cpu_id)
+             }
+diff --git a/src/interrupts/mod.rs b/src/interrupts/mod.rs
+index f5dbbc1..261084f 100644
+--- a/src/interrupts/mod.rs
++++ b/src/interrupts/mod.rs
+@@ -68,14 +68,10 @@ pub trait InterruptHandler: Send + Sync {
+     fn handle_irq(&self, desc: InterruptDescriptor);
+ }
+
+-struct InterruptManagerInner {
+-    claimed_interrupts: BTreeMap<InterruptDescriptor, ClaimedInterrupt>,
+-    controller: Arc<SpinLock<dyn InterruptController>>,
+-}
+-
+ pub struct InterruptManager {
+     name: &'static str,
+-    inner: SpinLock<InterruptManagerInner>,
++    controller: Arc<SpinLock<dyn InterruptController>>,
++    claimed_interrupts: SpinLock<BTreeMap<InterruptDescriptor, ClaimedInterrupt>>,
+ }
+
+ impl InterruptManager {
+@@ -88,10 +84,8 @@ impl InterruptManager {
+
+         Arc::new(Self {
+             name,
+-            inner: SpinLock::new(InterruptManagerInner {
+-                claimed_interrupts: BTreeMap::new(),
+-                controller: driver,
+-            }),
++            claimed_interrupts: SpinLock::new(BTreeMap::new()),
++            controller: driver,
+         })
+     }
+
+@@ -99,9 +93,7 @@ impl InterruptManager {
+         &self,
+         iter: &mut dyn Iterator<Item = u32>,
+     ) -> Result<InterruptConfig> {
+-        self.inner
+-            .lock_save_irq()
+-            .controller
++        self.controller
+             .lock_save_irq()
+             .parse_fdt_interrupt_regs(iter)
+     }
+@@ -115,9 +107,9 @@ impl InterruptManager {
+         T: 'static + Send + Sync + Driver + InterruptHandler,
+         FConstructor: FnOnce(ClaimedInterrupt) -> T,
+     {
+-        let mut inner = self.inner.lock_save_irq();
++        let mut claimed_int = self.claimed_interrupts.lock_save_irq();
+
+-        if inner.claimed_interrupts.contains_key(&config.descriptor) {
++        if claimed_int.contains_key(&config.descriptor) {
+             return Err(KernelError::InUse);
+         }
+
+@@ -130,12 +122,12 @@ impl InterruptManager {
+
+             let driver = constructor(handle.clone());
+
+-            inner.claimed_interrupts.insert(config.descriptor, handle);
++            claimed_int.insert(config.descriptor, handle);
+
+             driver
+         });
+
+-        inner.controller.lock_save_irq().enable_interrupt(config);
++        self.controller.lock_save_irq().enable_interrupt(config);
+
+         debug!(
+             "Device {} claimed interrupt: {:?}",
+@@ -147,37 +139,39 @@ impl InterruptManager {
+     }
+
+     fn remove_interrupt(&self, desc: InterruptDescriptor) {
+-        let mut inner = self.inner.lock_save_irq();
+-        inner.claimed_interrupts.remove(&desc);
+-        inner.controller.lock_save_irq().disable_interrupt(desc);
++        let mut claimed_int = self.claimed_interrupts.lock_save_irq();
++
++        if claimed_int.remove(&desc).is_some() {
++            self.controller.lock_save_irq().disable_interrupt(desc);
++        }
++    }
++
++    fn get_active_handler(&self) -> Option<(Arc<dyn InterruptHandler>, InterruptDescriptor)> {
++        let mut claimed_ints = self.claimed_interrupts.lock_save_irq();
++
++        let ctx = self.controller.lock_save_irq().read_active_interrupt()?;
++        let desc = ctx.descriptor();
++        let irq = claimed_ints.get_mut(&desc)?;
++        let handler = irq.handler.upgrade()?;
++
++        Some((handler, desc))
+     }
+
+     pub fn handle_interrupt(&self) {
+-        let mut inner = self.inner.lock_save_irq();
+-        let ctx = inner.controller.lock_save_irq().read_active_interrupt();
+-
+-        if let Some(ctx) = ctx {
+-            let desc = ctx.descriptor();
+-            if let Some(irq_handle) = inner.claimed_interrupts.get_mut(&desc) {
+-                match irq_handle.handler.upgrade() {
+-                    Some(x) => x.handle_irq(ctx.descriptor()),
+-                    None => warn!("IRQ fired for stale IRQ handle"),
+-                }
+-            }
+-        }
++        let Some((handler, desc)) = self.get_active_handler() else {
++            warn!("IRQ fired for stale IRQ handle");
++            return;
++        };
++
++        handler.handle_irq(desc);
+     }
+
+     pub fn raise_ipi(&self, cpu: usize) {
+-        let inner = self.inner.lock_save_irq();
+-        inner.controller.lock_save_irq().raise_ipi(cpu);
++        self.controller.lock_save_irq().raise_ipi(cpu);
+     }
+
+     pub fn enable_core(&self, cpu_id: usize) {
+-        self.inner
+-            .lock_save_irq()
+-            .controller
+-            .lock_save_irq()
+-            .enable_core(cpu_id);
++        self.controller.lock_save_irq().enable_core(cpu_id);
+     }
+ }
+
+diff --git a/src/main.rs b/src/main.rs
+index 2af3225..940cdf1 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -2,6 +2,7 @@
+ #![no_main]
+ #![feature(used_with_arg)]
+ #![feature(likely_unlikely)]
++
+ use alloc::{
+     boxed::Box,
+     string::{String, ToString},
+diff --git a/src/memory/fault.rs b/src/memory/fault.rs
+index 744a078..785b50b 100644
+--- a/src/memory/fault.rs
++++ b/src/memory/fault.rs
+@@ -2,7 +2,7 @@ use crate::{process::ProcVM, sched::current_task};
+ use alloc::boxed::Box;
+ use libkernel::{
+     PageInfo, UserAddressSpace,
+-    error::Result,
++    error::{KernelError, MapError, Result},
+     memory::{address::VA, permissions::PtePermissions, proc_vm::vmarea::AccessKind},
+ };
+
+@@ -74,20 +74,48 @@ pub fn handle_demand_fault(
+                 return Ok(());
+             }
+
+-            vm.mm_mut().address_space_mut().map_page(
+-                new_page.leak(),
++            match vm.mm_mut().address_space_mut().map_page(
++                new_page.pa().to_pfn(),
+                 page_va,
+                 PtePermissions::from(vma.permissions()),
+-            )
++            ) {
++                Ok(_) => {
++                    // We mapped our page, leak it for reclimation by the
++                    // address-space tear-down code.
++                    new_page.leak();
++
++                    Ok(())
++                }
++                Err(KernelError::MappingError(MapError::AlreadyMapped)) => {
++                    // Another CPU mapped the page for us, since we've validated the
++                    // VMA is still valid and the same mapping code has been
++                    // executed, it's guarenteed that the correct page will have
++                    // been mapped by the other CPU.
++                    //
++                    // Do not leak the page, since it's not going to be used.
++                    Ok(())
++                }
++                e => e,
++            }
+         })))
+     } else {
+         // Anonymous mapping, no need to defer.
+-        vm.mm_mut()
+-            .address_space_mut()
+-            .map_page(new_page.leak(), page_va, vma.permissions().into())
+-            .unwrap();
+-
+-        Ok(FaultResolution::Resolved)
++        match vm.mm_mut().address_space_mut().map_page(
++            new_page.pa().to_pfn(),
++            page_va,
++            vma.permissions().into(),
++        ) {
++            Ok(()) => {
++                // As per logic above.
++                new_page.leak();
++                Ok(FaultResolution::Resolved)
++            }
++            Err(KernelError::MappingError(MapError::AlreadyMapped)) => {
++                // As per logic above.
++                Ok(FaultResolution::Resolved)
++            }
++            Err(e) => Err(e),
++        }
+     }
+ }
+
+diff --git a/src/process/clone.rs b/src/process/clone.rs
+index 36398bf..d76119f 100644
+--- a/src/process/clone.rs
++++ b/src/process/clone.rs
+@@ -1,4 +1,5 @@
+ use super::{ctx::Context, thread_group::signal::SigSet};
++use crate::arch::ArchImpl;
+ use crate::memory::uaccess::copy_to_user;
+ use crate::{
+     process::{TASK_LIST, Task, TaskState},
+@@ -8,6 +9,7 @@ use crate::{
+ use bitflags::bitflags;
+ use libkernel::memory::address::TUA;
+ use libkernel::{
++    CpuOps,
+     error::{KernelError, Result},
+     memory::address::UA,
+ };
+@@ -142,6 +144,8 @@ pub async fn sys_clone(
+             sig_mask: SpinLock::new(new_sigmask),
+             pending_signals: SpinLock::new(SigSet::empty()),
+             vruntime: SpinLock::new(0),
++            v_eligible: SpinLock::new(0),
++            v_deadline: SpinLock::new(0),
+             exec_start: SpinLock::new(None),
+             deadline: SpinLock::new(*current_task.deadline.lock_save_irq()),
+             state: Arc::new(SpinLock::new(TaskState::Runnable)),
+@@ -152,6 +156,7 @@ pub async fn sys_clone(
+             } else {
+                 None
+             }),
++            last_cpu: SpinLock::new(ArchImpl::id()),
+         }
+     };
+
+@@ -161,7 +166,14 @@ pub async fn sys_clone(
+
+     let tid = new_task.tid;
+
+-    sched::insert_task(Arc::new(new_task));
++    let task = Arc::new(new_task);
++
++    sched::insert_task_cross_cpu(task.clone());
++
++    task.process
++        .tasks
++        .lock_save_irq()
++        .insert(tid, Arc::downgrade(&task));
+
+     // Honour CLONE_*SETTID semantics for the parent and (shared-VM) child.
+     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) && !parent_tidptr.is_null() {
+diff --git a/src/process/exit.rs b/src/process/exit.rs
+index e28adf6..46e979e 100644
+--- a/src/process/exit.rs
++++ b/src/process/exit.rs
+@@ -43,7 +43,7 @@ pub fn do_exit_group(exit_code: ChildState) {
+
+     // Signal all other threads in the group to terminate. We iterate over Weak
+     // pointers and upgrade them.
+-    for thread_weak in process.threads.lock_save_irq().values() {
++    for thread_weak in process.tasks.lock_save_irq().values() {
+         if let Some(other_thread) = thread_weak.upgrade() {
+             // Don't signal ourselves
+             if other_thread.tid != task.tid {
+@@ -117,18 +117,18 @@ pub async fn sys_exit(exit_code: usize) -> Result<usize> {
+     }
+
+     let process = Arc::clone(&task.process);
+-    let mut thread_lock = process.threads.lock_save_irq();
++    let mut tasks_lock = process.tasks.lock_save_irq();
+
+     // How many threads are left? We must count live ones.
+-    let live_threads = thread_lock
++    let live_tasks = tasks_lock
+         .values()
+         .filter(|t| t.upgrade().is_some())
+         .count();
+
+-    if live_threads <= 1 {
+-        // We are the last thread. This is equivalent to an exit_group. The
+-        // exit code for an implicit exit_group is often 0.
+-        drop(thread_lock);
++    if live_tasks <= 1 {
++        // We are the last task. This is equivalent to an exit_group. The exit
++        // code for an implicit exit_group is often 0.
++        drop(tasks_lock);
+
+         // NOTE: We don't need to worry about a race condition here. Since
+         // we've established we're the only thread and we're executing a
+@@ -144,7 +144,7 @@ pub async fn sys_exit(exit_code: usize) -> Result<usize> {
+         *task.state.lock_save_irq() = TaskState::Finished;
+
+         // Remove ourself from the process's thread list.
+-        thread_lock.remove(&task.tid);
++        tasks_lock.remove(&task.tid);
+
+         // 3. This thread stops executing forever. The task struct will be
+         // deallocated when the last Arc<Task> is dropped (e.g., by the
+diff --git a/src/process/mod.rs b/src/process/mod.rs
+index cadefe0..4fe89a5 100644
+--- a/src/process/mod.rs
++++ b/src/process/mod.rs
+@@ -14,7 +14,7 @@ use creds::Credentials;
+ use ctx::{Context, UserCtx};
+ use fd_table::FileDescriptorTable;
+ use libkernel::memory::address::TUA;
+-use libkernel::{VirtualMemory, fs::Inode};
++use libkernel::{CpuOps, VirtualMemory, fs::Inode};
+ use libkernel::{
+     fs::pathbuf::PathBuf,
+     memory::{
+@@ -164,6 +164,11 @@ impl Comm {
+     }
+ }
+
++/// Scheduler base weight to ensure tasks always have a strictly positive
++/// scheduling weight. The value is added to a task's priority to obtain its
++/// effective weight (`w_i` in EEVDF paper).
++pub const SCHED_WEIGHT_BASE: i32 = 1024;
++
+ pub struct Task {
+     pub tid: Tid,
+     pub comm: Arc<SpinLock<Comm>>,
+@@ -176,7 +181,11 @@ pub struct Task {
+     pub ctx: SpinLock<Context>,
+     pub sig_mask: SpinLock<SigSet>,
+     pub pending_signals: SpinLock<SigSet>,
+-    pub vruntime: SpinLock<u64>,
++    pub vruntime: SpinLock<u128>,
++    /// Virtual time at which the task becomes eligible (v_ei).
++    pub v_eligible: SpinLock<u128>,
++    /// Virtual deadline (v_di) used by the EEVDF scheduler.
++    pub v_deadline: SpinLock<u128>,
+     pub exec_start: SpinLock<Option<Instant>>,
+     pub deadline: SpinLock<Option<Instant>>,
+     pub priority: i8,
+@@ -184,6 +193,7 @@ pub struct Task {
+     pub state: Arc<SpinLock<TaskState>>,
+     pub robust_list: SpinLock<Option<TUA<RobustListHead>>>,
+     pub child_tid_ptr: SpinLock<Option<TUA<u32>>>,
++    pub last_cpu: SpinLock<usize>,
+ }
+
+ impl Task {
+@@ -212,12 +222,15 @@ impl Task {
+             sig_mask: SpinLock::new(SigSet::empty()),
+             pending_signals: SpinLock::new(SigSet::empty()),
+             vruntime: SpinLock::new(0),
++            v_eligible: SpinLock::new(0),
++            v_deadline: SpinLock::new(0),
+             exec_start: SpinLock::new(None),
+             deadline: SpinLock::new(None),
+             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
+             last_run: SpinLock::new(None),
+             robust_list: SpinLock::new(None),
+             child_tid_ptr: SpinLock::new(None),
++            last_cpu: SpinLock::new(ArchImpl::id()),
+         }
+     }
+
+@@ -236,6 +249,8 @@ impl Task {
+             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
+             pending_signals: SpinLock::new(SigSet::empty()),
+             vruntime: SpinLock::new(0),
++            v_eligible: SpinLock::new(0),
++            v_deadline: SpinLock::new(0),
+             exec_start: SpinLock::new(None),
+             deadline: SpinLock::new(None),
+             sig_mask: SpinLock::new(SigSet::empty()),
+@@ -246,6 +261,7 @@ impl Task {
+             last_run: SpinLock::new(None),
+             robust_list: SpinLock::new(None),
+             child_tid_ptr: SpinLock::new(None),
++            last_cpu: SpinLock::new(ArchImpl::id()),
+         }
+     }
+
+@@ -257,6 +273,15 @@ impl Task {
+         self.priority
+     }
+
++    /// Compute this task's scheduling weight.
++    ///
++    /// weight = priority + SCHED_WEIGHT_BASE
++    /// The sum is clamped to a minimum of 1
++    pub fn weight(&self) -> u32 {
++        let w = self.priority as i32 + SCHED_WEIGHT_BASE;
++        if w <= 0 { 1 } else { w as u32 }
++    }
++
+     pub fn set_priority(&mut self, priority: i8) {
+         self.priority = priority;
+     }
+diff --git a/src/process/thread_group.rs b/src/process/thread_group.rs
+index 6e8eea4..b9f5e92 100644
+--- a/src/process/thread_group.rs
++++ b/src/process/thread_group.rs
+@@ -94,7 +94,7 @@ pub struct ThreadGroup {
+     pub umask: SpinLock<u32>,
+     pub parent: SpinLock<Option<Weak<ThreadGroup>>>,
+     pub children: SpinLock<BTreeMap<Tgid, Arc<ThreadGroup>>>,
+-    pub threads: SpinLock<BTreeMap<Tid, Weak<Task>>>,
++    pub tasks: SpinLock<BTreeMap<Tid, Weak<Task>>>,
+     pub signals: Arc<SpinLock<SignalState>>,
+     pub rsrc_lim: Arc<SpinLock<ResourceLimits>>,
+     pub pending_signals: SpinLock<SigSet>,
+diff --git a/src/process/thread_group/builder.rs b/src/process/thread_group/builder.rs
+index 455f6c8..8cde00b 100644
+--- a/src/process/thread_group/builder.rs
++++ b/src/process/thread_group/builder.rs
+@@ -73,7 +73,7 @@ impl ThreadGroupBuilder {
+             // couldn't then differentiate between a child and a parent.
+             next_tid: AtomicU32::new(1),
+             state: SpinLock::new(ProcessState::Running),
+-            threads: SpinLock::new(BTreeMap::new()),
++            tasks: SpinLock::new(BTreeMap::new()),
+         });
+
+         TG_LIST
+diff --git a/src/process/thread_group/signal/kill.rs b/src/process/thread_group/signal/kill.rs
+index c274a93..a1b04eb 100644
+--- a/src/process/thread_group/signal/kill.rs
++++ b/src/process/thread_group/signal/kill.rs
+@@ -82,7 +82,7 @@ pub fn sys_tkill(tid: PidT, signal: UserSigId) -> Result<usize> {
+     } else {
+         let task = current_task
+             .process
+-            .threads
++            .tasks
+             .lock_save_irq()
+             .get(&target_tid)
+             .and_then(|t| t.upgrade())
+diff --git a/src/process/threading/futex/mod.rs b/src/process/threading/futex/mod.rs
+index 3e43a02..895e0a4 100644
+--- a/src/process/threading/futex/mod.rs
++++ b/src/process/threading/futex/mod.rs
+@@ -80,18 +80,19 @@ pub async fn sys_futex(
+     };
+
+     // TODO: support bitset variants properly
+-    let timeout = if timeout.is_null() {
+-        None
+-    } else {
+-        let timeout = TimeSpec::copy_from_user(timeout).await?;
+-        if matches!(cmd, FUTEX_WAIT_BITSET) {
+-            Some(Duration::from(timeout) - date())
+-        } else {
+-            Some(Duration::from(timeout))
+-        }
+-    };
+     match cmd {
+         FUTEX_WAIT | FUTEX_WAIT_BITSET => {
++            let timeout = if timeout.is_null() {
++                None
++            } else {
++                let timeout = TimeSpec::copy_from_user(timeout).await?;
++                if matches!(cmd, FUTEX_WAIT_BITSET) {
++                    Some(Duration::from(timeout) - date())
++                } else {
++                    Some(Duration::from(timeout))
++                }
++            };
++
+             // Obtain (or create) the wait-queue for this futex word.
+             let slot = get_or_create_queue(key);
+
+diff --git a/src/sched/mod.rs b/src/sched/mod.rs
+index 5d0d215..9b0e36d 100644
+--- a/src/sched/mod.rs
++++ b/src/sched/mod.rs
+@@ -1,4 +1,5 @@
+-use crate::drivers::timer::now;
++use crate::drivers::timer::{Instant, now, schedule_force_preempt, schedule_preempt};
++use crate::interrupts::cpu_messenger::{Message, message_cpu};
+ use crate::{
+     arch::{Arch, ArchImpl},
+     per_cpu,
+@@ -7,11 +8,50 @@ use crate::{
+ };
+ use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
+ use core::cmp::Ordering;
+-use libkernel::{UserAddressSpace, error::Result};
++use core::sync::atomic::AtomicUsize;
++use core::time::Duration;
++use libkernel::{CpuOps, UserAddressSpace, error::Result};
+
+ pub mod uspc_ret;
+ pub mod waker;
+
++#[derive(Copy, Clone, Debug, Eq, PartialEq)]
++pub struct CpuId(usize);
++
++impl CpuId {
++    pub fn this() -> CpuId {
++        CpuId(ArchImpl::id())
++    }
++
++    pub fn value(&self) -> usize {
++        self.0
++    }
++}
++
++per_cpu! {
++    static SCHED_STATE: SchedState = SchedState::new;
++}
++
++/// Default time-slice (in milliseconds) assigned to runnable tasks.
++const DEFAULT_TIME_SLICE_MS: u64 = 4;
++
++/// Fixed-point configuration for virtual-time accounting.
++/// We now use a 65.63 format (65 integer bits, 63 fractional bits) as
++/// recommended by the EEVDF paper to minimise rounding error accumulation.
++pub const VT_FIXED_SHIFT: u32 = 63;
++pub const VT_ONE: u128 = 1u128 << VT_FIXED_SHIFT;
++/// Tolerance used when comparing virtual-time values (see EEVDF, Fixed-Point Arithmetic).
++/// Two virtual-time instants whose integer parts differ by no more than this constant are considered equal.
++pub const VCLOCK_EPSILON: u128 = VT_ONE;
++
++pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>> {
++    if let Some(task) = SCHED_STATE.borrow().run_queue.get(descriptor) {
++        return Some(task.clone());
++    }
++    // TODO: Ping other CPUs to find the task.
++    None
++}
++
+ /// Schedule a new task.
+ ///
+ /// This function is the core of the kernel's scheduler. It is responsible for
+@@ -24,14 +64,21 @@ pub mod waker;
+ /// 3. If the selected process is the same as the currently running one, no
+ ///    switch occurs.
+ /// 4. If a new process is selected, it handles the state transitions (`Running`
+-///    -&gt; `Runnable` for the old task, `Runnable` -&gt; `Running` for the new task)
+-///    and performs the architecture-specific context switch.
++///   > `Runnable` for the old task, `Runnable` > `Running` for the new task)
++///   > and performs the architecture-specific context switch.
+ ///
+ /// # Returns
+ ///
+ /// Nothing, but the CPU context will be set to the next runnable task. See
+ /// `userspace_return` for how this is invoked.
+ fn schedule() {
++    if SCHED_STATE.try_borrow_mut().is_none() {
++        log::warn!(
++            "Scheduler reentrancy detected on CPU {}",
++            CpuId::this().value()
++        );
++        return;
++    }
+     // Mark the current task as runnable so it's considered for scheduling in
+     // the next time-slice.
+     {
+@@ -45,7 +92,35 @@ fn schedule() {
+
+     let previous_task = current_task();
+     let mut sched_state = SCHED_STATE.borrow_mut();
++
++    // Bring the virtual clock up-to-date so that eligibility tests use the
++    // most recent value.
++    let now_inst = now().expect("System timer not initialised");
++    sched_state.advance_vclock(now_inst);
++
+     let next_task = sched_state.find_next_runnable_task();
++    // if previous_task.tid != next_task.tid {
++    //     let runnable_tasks = sched_state
++    //         .run_queue
++    //         .values()
++    //         .filter(|t| *t.state.lock_save_irq() == TaskState::Runnable)
++    //         .count();
++    //     if matches!(*previous_task.state.lock_save_irq(), TaskState::Sleeping | TaskState::Finished) {
++    //         log::debug!(
++    //             "CPU {} scheduling switch due to removal from run queue: {} -> {} (runnable tasks: {runnable_tasks})",
++    //             CpuId::this().value(),
++    //             previous_task.tid.value(),
++    //             next_task.tid.value(),
++    //         );
++    //     } else {
++    //         log::debug!(
++    //             "CPU {} scheduling switch: {} -> {} (runnable tasks: {runnable_tasks})",
++    //             CpuId::this().value(),
++    //             previous_task.tid.value(),
++    //             next_task.tid.value()
++    //         );
++    //     }
++    // }
+
+     sched_state
+         .switch_to_task(Some(previous_task), next_task.clone())
+@@ -59,35 +134,150 @@ pub fn spawn_kernel_work(fut: impl Future<Output = ()> + 'static + Send) {
+         .put_kernel_work(Box::pin(fut));
+ }
+
+-/// Insert the given task onto *this* CPUs runqueue.
++fn get_next_cpu() -> CpuId {
++    static NEXT_CPU: AtomicUsize = AtomicUsize::new(0);
++
++    let cpu_count = ArchImpl::cpu_count();
++    let cpu_id = NEXT_CPU.fetch_add(1, core::sync::atomic::Ordering::Relaxed) % cpu_count;
++
++    CpuId(cpu_id)
++}
++
++/// Insert the given task onto a CPU's run queue.
+ pub fn insert_task(task: Arc<Task>) {
+-    SCHED_STATE
+-        .borrow_mut()
+-        .run_queue
+-        .insert(task.descriptor(), task);
++    SCHED_STATE.borrow_mut().add_task(task);
++}
++
++pub fn insert_task_cross_cpu(task: Arc<Task>) {
++    let cpu = get_next_cpu();
++    if cpu == CpuId::this() {
++        insert_task(task);
++    } else {
++        message_cpu(cpu.value(), Message::PutTask(task)).expect("Failed to send task to CPU");
++    }
+ }
+
+ pub struct SchedState {
++    /// Task that is currently running on this CPU (if any).
+     running_task: Option<Arc<Task>>,
++    // TODO: To be changed to virtual-deadline key for better performance
++    // TODO: Use a red-black tree for better performance.
+     pub run_queue: BTreeMap<TaskDescriptor, Arc<Task>>,
++    /// Per-CPU virtual clock (fixed-point 65.63 stored in a u128).
++    /// Expressed in virtual-time units as defined by the EEVDF paper.
++    vclock: u128,
++    /// Cached sum of weights of all tasks in the run queue (`sum w_i`).
++    total_weight: u64,
++    /// Real-time moment when `vclock` was last updated.
++    last_update: Option<Instant>,
+ }
+
+ unsafe impl Send for SchedState {}
+
+ impl SchedState {
++    /// Inserts `task` into this CPU's run-queue and updates all EEVDF
++    /// accounting information (eligible time, virtual deadline and the cached
++    /// weight sum).
++    pub fn add_task(&mut self, task: Arc<Task>) {
++        // Always advance the virtual clock first so that eligibility and
++        // deadline calculations for the incoming task are based on the most
++        // recent time stamp.
++        let now_inst = now().expect("System timer not initialised");
++        self.advance_vclock(now_inst);
++
++        let desc = task.descriptor();
++
++        if self.run_queue.contains_key(&desc) {
++            return;
++        }
++
++        // A freshly enqueued task becomes eligible immediately.
++        *task.v_eligible.lock_save_irq() = self.vclock;
++
++        // Grant it an initial virtual deadline proportional to its weight.
++        let q_ns: u128 = (DEFAULT_TIME_SLICE_MS as u128) * 1_000_000;
++        let v_delta = (q_ns << VT_FIXED_SHIFT) / task.weight() as u128;
++        let new_v_deadline = self.vclock + v_delta;
++        *task.v_deadline.lock_save_irq() = new_v_deadline;
++
++        // Since the task is not executing yet, its exec_start must be `None`.
++        *task.exec_start.lock_save_irq() = None;
++
++        if !task.is_idle_task() {
++            self.total_weight = self.total_weight.saturating_add(task.weight() as u64);
++        }
++
++        // Decide whether the currently-running task must be preempted
++        // immediately.
++        let newcomer_eligible = {
++            let v_e = *task.v_eligible.lock_save_irq();
++            v_e.saturating_sub(self.vclock) <= VCLOCK_EPSILON
++        };
++        let preempt_now = if newcomer_eligible {
++            if let Some(ref current) = self.running_task {
++                let current_deadline = *current.v_deadline.lock_save_irq();
++                new_v_deadline < current_deadline
++            } else {
++                true
++            }
++        } else {
++            false
++        };
++
++        self.run_queue.insert(desc, task);
++
++        // Arm an immediate preemption timer so that the interrupt
++        // handler will force the actual context switch as soon as possible.
++        if preempt_now {
++            schedule_preempt(now_inst + Duration::from_nanos(1));
++        }
++    }
++
++    /// Removes a task given its descriptor and subtracts its weight from the
++    /// cached `total_weight`.  Missing descriptors are ignored.
++    pub fn remove_task_with_weight(&mut self, desc: &TaskDescriptor) {
++        if let Some(task) = self.run_queue.remove(desc) {
++            if task.is_idle_task() {
++                panic!("Cannot remove the idle task");
++            }
++            self.total_weight = self.total_weight.saturating_sub(task.weight() as u64);
++        }
++    }
+     pub const fn new() -> Self {
+         Self {
+             running_task: None,
+             run_queue: BTreeMap::new(),
++            vclock: 0,
++            total_weight: 0,
++            last_update: None,
+         }
+     }
+
++    /// Advance the per-CPU virtual clock (`vclock`) by converting the elapsed
++    /// real time since the last update into 65.63-format fixed-point
++    /// virtual-time units:
++    ///     v += (delta t << VT_FIXED_SHIFT) /  sum w
++    /// The caller must pass the current real time (`now_inst`).
++    fn advance_vclock(&mut self, now_inst: Instant) {
++        if let Some(prev) = self.last_update {
++            let delta_real = now_inst - prev;
++            if self.total_weight > 0 {
++                let delta_vt =
++                    ((delta_real.as_nanos()) << VT_FIXED_SHIFT) / self.total_weight as u128;
++                self.vclock = self.vclock.saturating_add(delta_vt);
++            }
++        }
++        self.last_update = Some(now_inst);
++    }
++
+     fn switch_to_task(
+         &mut self,
+         previous_task: Option<Arc<Task>>,
+         next_task: Arc<Task>,
+     ) -> Result<()> {
+         let now_inst = now().expect("System timer not initialised");
++        // Update the virtual clock before we do any other accounting.
++        self.advance_vclock(now_inst);
+
+         if let Some(ref prev_task) = previous_task {
+             *prev_task.last_run.lock_save_irq() = Some(now_inst);
+@@ -98,25 +288,61 @@ impl SchedState {
+         {
+             // Ensure the task state is running.
+             *next_task.state.lock_save_irq() = TaskState::Running;
++            // TODO: Fix hack
++            if next_task.is_idle_task() {
++                schedule_force_preempt();
++            }
+             return Ok(());
+         }
+
+-        // Update vruntime and clear exec_start for the previous task.
++        // Update vruntime, clear exec_start and assign a new eligible virtual deadline
++        // for the previous task.
+         if let Some(ref prev_task) = previous_task {
+-            if let Some(start) = *prev_task.exec_start.lock_save_irq() {
++            // Compute how much virtual time the task actually consumed.
++            let delta_vt = if let Some(start) = *prev_task.exec_start.lock_save_irq() {
+                 let delta = now_inst - start;
+-                *prev_task.vruntime.lock_save_irq() += delta.as_nanos() as u64;
+-            }
++                let w = prev_task.weight() as u128;
++                let dv = ((delta.as_nanos() as u128) << VT_FIXED_SHIFT) / w;
++                *prev_task.vruntime.lock_save_irq() += dv;
++                dv
++            } else {
++                0
++            };
+             *prev_task.exec_start.lock_save_irq() = None;
++
++            // Advance its eligible time by the virtual run time it just used
++            // (EEVDF: v_ei += t_used / w_i).
++            *prev_task.v_eligible.lock_save_irq() += delta_vt;
++
++            // Re-issue a virtual deadline
++            let q_ns: u128 = (DEFAULT_TIME_SLICE_MS as u128) * 1_000_000;
++            let v_delta = (q_ns << VT_FIXED_SHIFT) / prev_task.weight() as u128;
++            let v_ei = *prev_task.v_eligible.lock_save_irq();
++            *prev_task.v_deadline.lock_save_irq() = v_ei + v_delta;
+         }
+
+-        // Record the start time for the task we are about to run.
+         *next_task.exec_start.lock_save_irq() = Some(now_inst);
++        *next_task.last_cpu.lock_save_irq() = CpuId::this().value();
+
+-        // Context switch, the previous task's state should already been updated
+-        // prior to calling this function.
+-        if let Some(ref prev_task) = previous_task {
+-            debug_assert_eq!(*prev_task.state.lock_save_irq(), TaskState::Runnable);
++        // Make sure the task possesses an eligible virtual deadline. If none is set
++        // (or the previous one has elapsed), we hand out a brand-new one.
++        {
++            let mut deadline_guard = next_task.deadline.lock_save_irq();
++            // Refresh deadline if none is set or the previous deadline has elapsed.
++            if deadline_guard
++                .is_none_or(|d| d <= now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS))
++            {
++                *deadline_guard = Some(now_inst + Duration::from_millis(DEFAULT_TIME_SLICE_MS));
++            }
++            if let Some(d) = *deadline_guard {
++                // log::debug!(
++                //     "CPU {}: Next task {} has deadline in {}ms",
++                //     CpuId::this().value(),
++                //     next_task.tid.value(),
++                //     (d - now_inst).as_millis()
++                // );
++                schedule_preempt(d);
++            }
+         }
+
+         *next_task.state.lock_save_irq() = TaskState::Running;
+@@ -141,24 +367,36 @@ impl SchedState {
+             // We only care about processes that are ready to run.
+             .filter(|candidate_proc| {
+                 let state = *candidate_proc.state.lock_save_irq();
+-                // A process is a candidate if it's runnable and NOT the idle task
+-                state == TaskState::Runnable && !candidate_proc.is_idle_task()
++                let eligible_vt = *candidate_proc.v_eligible.lock_save_irq();
++                state == TaskState::Runnable
++                    && !candidate_proc.is_idle_task()
++                    // Allow a small epsilon tolerance to compensate for rounding
++                    && eligible_vt.saturating_sub(self.vclock) <= VCLOCK_EPSILON
+             })
+             .min_by(|proc1, proc2| {
+-                let vr1 = *proc1.vruntime.lock_save_irq();
+-                let vr2 = *proc2.vruntime.lock_save_irq();
+-
+-                vr1.cmp(&vr2).then_with(|| {
+-                    // Tie-breaker: fall back to last run timestamp.
+-                    let last_run1 = proc1.last_run.lock_save_irq();
+-                    let last_run2 = proc2.last_run.lock_save_irq();
+-
+-                    match (*last_run1, *last_run2) {
+-                        (Some(t1), Some(t2)) => t1.cmp(&t2),
+-                        (Some(_), None) => Ordering::Less,
+-                        (None, Some(_)) => Ordering::Greater,
+-                        (None, None) => Ordering::Equal,
+-                    }
++                if proc1.is_idle_task() {
++                    return Ordering::Greater;
++                } else if proc2.is_idle_task() {
++                    return Ordering::Less;
++                }
++                let vd1 = *proc1.v_deadline.lock_save_irq();
++                let vd2 = *proc2.v_deadline.lock_save_irq();
++
++                vd1.cmp(&vd2).then_with(|| {
++                    let vr1 = *proc1.vruntime.lock_save_irq();
++                    let vr2 = *proc2.vruntime.lock_save_irq();
++
++                    vr1.cmp(&vr2).then_with(|| {
++                        let last_run1 = proc1.last_run.lock_save_irq();
++                        let last_run2 = proc2.last_run.lock_save_irq();
++
++                        match (*last_run1, *last_run2) {
++                            (Some(t1), Some(t2)) => t1.cmp(&t2),
++                            (Some(_), None) => Ordering::Less,
++                            (None, Some(_)) => Ordering::Greater,
++                            (None, None) => Ordering::Equal,
++                        }
++                    })
+                 })
+             })
+             .unwrap_or(idle_task)
+@@ -166,10 +404,6 @@ impl SchedState {
+     }
+ }
+
+-per_cpu! {
+-    pub static SCHED_STATE: SchedState = SchedState::new;
+-}
+-
+ pub fn current_task() -> Arc<Task> {
+     SCHED_STATE
+         .borrow()
+@@ -191,6 +425,7 @@ pub fn sched_init() {
+         .activate();
+
+     *init_task.state.lock_save_irq() = TaskState::Running;
++    SCHED_STATE.borrow_mut().running_task = Some(idle_task.clone());
+
+     {
+         let mut task_list = TASK_LIST.lock_save_irq();
+@@ -210,13 +445,15 @@ pub fn sched_init() {
+
+ pub fn sched_init_secondary() {
+     let idle_task = get_idle_task();
++    SCHED_STATE.borrow_mut().running_task = Some(idle_task.clone());
+
++    // Important to ensure that the idle task is in the TASK_LIST for this CPU.
+     insert_task(idle_task.clone());
+
+     SCHED_STATE
+         .borrow_mut()
+         .switch_to_task(None, idle_task)
+-        .expect("Failed to swtich to idle task");
++        .expect("Failed to switch to idle task");
+ }
+
+ fn get_idle_task() -> Arc<Task> {
+diff --git a/src/sched/uspc_ret.rs b/src/sched/uspc_ret.rs
+index 8593e34..5def468 100644
+--- a/src/sched/uspc_ret.rs
++++ b/src/sched/uspc_ret.rs
+@@ -78,7 +78,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
+     loop {
+         match state {
+             State::PickNewTask => {
+-                // Pick a new task, poteintally context switching to a new task.
++                // Pick a new task, potentially context switching to a new task.
+                 schedule();
+                 state = State::ProcessKernelWork;
+             }
+@@ -120,7 +120,10 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
+                             match *task_state {
+                                 // The main path we expect to take to sleep the
+                                 // task.
+-                                TaskState::Running => *task_state = TaskState::Sleeping,
++                                // Task is currently running or is runnable and will now sleep.
++                                TaskState::Running | TaskState::Runnable => {
++                                    *task_state = TaskState::Sleeping
++                                }
+                                 // If we were woken between the future returning
+                                 // `Poll::Pending` and acquiring the lock above,
+                                 // the waker will have put us into this state.
+@@ -161,8 +164,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
+                             if task.state.lock_save_irq().is_finished() {
+                                 SCHED_STATE
+                                     .borrow_mut()
+-                                    .run_queue
+-                                    .remove(&task.descriptor());
++                                    .remove_task_with_weight(&task.descriptor());
+                                 let mut task_list = TASK_LIST.lock_save_irq();
+                                 task_list.remove(&task.descriptor());
+
+@@ -187,9 +189,10 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
+                             let mut task_state = task.state.lock_save_irq();
+
+                             match *task_state {
+-                                // The main path we expect to take to sleep the
+-                                // task.
+-                                TaskState::Running => *task_state = TaskState::Sleeping,
++                                // Task is runnable or running, put it to sleep.
++                                TaskState::Running | TaskState::Runnable => {
++                                    *task_state = TaskState::Sleeping
++                                }
+                                 // If we were woken between the future returning
+                                 // `Poll::Pending` and acquiring the lock above,
+                                 // the waker will have put us into this state.
+@@ -252,7 +255,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
+                                 parent.signals.lock_save_irq().set_pending(SigId::SIGCHLD);
+                             }
+
+-                            for thr_weak in process.threads.lock_save_irq().values() {
++                            for thr_weak in process.tasks.lock_save_irq().values() {
+                                 if let Some(thr) = thr_weak.upgrade() {
+                                     *thr.state.lock_save_irq() = TaskState::Stopped;
+                                 }
+@@ -265,7 +268,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
+                             let process = &task.process;
+
+                             // Wake up all sleeping threads in the process.
+-                            for thr_weak in process.threads.lock_save_irq().values() {
++                            for thr_weak in process.tasks.lock_save_irq().values() {
+                                 if let Some(thr) = thr_weak.upgrade() {
+                                     let mut st = thr.state.lock_save_irq();
+                                     if *st == TaskState::Sleeping {
