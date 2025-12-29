@@ -27,6 +27,8 @@ pub trait Arch: CpuOps + VirtualMemory {
 
     fn name() -> &'static str;
 
+    fn cpu_count() -> usize;
+
     /// Prepares the initial context for a new user-space thread. This sets up
     /// the stack frame so that when we context-switch to it, it will begin
     /// execution at the specified `entry_point`.

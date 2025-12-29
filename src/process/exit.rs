@@ -43,7 +43,7 @@ pub fn do_exit_group(exit_code: ChildState) {
 
     // Signal all other threads in the group to terminate. We iterate over Weak
     // pointers and upgrade them.
-    for thread_weak in process.threads.lock_save_irq().values() {
+    for thread_weak in process.tasks.lock_save_irq().values() {
         if let Some(other_thread) = thread_weak.upgrade() {
             // Don't signal ourselves
             if other_thread.tid != task.tid {
@@ -117,18 +117,18 @@ pub async fn sys_exit(exit_code: usize) -> Result<usize> {
     }
 
     let process = Arc::clone(&task.process);
-    let mut thread_lock = process.threads.lock_save_irq();
+    let mut tasks_lock = process.tasks.lock_save_irq();
 
     // How many threads are left? We must count live ones.
-    let live_threads = thread_lock
+    let live_tasks = tasks_lock
         .values()
         .filter(|t| t.upgrade().is_some())
         .count();
 
-    if live_threads <= 1 {
-        // We are the last thread. This is equivalent to an exit_group. The
-        // exit code for an implicit exit_group is often 0.
-        drop(thread_lock);
+    if live_tasks <= 1 {
+        // We are the last task. This is equivalent to an exit_group. The exit
+        // code for an implicit exit_group is often 0.
+        drop(tasks_lock);
 
         // NOTE: We don't need to worry about a race condition here. Since
         // we've established we're the only thread and we're executing a
@@ -144,7 +144,7 @@ pub async fn sys_exit(exit_code: usize) -> Result<usize> {
         *task.state.lock_save_irq() = TaskState::Finished;
 
         // Remove ourself from the process's thread list.
-        thread_lock.remove(&task.tid);
+        tasks_lock.remove(&task.tid);
 
         // 3. This thread stops executing forever. The task struct will be
         // deallocated when the last Arc<Task> is dropped (e.g., by the

@@ -1,5 +1,6 @@
 use super::{ctx::Context, thread_group::signal::SigSet};
 use crate::memory::uaccess::copy_to_user;
+use crate::sched::CpuId;
 use crate::{
     process::{TASK_LIST, Task, TaskState},
     sched::{self, current_task},
@@ -142,6 +143,8 @@ pub async fn sys_clone(
             sig_mask: SpinLock::new(new_sigmask),
             pending_signals: SpinLock::new(SigSet::empty()),
             vruntime: SpinLock::new(0),
+            v_eligible: SpinLock::new(0),
+            v_deadline: SpinLock::new(0),
             exec_start: SpinLock::new(None),
             deadline: SpinLock::new(*current_task.deadline.lock_save_irq()),
             state: Arc::new(SpinLock::new(TaskState::Runnable)),
@@ -152,6 +155,7 @@ pub async fn sys_clone(
             } else {
                 None
             }),
+            last_cpu: SpinLock::new(CpuId::this()),
         }
     };
 
@@ -161,7 +165,14 @@ pub async fn sys_clone(
 
     let tid = new_task.tid;
 
-    sched::insert_task(Arc::new(new_task));
+    let task = Arc::new(new_task);
+
+    sched::insert_task_cross_cpu(task.clone());
+
+    task.process
+        .tasks
+        .lock_save_irq()
+        .insert(tid, Arc::downgrade(&task));
 
     // Honour CLONE_*SETTID semantics for the parent and (shared-VM) child.
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) && !parent_tidptr.is_null() {

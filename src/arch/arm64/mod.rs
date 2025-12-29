@@ -90,6 +90,10 @@ impl Arch for Aarch64 {
         "aarch64"
     }
 
+    fn cpu_count() -> usize {
+        boot::secondary::cpu_count()
+    }
+
     fn do_signal(
         sig: SigId,
         action: UserspaceSigAction,

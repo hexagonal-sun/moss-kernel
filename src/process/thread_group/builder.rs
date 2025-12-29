@@ -73,7 +73,7 @@ impl ThreadGroupBuilder {
             // couldn't then differentiate between a child and a parent.
             next_tid: AtomicU32::new(1),
             state: SpinLock::new(ProcessState::Running),
-            threads: SpinLock::new(BTreeMap::new()),
+            tasks: SpinLock::new(BTreeMap::new()),
         });
 
         TG_LIST

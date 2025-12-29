@@ -78,7 +78,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
     loop {
         match state {
             State::PickNewTask => {
-                // Pick a new task, poteintally context switching to a new task.
+                // Pick a new task, potentially context switching to a new task.
                 schedule();
                 state = State::ProcessKernelWork;
             }
@@ -120,7 +120,10 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             match *task_state {
                                 // The main path we expect to take to sleep the
                                 // task.
-                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                // Task is currently running or is runnable and will now sleep.
+                                TaskState::Running | TaskState::Runnable => {
+                                    *task_state = TaskState::Sleeping
+                                }
                                 // If we were woken between the future returning
                                 // `Poll::Pending` and acquiring the lock above,
                                 // the waker will have put us into this state.
@@ -161,8 +164,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             if task.state.lock_save_irq().is_finished() {
                                 SCHED_STATE
                                     .borrow_mut()
-                                    .run_queue
-                                    .remove(&task.descriptor());
+                                    .remove_task_with_weight(&task.descriptor());
                                 let mut task_list = TASK_LIST.lock_save_irq();
                                 task_list.remove(&task.descriptor());
 
@@ -187,9 +189,10 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             let mut task_state = task.state.lock_save_irq();
 
                             match *task_state {
-                                // The main path we expect to take to sleep the
-                                // task.
-                                TaskState::Running => *task_state = TaskState::Sleeping,
+                                // Task is runnable or running, put it to sleep.
+                                TaskState::Running | TaskState::Runnable => {
+                                    *task_state = TaskState::Sleeping
+                                }
                                 // If we were woken between the future returning
                                 // `Poll::Pending` and acquiring the lock above,
                                 // the waker will have put us into this state.
@@ -252,7 +255,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                                 parent.signals.lock_save_irq().set_pending(SigId::SIGCHLD);
                             }
 
-                            for thr_weak in process.threads.lock_save_irq().values() {
+                            for thr_weak in process.tasks.lock_save_irq().values() {
                                 if let Some(thr) = thr_weak.upgrade() {
                                     *thr.state.lock_save_irq() = TaskState::Stopped;
                                 }
@@ -265,7 +268,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             let process = &task.process;
 
                             // Wake up all sleeping threads in the process.
-                            for thr_weak in process.threads.lock_save_irq().values() {
+                            for thr_weak in process.tasks.lock_save_irq().values() {
                                 if let Some(thr) = thr_weak.upgrade() {
                                     let mut st = thr.state.lock_save_irq();
                                     if *st == TaskState::Sleeping {

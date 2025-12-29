@@ -1,9 +1,14 @@
 //! A module for sending messages between CPUs, utilising IPIs.
 
+use super::{
+    ClaimedInterrupt, InterruptConfig, InterruptDescriptor, InterruptHandler, get_interrupt_root,
+};
+use crate::process::Task;
 use crate::{
     arch::ArchImpl,
     drivers::Driver,
     kernel::kpipe::KBuf,
+    sched,
     sync::{OnceLock, SpinLock},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -13,14 +18,9 @@ use libkernel::{
 };
 use log::{info, warn};
 
-use super::{
-    ClaimedInterrupt, InterruptConfig, InterruptDescriptor, InterruptHandler, get_interrupt_root,
-};
-
 #[derive(Clone)]
 pub enum Message {
-    // Reschedule,
-    // PutTask(Arc<Task>),
+    PutTask(Arc<Task>),
     Ping(u32),
 }
 
@@ -47,8 +47,7 @@ impl InterruptHandler for CpuMessenger {
             .try_pop();
 
         match message {
-            // Some(Message::Reschedule) => return, // We reschedule when returning from an IRQ.
-            // Some(Message::PutTask(task)) => sched::insert_task(task),
+            Some(Message::PutTask(task)) => sched::insert_task(task),
             Some(Message::Ping(cpu_id)) => {
                 info!("CPU {} recieved ping from CPU {}", ArchImpl::id(), cpu_id)
             }

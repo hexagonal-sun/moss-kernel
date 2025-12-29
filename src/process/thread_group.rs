@@ -94,7 +94,7 @@ pub struct ThreadGroup {
     pub umask: SpinLock<u32>,
     pub parent: SpinLock<Option<Weak<ThreadGroup>>>,
     pub children: SpinLock<BTreeMap<Tgid, Arc<ThreadGroup>>>,
-    pub threads: SpinLock<BTreeMap<Tid, Weak<Task>>>,
+    pub tasks: SpinLock<BTreeMap<Tid, Weak<Task>>>,
     pub signals: Arc<SpinLock<SignalState>>,
     pub rsrc_lim: Arc<SpinLock<ResourceLimits>>,
     pub pending_signals: SpinLock<SigSet>,

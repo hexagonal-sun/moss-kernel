@@ -411,6 +411,12 @@ impl InterruptController for ArmGicV3 {
                 trigger: TriggerMode::EdgeRising,
             });
         }
+
+        // Also enable the timer
+        self.enable_interrupt(InterruptConfig {
+            descriptor: InterruptDescriptor::Ppi(14),
+            trigger: TriggerMode::EdgeRising,
+        });
     }
 
     fn parse_fdt_interrupt_regs(
