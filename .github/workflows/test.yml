@@ -1,0 +1,29 @@
+name: Test
+
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Build dockerfile
+        run: docker build -t moss .
+      - name: Run tests inside docker container
+        run: docker run moss "/bin/bash" -c "cargo run -r -- /bin/usertest" >> out.log
+      - name: Display test output
+        run: cat out.log
+      - name: Check for success line
+        run: grep -q "All tests passed in " out.log || (echo "Tests failed" && exit 1)
+      - name: Upload test output as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: test-output
+          path: out.log
