@@ -27,9 +27,9 @@ pub async fn sys_fchownat(
     let mut buf = [0; 1024];
 
     let task = current_task();
-    let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let start_node = resolve_at_start_node(dirfd, path).await?;
     let flags = AtFlags::from_bits_retain(flags);
+    let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
+    let start_node = resolve_at_start_node(dirfd, path, flags).await?;
 
     let node = resolve_path_flags(dirfd, path, start_node, task.clone(), flags).await?;
     let mut attr = node.getattr().await?;

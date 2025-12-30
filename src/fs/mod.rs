@@ -1,6 +1,5 @@
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
-use alloc::string::String;
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 use async_trait::async_trait;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -256,29 +255,32 @@ impl VFS {
 
             let next_inode = current_inode.lookup(&component).await?;
 
-            let resolved_inode = if let Some(mount_root) =
-                self.state.lock_save_irq().get_mount_root(&next_inode.id())
-            {
-                mount_root
-            } else {
-                next_inode
-            };
+            let attr = next_inode.getattr().await?;
 
-            if let Some(new_inode) = self
-                .resolve_symlink(resolved_inode, &mut components, follow_last_sym)
-                .await?
-            {
+            if attr.file_type == FileType::Symlink && (follow_last_sym || !components.is_empty()) {
                 symlink_count += 1;
                 if symlink_count > MAX_SYMLINK {
                     return Err(FsError::Loop.into()); // prevent infinite looping
                 }
 
-                current_inode = new_inode;
+                let target = next_inode.readlink().await?;
+                let mut new_components: Vec<_> =
+                    target.components().map(|s| s.to_owned()).collect();
+                new_components.reverse();
+                for comp in new_components {
+                    components.push(comp);
+                }
+
+                if target.is_absolute() {
+                    // if absolute, restart from root
+                    current_inode = self.root_inode.lock_save_irq().as_ref().unwrap().clone();
+                }
+
                 continue;
             }
 
             // Delegate the lookup to the underlying filesystem.
-            current_inode = current_inode.lookup(&component).await?;
+            current_inode = next_inode;
         }
 
         // After the final lookup, check if the destination is itself a mount point.
@@ -291,35 +293,6 @@ impl VFS {
         }
 
         Ok(current_inode)
-    }
-
-    async fn resolve_symlink(
-        &self,
-        inode: Arc<dyn Inode>,
-        components: &mut Vec<String>,
-        follow_last: bool,
-    ) -> Result<Option<Arc<dyn Inode>>> {
-        let attr = inode.getattr().await?;
-        if attr.file_type != FileType::Symlink {
-            return Ok(None);
-        }
-
-        if !follow_last && components.is_empty() {
-            return Ok(None);
-        }
-
-        let target = inode.readlink().await?;
-        let mut new_components: Vec<_> = target.components().map(|s| s.to_owned()).collect();
-        new_components.reverse();
-        for comp in new_components {
-            components.push(comp);
-        }
-        Ok(Some(if target.is_absolute() {
-            // if absolute, restart from root
-            self.root_inode.lock_save_irq().as_ref().unwrap().clone()
-        } else {
-            inode
-        }))
     }
 
     /// Returns a clone of the root inode.

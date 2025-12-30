@@ -20,8 +20,8 @@ pub async fn sys_faccessat2(dirfd: Fd, path: TUA<c_char>, mode: i32, flags: i32)
     let task = current_task();
     let access_mode = AccessMode::from_bits_retain(mode);
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let start_node = resolve_at_start_node(dirfd, path).await?;
     let at_flags = AtFlags::from_bits_retain(flags);
+    let start_node = resolve_at_start_node(dirfd, path, at_flags).await?;
     let node = resolve_path_flags(dirfd, path, start_node, task.clone(), at_flags).await?;
 
     // If mode is F_OK (value 0), the check is for the file's existence.

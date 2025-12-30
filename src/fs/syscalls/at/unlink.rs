@@ -4,7 +4,10 @@ use libkernel::{error::Result, fs::path::Path, memory::address::TUA};
 
 use crate::{
     current_task,
-    fs::{VFS, syscalls::at::resolve_at_start_node},
+    fs::{
+        VFS,
+        syscalls::at::{AtFlags, resolve_at_start_node},
+    },
     memory::uaccess::cstr::UserCStr,
     process::fd_table::Fd,
 };
@@ -25,9 +28,10 @@ pub async fn sys_unlinkat(dirfd: Fd, path: TUA<c_char>, flags: u32) -> Result<us
     let task = current_task();
 
     // Determine the starting inode for path resolution.
-    let start_node = resolve_at_start_node(dirfd, path).await?;
+    let flags = AtFlags::from_bits_retain(flags as _);
+    let start_node = resolve_at_start_node(dirfd, path, flags).await?;
 
-    let remove_dir = flags & AT_REMOVEDIR != 0;
+    let remove_dir = flags.bits() as u32 & AT_REMOVEDIR != 0;
 
     VFS.unlink(path, start_node, remove_dir, task.clone())
         .await?;

@@ -42,8 +42,8 @@ pub async fn sys_utimensat(
         let mut buf = [0; 1024];
 
         let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-        let start_node = resolve_at_start_node(dirfd, path).await?;
         let flags = AtFlags::from_bits_retain(flags);
+        let start_node = resolve_at_start_node(dirfd, path, flags).await?;
 
         resolve_path_flags(dirfd, path, start_node, task.clone(), flags).await?
     };

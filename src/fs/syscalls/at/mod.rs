@@ -1,5 +1,5 @@
 use crate::{
-    fs::VFS,
+    fs::{DummyInode, VFS},
     process::{Task, fd_table::Fd},
     sched::current_task,
 };
@@ -36,7 +36,11 @@ bitflags::bitflags! {
 
 /// Given the paraters to one of the sys_{action}at syscalls, resolve the
 /// arguments to a start node to which path should be applied.
-async fn resolve_at_start_node(dirfd: Fd, path: &Path) -> Result<Arc<dyn Inode>> {
+async fn resolve_at_start_node(dirfd: Fd, path: &Path, flags: AtFlags) -> Result<Arc<dyn Inode>> {
+    if flags.contains(AtFlags::AT_EMPTY_PATH) && path.as_str().is_empty() {
+        // just return a dummy, since it'll operate on dirfd anyways
+        return Ok(Arc::new(DummyInode {}));
+    }
     let task = current_task();
 
     let start_node: Arc<dyn Inode> = if path.is_absolute() {

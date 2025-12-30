@@ -6,7 +6,7 @@ use crate::{
 };
 use core::ffi::c_char;
 use libkernel::{
-    error::Result,
+    error::{KernelError, Result},
     fs::{attr::FileAttr, path::Path},
     memory::address::TUA,
 };
@@ -79,7 +79,11 @@ pub async fn sys_newfstatat(
     let flags = AtFlags::from_bits_truncate(flags);
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
 
-    let start_node = resolve_at_start_node(dirfd, path).await?;
+    let start_node = match resolve_at_start_node(dirfd, path, flags).await {
+        Ok(node) => node,
+        Err(err) if err != KernelError::NotSupported => panic!("{err}"),
+        Err(err) => return Err(err),
+    };
     let node = resolve_path_flags(dirfd, path, start_node, task.clone(), flags).await?;
 
     let attr = node.getattr().await?;

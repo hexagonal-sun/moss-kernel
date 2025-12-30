@@ -3,7 +3,10 @@ use core::ffi::c_char;
 use libkernel::{error::Result, fs::path::Path, memory::address::TUA};
 
 use crate::{
-    fs::{VFS, syscalls::at::resolve_at_start_node},
+    fs::{
+        VFS,
+        syscalls::at::{AtFlags, resolve_at_start_node},
+    },
     memory::uaccess::cstr::UserCStr,
     process::fd_table::Fd,
     sched::current_task,
@@ -28,7 +31,7 @@ pub async fn sys_symlinkat(
             .copy_from_user(&mut buf2)
             .await?,
     );
-    let start_node = resolve_at_start_node(new_dirfd, target).await?;
+    let start_node = resolve_at_start_node(new_dirfd, target, AtFlags::empty()).await?;
 
     VFS.symlink(source, target, start_node, task).await?;
 

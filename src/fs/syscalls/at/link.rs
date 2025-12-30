@@ -57,8 +57,8 @@ pub async fn sys_linkat(
             .copy_from_user(&mut buf2)
             .await?,
     );
-    let old_start_node = resolve_at_start_node(old_dirfd, old_path).await?;
-    let new_start_node = resolve_at_start_node(new_dirfd, new_path).await?;
+    let old_start_node = resolve_at_start_node(old_dirfd, old_path, flags).await?;
+    let new_start_node = resolve_at_start_node(new_dirfd, new_path, flags).await?;
 
     let target_inode = resolve_path_flags(
         old_dirfd,
