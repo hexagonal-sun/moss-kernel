@@ -78,6 +78,7 @@ impl From<Metadata> for FileAttr {
 pub struct ReadDirWrapper {
     inner: AsyncSkip<ReadDir>,
     fs_id: u64,
+    current_off: u64,
 }
 
 impl ReadDirWrapper {
@@ -85,6 +86,7 @@ impl ReadDirWrapper {
         Self {
             inner: inner.skip(start_offset as usize),
             fs_id,
+            current_off: start_offset,
         }
     }
 }
@@ -95,11 +97,12 @@ impl DirStream for ReadDirWrapper {
         match self.inner.next().await {
             Some(entry) => {
                 let entry = entry?;
+                self.current_off += 1;
                 Ok(Some(Dirent {
                     id: InodeId::from_fsid_and_inodeid(self.fs_id, entry.inode.get() as u64),
                     name: entry.file_name().as_str().unwrap().to_string(),
                     file_type: entry.file_type()?.into(),
-                    offset: 0,
+                    offset: self.current_off,
                 }))
             }
             None => Ok(None),
