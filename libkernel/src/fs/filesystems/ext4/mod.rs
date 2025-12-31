@@ -25,6 +25,7 @@ use async_trait::async_trait;
 use core::error::Error;
 use ext4_view::{
     AsyncIterator, AsyncSkip, Ext4, Ext4Read, File, FollowSymlinks, Metadata, ReadDir,
+    get_dir_entry_inode_by_name,
 };
 
 #[async_trait]
@@ -174,13 +175,15 @@ impl Inode for Ext4Inode {
     }
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
-        // TODO: use get_dir_entry_inode_by_name, which is more efficient.
         let fs = self.fs_ref.upgrade().unwrap();
+        let child_inode = get_dir_entry_inode_by_name(
+            &fs.inner,
+            &self.inner,
+            ext4_view::DirEntryName::try_from(name)
+                .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+        )
+        .await?;
         let child_path = self.path.join(name);
-        let child_inode = fs
-            .inner
-            .path_to_inode(child_path.as_path(), FollowSymlinks::All)
-            .await?;
         Ok(Arc::new(Ext4Inode {
             fs_ref: self.fs_ref.clone(),
             inner: child_inode,
@@ -219,7 +222,11 @@ impl Inode for Ext4Inode {
         }
         let fs = self.fs_ref.upgrade().unwrap();
         // Conversion has to ensure path is valid UTF-8 (O(n) time).
-        Ok(self.inner.symlink_target(&fs.inner).await.map(|p| PathBuf::from(p.to_str().unwrap()))?)
+        Ok(self
+            .inner
+            .symlink_target(&fs.inner)
+            .await
+            .map(|p| PathBuf::from(p.to_str().unwrap()))?)
     }
 }
 
