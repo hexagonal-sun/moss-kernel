@@ -43,6 +43,7 @@ impl From<ext4_view::Ext4Error> for KernelError {
         match err {
             ext4_view::Ext4Error::NotFound => KernelError::Fs(FsError::NotFound),
             ext4_view::Ext4Error::NotADirectory => KernelError::Fs(FsError::NotADirectory),
+            ext4_view::Ext4Error::Corrupt(_) => KernelError::Fs(FsError::InvalidFs),
             _ => KernelError::Fs(FsError::InvalidFs),
         }
     }
@@ -67,6 +68,7 @@ impl From<Metadata> for FileAttr {
         FileAttr {
             size: meta.size_in_bytes,
             file_type: meta.file_type.into(),
+            // Infallible, since they are identical
             mode: FilePermissions::from_bits(meta.mode.bits()).unwrap(),
             uid: Uid::new(meta.uid),
             gid: Gid::new(meta.gid),
@@ -209,6 +211,15 @@ impl Inode for Ext4Inode {
             fs.id(),
             start_offset,
         )))
+    }
+
+    async fn readlink(&self) -> Result<PathBuf> {
+        if self.inner.metadata.file_type != ext4_view::FileType::Symlink {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        // Conversion has to ensure path is valid UTF-8 (O(n) time).
+        Ok(self.inner.symlink_target(&fs.inner).await.map(|p| PathBuf::from(p.to_str().unwrap()))?)
     }
 }
 
