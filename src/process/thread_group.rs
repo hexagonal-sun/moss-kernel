@@ -5,6 +5,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use builder::ThreadGroupBuilder;
+use core::sync::atomic::AtomicU64;
 use core::{
     fmt::Display,
     sync::atomic::{AtomicU32, Ordering},
@@ -99,6 +100,8 @@ pub struct ThreadGroup {
     pub rsrc_lim: Arc<SpinLock<ResourceLimits>>,
     pub pending_signals: SpinLock<SigSet>,
     pub child_notifiers: ChildNotifiers,
+    pub utime: AtomicU64,
+    pub stime: AtomicU64,
     next_tid: AtomicU32,
 }
 

@@ -1,4 +1,4 @@
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, AtomicU64};
 
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 
@@ -68,6 +68,8 @@ impl ThreadGroupBuilder {
                 .unwrap_or_else(|| Arc::new(SpinLock::new(ResourceLimits::default()))),
             pending_signals: SpinLock::new(SigSet::empty()),
             child_notifiers: ChildNotifiers::new(),
+            utime: AtomicU64::new(0),
+            stime: AtomicU64::new(0),
             // Don't start from '0'. Since clone expects the parent to return
             // the tid and the child to return '0', if we started from '0' we
             // couldn't then differentiate between a child and a parent.
