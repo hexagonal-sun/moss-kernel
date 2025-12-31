@@ -169,6 +169,7 @@ impl Inode for Ext4Inode {
     }
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
+        // TODO: use get_dir_entry_inode_by_name, which is more efficient.
         let fs = self.fs_ref.upgrade().unwrap();
         let child_path = self.path.join(name);
         let child_inode = fs
