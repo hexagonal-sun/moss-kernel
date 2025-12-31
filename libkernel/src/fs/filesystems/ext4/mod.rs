@@ -23,7 +23,9 @@ use alloc::{
 };
 use async_trait::async_trait;
 use core::error::Error;
-use ext4_view::{AsyncIterator, AsyncSkip, Ext4, Ext4Read, FollowSymlinks, Metadata, ReadDir};
+use ext4_view::{
+    AsyncIterator, AsyncSkip, Ext4, Ext4Read, File, FollowSymlinks, Metadata, ReadDir,
+};
 
 #[async_trait]
 impl Ext4Read for BlockBuffer {
@@ -119,19 +121,39 @@ impl Inode for Ext4Inode {
     }
 
     async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
+        // Must be a regular file.
         if self.inner.metadata.file_type != ext4_view::FileType::Regular {
             return Err(KernelError::NotSupported);
         }
-        let fs = self.fs_ref.upgrade().unwrap();
-        // TODO: Optimize to read directly into buf instead of allocating a new Vec
-        let vec = fs.inner.read_inode_file(&self.inner).await?;
-        let file_size = vec.len() as u64;
+
+        let file_size = self.inner.metadata.size_in_bytes;
+
+        // Past EOF = nothing to read.
         if offset >= file_size {
             return Ok(0);
         }
+
+        // Do not read past the end of the file.
         let to_read = core::cmp::min(buf.len() as u64, file_size - offset) as usize;
-        buf[..to_read].copy_from_slice(&vec[offset as usize..(offset as usize + to_read)]);
-        Ok(to_read)
+
+        let fs = self.fs_ref.upgrade().unwrap();
+        let mut file = File::open_inode(&fs.inner, self.inner.clone())?;
+
+        file.seek_to(offset).await?;
+
+        // `ext4_view::File::read_bytes` may return fewer bytes than requested
+        // if the read crosses a block boundary. Loop until we've filled
+        // `to_read` bytes or hit EOF.
+        let mut total_read = 0;
+        while total_read < to_read {
+            let bytes_read = file.read_bytes(&mut buf[total_read..to_read]).await?;
+            if bytes_read == 0 {
+                break; // EOF
+            }
+            total_read += bytes_read;
+        }
+
+        Ok(total_read)
     }
 
     async fn write_at(&self, _offset: u64, _buf: &[u8]) -> Result<usize> {
