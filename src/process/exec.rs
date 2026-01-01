@@ -39,6 +39,8 @@ use object::{
 
 mod auxv;
 
+const LINKER_BASE: u64 = 0x0000_7000_0000_0000;
+
 const STACK_END: usize = 0x0000_8000_0000_0000;
 const STACK_SZ: usize = 0x2000 * 0x400;
 const STACK_START: usize = STACK_END - STACK_SZ;
@@ -69,7 +71,7 @@ pub async fn kernel_exec(
 
     // Detect PT_INTERP (dynamic linker) if present
     let mut interp_path: Option<String> = None;
-    for hdr in hdrs {
+    for hdr in hdrs.iter() {
         if hdr.p_type(endian) == elf::PT_INTERP {
             let off = hdr.p_offset(endian) as usize;
             let filesz = hdr.p_filesz(endian) as usize;
@@ -88,8 +90,7 @@ pub async fn kernel_exec(
     }
 
     if let Some(path) = interp_path {
-        panic!("Dynamic linker not supported yet: {}", path);
-    //     return exec_with_interp(inode, &elf, endian, &ph_buf, &hdrs, path, argv, envp).await;
+        return exec_with_interp(inode, &elf, endian, &ph_buf, &hdrs, path, argv, envp).await;
     }
 
     // static ELF ...
@@ -272,6 +273,166 @@ fn setup_user_stack(
     }
 
     Ok(VA::from_value(final_sp_val))
+}
+
+// Dynamic linker path: map main executable and its PT_INTERP interpreter and
+// start execution at the interpreter entry point.
+async fn exec_with_interp(
+    inode_main: Arc<dyn Inode>,
+    main_elf: &elf::FileHeader64<LittleEndian>,
+    endian: LittleEndian,
+    _main_ph_buf: &[u8],
+    main_hdrs: &[elf::ProgramHeader64<LittleEndian>],
+    interp_path: String,
+    argv: Vec<String>,
+    envp: Vec<String>,
+) -> Result<()> {
+    // Resolve interpreter path from root; this assumes interp_path is absolute.
+    let task = current_task();
+    let path = Path::new(&interp_path);
+    let interp_inode = VFS
+        .resolve_path(path, VFS.root_inode(), task.clone())
+        .await?;
+
+    // Parse interpreter ELF header
+    let mut hdr_buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
+    interp_inode.read_at(0, &mut hdr_buf).await?;
+    let interp_elf = elf::FileHeader64::<LittleEndian>::parse(&hdr_buf[..])
+        .map_err(|_| ExecError::InvalidElfFormat)?;
+    let iendian = interp_elf.endian().unwrap();
+
+    // Read interpreter program headers
+    let interp_ph_table_size = interp_elf.e_phnum.get(iendian) as usize
+        * interp_elf.e_phentsize.get(iendian) as usize
+        + interp_elf.e_phoff.get(iendian) as usize;
+    let mut interp_ph_buf = vec![0u8; interp_ph_table_size];
+    interp_inode.read_at(0, &mut interp_ph_buf).await?;
+    let interp_hdrs = interp_elf
+        .program_headers(iendian, &interp_ph_buf[..])
+        .map_err(|_| ExecError::InvalidPHdrFormat)?;
+
+    // Build VMAs for main executable and interpreter
+    let mut vmas = Vec::new();
+    let mut highest_addr = 0u64;
+
+    // Map main executable segments (identity-mapped as in static case)
+    for hdr in main_hdrs.iter() {
+        if hdr.p_type(endian) == PT_LOAD {
+            vmas.push(VMArea::from_pheader(inode_main.clone(), *hdr, endian));
+
+            let end = hdr.p_vaddr(endian) + hdr.p_memsz(endian);
+            if end > highest_addr {
+                highest_addr = end;
+            }
+        }
+    }
+
+    let main_entry = main_elf.e_entry(endian) as u64;
+
+    // Map interpreter at a fixed high base address.
+    let interp_base = LINKER_BASE;
+    let mut interp_entry = 0u64;
+
+    for hdr in interp_hdrs.iter() {
+        if hdr.p_type(iendian) == PT_LOAD {
+            let vaddr = interp_base + hdr.p_vaddr(iendian);
+            let size = hdr.p_memsz(iendian) as usize;
+
+            let region = VirtMemoryRegion::new(VA::from_value(vaddr as usize), size);
+            let kind = VMAreaKind::new_file(
+                interp_inode.clone(),
+                hdr.p_offset(iendian),
+                hdr.p_filesz(iendian),
+            );
+
+            let permissions = {
+                let mut perms = VMAPermissions {
+                    read: false,
+                    write: false,
+                    execute: false,
+                };
+
+                let flags = hdr.p_flags(iendian);
+                if flags & elf::PF_R != 0 {
+                    perms.read = true;
+                }
+                if flags & elf::PF_W != 0 {
+                    perms.write = true;
+                }
+                if flags & elf::PF_X != 0 {
+                    perms.execute = true;
+                }
+
+                perms
+            };
+
+            let vma = VMArea::new(region, kind, permissions);
+            vmas.push(vma);
+
+            let end = vaddr + hdr.p_memsz(iendian);
+            if end > highest_addr {
+                highest_addr = end;
+            }
+        }
+    }
+
+    interp_entry = interp_base + interp_elf.e_entry(iendian) as u64;
+
+    // Build auxv for dynamic case:
+    // - AT_PHDR/AT_PHENT/AT_PHNUM: main executable
+    // - AT_ENTRY: main executable entry
+    // - AT_BASE: interpreter base address
+    let mut auxv = Vec::<u64>::new();
+
+    auxv.push(AT_PHNUM);
+    auxv.push(main_elf.e_phnum.get(endian) as _);
+    auxv.push(AT_PHENT);
+    auxv.push(main_elf.e_phentsize(endian) as _);
+
+    // Find PHDR in main binary: assume p_offset == 0 contains headers
+    for hdr in main_hdrs.iter() {
+        if hdr.p_type(endian) == PT_LOAD && hdr.p_offset(endian) == 0 {
+            auxv.push(AT_PHDR);
+            auxv.push(hdr.p_vaddr(endian) + main_elf.e_phoff.get(endian));
+            break;
+        }
+    }
+
+    auxv.push(AT_ENTRY);
+    auxv.push(main_entry);
+
+    auxv.push(AT_BASE);
+    auxv.push(interp_base);
+
+    // Stack VMA
+    vmas.push(VMArea::new(
+        VirtMemoryRegion::new(VA::from_value(STACK_START), STACK_SZ),
+        VMAreaKind::Anon,
+        VMAPermissions::rw(),
+    ));
+
+    let mut mem_map = MemoryMap::from_vmas(vmas)?;
+    let stack_ptr = setup_user_stack(&mut mem_map, &argv, &envp, auxv)?;
+
+    // Start execution at interpreter entry
+    let entry_va = VA::from_value(interp_entry as usize);
+    let user_ctx = ArchImpl::new_user_context(entry_va, stack_ptr);
+
+    let mut vm = ProcessVM::from_map(mem_map, VA::from_value(highest_addr as usize));
+    vm.mm_mut().address_space_mut().activate();
+
+    let new_comm = argv.first().map(|s| Comm::new(s.as_str()));
+    let current_task = current_task();
+
+    if let Some(new_comm) = new_comm {
+        *current_task.comm.lock_save_irq() = new_comm;
+    }
+    *current_task.ctx.lock_save_irq() = Context::from_user_ctx(user_ctx);
+    *current_task.state.lock_save_irq() = TaskState::Runnable;
+    *current_task.vm.lock_save_irq() = vm;
+    *current_task.process.signals.lock_save_irq() = SignalState::new_default();
+
+    Ok(())
 }
 
 pub async fn sys_execve(
