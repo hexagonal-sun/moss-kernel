@@ -13,7 +13,7 @@ use crate::{
 };
 use alloc::{string::String, vec};
 use alloc::{string::ToString, sync::Arc, vec::Vec};
-use auxv::{AT_NULL, AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM, AT_RANDOM};
+use auxv::{AT_BASE, AT_ENTRY, AT_NULL, AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM, AT_RANDOM};
 use core::{ffi::c_char, mem, slice};
 use libkernel::{
     UserAddressSpace, VirtualMemory,
@@ -48,32 +48,58 @@ pub async fn kernel_exec(
     argv: Vec<String>,
     envp: Vec<String>,
 ) -> Result<()> {
+    // Read ELF header
     let mut buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
-    let mut auxv = Vec::new();
-
     inode.read_at(0, &mut buf).await?;
 
     let elf = elf::FileHeader64::<LittleEndian>::parse(buf.as_slice())
         .map_err(|_| ExecError::InvalidElfFormat)?;
     let endian = elf.endian().unwrap();
 
-    // Push program header params.
-    auxv.push(AT_PHNUM);
-    auxv.push(elf.e_phnum.get(endian) as _);
-    auxv.push(AT_PHENT);
-    auxv.push(elf.e_phentsize(endian) as _);
-
-    let mut ph_buf = vec![
-        0u8;
-        elf.e_phnum.get(endian) as usize * elf.e_phentsize.get(endian) as usize
-            + elf.e_phoff.get(endian) as usize
-    ];
+    // Read full program header table
+    let ph_table_size = elf.e_phnum.get(endian) as usize * elf.e_phentsize.get(endian) as usize
+        + elf.e_phoff.get(endian) as usize;
+    let mut ph_buf = vec![0u8; ph_table_size];
 
     inode.read_at(0, &mut ph_buf).await?;
 
     let hdrs = elf
         .program_headers(endian, ph_buf.as_slice())
         .map_err(|_| ExecError::InvalidPHdrFormat)?;
+
+    // Detect PT_INTERP (dynamic linker) if present
+    let mut interp_path: Option<String> = None;
+    for hdr in hdrs {
+        if hdr.p_type(endian) == elf::PT_INTERP {
+            let off = hdr.p_offset(endian) as usize;
+            let filesz = hdr.p_filesz(endian) as usize;
+            if filesz == 0 {
+                break;
+            }
+
+            let mut ibuf = vec![0u8; filesz];
+            inode.read_at(off as u64, &mut ibuf).await?;
+
+            let len = ibuf.iter().position(|&b| b == 0).unwrap_or(filesz);
+            let s = core::str::from_utf8(&ibuf[..len]).map_err(|_| ExecError::InvalidElfFormat)?;
+            interp_path = Some(s.to_string());
+            break;
+        }
+    }
+
+    if let Some(path) = interp_path {
+        panic!("Dynamic linker not supported yet: {}", path);
+    //     return exec_with_interp(inode, &elf, endian, &ph_buf, &hdrs, path, argv, envp).await;
+    }
+
+    // static ELF ...
+    let mut auxv = Vec::new();
+
+    // Push program header params (for the main executable)
+    auxv.push(AT_PHNUM);
+    auxv.push(elf.e_phnum.get(endian) as _);
+    auxv.push(AT_PHENT);
+    auxv.push(elf.e_phentsize(endian) as _);
 
     let mut vmas = Vec::new();
     let mut highest_addr = 0;
@@ -85,7 +111,7 @@ pub async fn kernel_exec(
             vmas.push(VMArea::from_pheader(inode.clone(), *hdr, endian));
 
             if hdr.p_offset.get(endian) == 0 {
-                // TODO: poteintally more validation that this VA will contain
+                // TODO: potentially more validation that this VA will contain
                 // the program headers.
                 auxv.push(AT_PHDR);
                 auxv.push(hdr.p_vaddr.get(endian) + elf.e_phoff.get(endian));
@@ -98,6 +124,9 @@ pub async fn kernel_exec(
             }
         }
     }
+
+    auxv.push(AT_ENTRY);
+    auxv.push(elf.e_entry(endian) as u64);
 
     vmas.push(VMArea::new(
         VirtMemoryRegion::new(VA::from_value(STACK_START), STACK_SZ),
