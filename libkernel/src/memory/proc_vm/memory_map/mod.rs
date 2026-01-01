@@ -13,7 +13,7 @@ const MMAP_BASE: usize = 0x4000_0000_0000;
 
 /// Manages mappings in a process's address space.
 pub struct MemoryMap<AS: UserAddressSpace> {
-    vmas: BTreeMap<VA, VMArea>,
+    pub(super) vmas: BTreeMap<VA, VMArea>,
     address_space: AS,
 }
 

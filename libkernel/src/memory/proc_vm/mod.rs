@@ -48,10 +48,21 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         Ok(Self { mm, brk })
     }
 
-    pub fn from_map(map: MemoryMap<AS>, brk: VA) -> Self {
+    pub fn from_map(map: MemoryMap<AS>) -> Self {
+        // Last entry will be the VMA with the highest address.
+        let brk = map
+            .vmas
+            .last_key_value()
+            .expect("No VMAs in map")
+            .1
+            .region
+            .end_address()
+            // VMAs should already be page-aligned, but just in case.
+            .align_up(PAGE_SIZE);
+
         Self {
             mm: map,
-            brk: VirtMemoryRegion::new(brk.align_up(PAGE_SIZE), 0),
+            brk: VirtMemoryRegion::new(brk, 0),
         }
     }
 

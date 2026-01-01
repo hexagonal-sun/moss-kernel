@@ -172,7 +172,7 @@ impl VMAreaKind {
 /// managing a process's memory layout.
 #[derive(Clone, PartialEq)]
 pub struct VMArea {
-    pub(super) region: VirtMemoryRegion,
+    pub region: VirtMemoryRegion,
     pub(super) kind: VMAreaKind,
     pub(super) permissions: VMAPermissions,
 }
@@ -205,11 +205,15 @@ impl VMArea {
     /// * `f`: A handle to the ELF file's inode.
     /// * `hdr`: The ELF program header (`LOAD` segment) to create the VMA from.
     /// * `endian`: The endianness of the ELF file, for correctly parsing header fields.
+    /// * `address_bias`: A bias added to the VAs of the segment.
     pub fn from_pheader<E: Endian>(
         f: Arc<dyn Inode>,
         hdr: ProgramHeader64<E>,
         endian: E,
+        address_bias: Option<usize>,
     ) -> VMArea {
+        let address_bias = address_bias.unwrap_or(0);
+
         let mut permissions = VMAPermissions {
             read: false,
             write: false,
@@ -229,7 +233,7 @@ impl VMArea {
         }
 
         let mappable_region = VirtMemoryRegion::new(
-            VA::from_value(hdr.p_vaddr(endian) as usize),
+            VA::from_value(hdr.p_vaddr(endian) as usize + address_bias),
             hdr.p_memsz(endian) as usize,
         )
         .to_mappable_region();
@@ -445,6 +449,11 @@ impl VMArea {
             }
             VMAreaKind::Anon => new_vma,
         }
+    }
+
+    /// Return the virtual memory region managed by this VMA.
+    pub fn region(&self) -> VirtMemoryRegion {
+        self.region
     }
 }
 
