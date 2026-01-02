@@ -95,7 +95,7 @@ impl SchedulableTask {
     /// weight = priority + SCHED_WEIGHT_BASE
     /// The sum is clamped to a minimum of 1
     pub fn weight(&self) -> u32 {
-        let w = self.task.priority as i32 + SCHED_WEIGHT_BASE;
+        let w = self.priority() as i32 + SCHED_WEIGHT_BASE;
         if w <= 0 { 1 } else { w as u32 }
     }
 

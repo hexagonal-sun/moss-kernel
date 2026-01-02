@@ -361,7 +361,7 @@ Threads:\t{tasks}\n",
                     output.push_str(&format!("{} ", task.process.stime.load(Ordering::Relaxed))); // stime
                     output.push_str(&format!("{} ", 0)); // cutime
                     output.push_str(&format!("{} ", 0)); // cstime
-                    output.push_str(&format!("{} ", task.priority)); // priority
+                    output.push_str(&format!("{} ", *task.process.priority.lock_save_irq())); // priority
                     output.push_str(&format!("{} ", 0)); // nice
                     output.push_str(&format!("{} ", 0)); // num_threads
                     output.push_str(&format!("{} ", 0)); // itrealvalue

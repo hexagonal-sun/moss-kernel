@@ -99,6 +99,7 @@ pub struct ThreadGroup {
     pub signals: Arc<SpinLock<SignalState>>,
     pub rsrc_lim: Arc<SpinLock<ResourceLimits>>,
     pub pending_signals: SpinLock<SigSet>,
+    pub priority: SpinLock<i8>,
     pub child_notifiers: ChildNotifiers,
     pub utime: AtomicU64,
     pub stime: AtomicU64,

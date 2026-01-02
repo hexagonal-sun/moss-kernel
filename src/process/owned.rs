@@ -34,7 +34,7 @@ pub struct OwnedTask {
     pub ctx: Context,
     pub sig_mask: SigSet,
     pub pending_signals: SigSet,
-    pub priority: i8,
+    pub priority: Option<i8>,
     pub robust_list: Option<TUA<RobustListHead>>,
     pub child_tid_ptr: Option<TUA<u32>>,
     pub t_shared: Arc<Task>,
@@ -61,6 +61,7 @@ impl OwnedTask {
         let vm = unsafe { ProcessVM::from_vma_and_address_space(code_map, addr_space) };
 
         let thread_group_builder = ThreadGroupBuilder::new(Tgid::idle())
+            .with_priority(i8::MIN)
             .with_sigstate(Arc::new(SpinLock::new(SignalState::new_ignore())));
 
         let task = Task {
@@ -77,7 +78,7 @@ impl OwnedTask {
         };
 
         Self {
-            priority: i8::MIN,
+            priority: Some(i8::MIN),
             ctx: Context::from_user_ctx(user_ctx),
             sig_mask: SigSet::empty(),
             pending_signals: SigSet::empty(),
@@ -106,7 +107,7 @@ impl OwnedTask {
         Self {
             pending_signals: SigSet::empty(),
             sig_mask: SigSet::empty(),
-            priority: 0,
+            priority: None,
             ctx: Context::from_user_ctx(<ArchImpl as Arch>::new_user_context(
                 VA::null(),
                 VA::null(),
@@ -119,10 +120,11 @@ impl OwnedTask {
 
     pub fn priority(&self) -> i8 {
         self.priority
+            .unwrap_or_else(|| *self.process.priority.lock_save_irq())
     }
 
     pub fn set_priority(&mut self, priority: i8) {
-        self.priority = priority;
+        self.priority = Some(priority);
     }
 
     pub fn raise_task_signal(&mut self, signal: SigId) {
