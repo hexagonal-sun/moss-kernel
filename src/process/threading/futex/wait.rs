@@ -24,15 +24,22 @@ enum WaitState {
 pub struct FutexWait {
     uaddr: TUA<u32>,
     val: u32,
-    queue: Arc<SpinLock<WakerSet>>,
+    queue: Arc<SpinLock<WakerSet<u32>>>,
+    bitmask: u32,
     state: WaitState,
 }
 
 impl FutexWait {
-    pub fn new(uaddr: TUA<u32>, val: u32, queue: Arc<SpinLock<WakerSet>>) -> Self {
+    pub fn new(
+        uaddr: TUA<u32>,
+        val: u32,
+        bitmask: u32,
+        queue: Arc<SpinLock<WakerSet<u32>>>,
+    ) -> Self {
         Self {
             uaddr,
             val,
+            bitmask,
             queue,
             state: WaitState::Init,
         }
@@ -65,7 +72,7 @@ impl Future for FutexWait {
                                 return Poll::Ready(Err(KernelError::TryAgain));
                             }
 
-                            let token = wait_queue.register(cx.waker());
+                            let token = wait_queue.register_with_data(cx.waker(), this.bitmask);
 
                             this.state = WaitState::Waiting { token };
 

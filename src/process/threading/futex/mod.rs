@@ -23,7 +23,7 @@ const FUTEX_WAIT_BITSET: i32 = 9;
 const FUTEX_WAKE_BITSET: i32 = 10;
 const FUTEX_PRIVATE_FLAG: i32 = 128;
 
-type FutexTable = BTreeMap<FutexKey, Arc<SpinLock<WakerSet>>>;
+type FutexTable = BTreeMap<FutexKey, Arc<SpinLock<WakerSet<u32>>>>;
 
 /// Global futex table mapping a futex key to its wait queue.
 #[allow(clippy::type_complexity)]
@@ -33,7 +33,7 @@ fn futex_table() -> &'static SpinLock<FutexTable> {
     FUTEX_TABLE.get_or_init(|| SpinLock::new(BTreeMap::new()))
 }
 
-fn get_or_create_queue(key: FutexKey) -> Arc<SpinLock<WakerSet>> {
+fn get_or_create_queue(key: FutexKey) -> Arc<SpinLock<WakerSet<u32>>> {
     let table = futex_table();
 
     table
@@ -43,7 +43,7 @@ fn get_or_create_queue(key: FutexKey) -> Arc<SpinLock<WakerSet>> {
         .clone()
 }
 
-pub fn wake_key(nr_wake: usize, key: FutexKey) -> usize {
+pub fn wake_key(nr_wake: usize, key: FutexKey, bitmask: u32) -> usize {
     let mut woke = 0;
 
     let table = futex_table();
@@ -51,7 +51,7 @@ pub fn wake_key(nr_wake: usize, key: FutexKey) -> usize {
     if let Some(waitq_arc) = table.lock_save_irq().get(&key).cloned() {
         let mut waitq = waitq_arc.lock_save_irq();
         for _ in 0..nr_wake {
-            if waitq.wake_one() {
+            if waitq.wake_if(|x| *x & bitmask != 0) {
                 woke += 1;
             } else {
                 break;
@@ -62,13 +62,40 @@ pub fn wake_key(nr_wake: usize, key: FutexKey) -> usize {
     woke
 }
 
+async fn do_futex_wait(
+    key: FutexKey,
+    uaddr: TUA<u32>,
+    val: u32,
+    bitmask: u32,
+    timeout: Option<Duration>,
+) -> Result<usize> {
+    // Obtain (or create) the wait-queue for this futex word.
+    let slot = get_or_create_queue(key);
+
+    // Return 0 on success.
+    if let Some(dur) = timeout {
+        let mut wait = FutexWait::new(uaddr, val, bitmask, slot).fuse();
+        let mut sleep = Box::pin(sleep(dur).fuse());
+        futures::select_biased! {
+            res = wait => {
+                res.map(|_| 0)
+            },
+            _ = sleep => {
+                Err(KernelError::TimedOut)
+            }
+        }
+    } else {
+        FutexWait::new(uaddr, val, bitmask, slot).await.map(|_| 0)
+    }
+}
+
 pub async fn sys_futex(
     uaddr: TUA<u32>,
     op: i32,
     val: u32,
     timeout: TUA<TimeSpec>,
     _uaddr2: TUA<u32>,
-    _val3: u32,
+    val3: u32,
 ) -> Result<usize> {
     // Strip PRIVATE flag if present
     let cmd = op & !FUTEX_PRIVATE_FLAG;
@@ -79,7 +106,6 @@ pub async fn sys_futex(
         FutexKey::new_shared(uaddr)?
     };
 
-    // TODO: support bitset variants properly
     match cmd {
         FUTEX_WAIT | FUTEX_WAIT_BITSET => {
             let timeout = if timeout.is_null() {
@@ -93,27 +119,21 @@ pub async fn sys_futex(
                 }
             };
 
-            // Obtain (or create) the wait-queue for this futex word.
-            let slot = get_or_create_queue(key);
-
-            // Return 0 on success.
-            if let Some(dur) = timeout {
-                let mut wait = FutexWait::new(uaddr, val, slot).fuse();
-                let mut sleep = Box::pin(sleep(dur).fuse());
-                futures::select_biased! {
-                    res = wait => {
-                        res.map(|_| 0)
-                    },
-                    _ = sleep => {
-                        Err(KernelError::TimedOut)
-                    }
-                }
-            } else {
-                FutexWait::new(uaddr, val, slot).await.map(|_| 0)
-            }
+            do_futex_wait(
+                key,
+                uaddr,
+                val,
+                if cmd == FUTEX_WAIT { u32::MAX } else { val3 },
+                timeout,
+            )
+            .await
         }
 
-        FUTEX_WAKE | FUTEX_WAKE_BITSET => Ok(wake_key(val as _, key)),
+        FUTEX_WAKE | FUTEX_WAKE_BITSET => Ok(wake_key(
+            val as _,
+            key,
+            if cmd == FUTEX_WAKE { u32::MAX } else { val3 },
+        )),
 
         _ => Err(KernelError::NotSupported),
     }
