@@ -94,13 +94,7 @@ pub async fn kernel_exec(
     }
 
     // static ELF ...
-    let mut auxv = Vec::new();
-
-    // Push program header params (for the main executable)
-    auxv.push(AT_PHNUM);
-    auxv.push(elf.e_phnum.get(endian) as _);
-    auxv.push(AT_PHENT);
-    auxv.push(elf.e_phentsize(endian) as _);
+    let mut auxv = vec![AT_PHNUM, elf.e_phnum.get(endian) as _, AT_PHENT, elf.e_phentsize(endian) as _];
 
     let mut vmas = Vec::new();
     let mut highest_addr = 0;
@@ -127,7 +121,7 @@ pub async fn kernel_exec(
     }
 
     auxv.push(AT_ENTRY);
-    auxv.push(elf.e_entry(endian) as u64);
+    auxv.push(elf.e_entry(endian));
 
     vmas.push(VMArea::new(
         VirtMemoryRegion::new(VA::from_value(STACK_START), STACK_SZ),
@@ -327,11 +321,11 @@ async fn exec_with_interp(
         }
     }
 
-    let main_entry = main_elf.e_entry(endian) as u64;
+    let main_entry = main_elf.e_entry(endian);
 
     // Map interpreter at a fixed high base address.
     let interp_base = LINKER_BASE;
-    let mut interp_entry = 0u64;
+    let mut interp_entry = 0;
 
     for hdr in interp_hdrs.iter() {
         if hdr.p_type(iendian) == PT_LOAD {
@@ -376,18 +370,13 @@ async fn exec_with_interp(
         }
     }
 
-    interp_entry = interp_base + interp_elf.e_entry(iendian) as u64;
+    interp_entry = interp_base + interp_elf.e_entry(iendian);
 
     // Build auxv for dynamic case:
     // - AT_PHDR/AT_PHENT/AT_PHNUM: main executable
     // - AT_ENTRY: main executable entry
     // - AT_BASE: interpreter base address
-    let mut auxv = Vec::<u64>::new();
-
-    auxv.push(AT_PHNUM);
-    auxv.push(main_elf.e_phnum.get(endian) as _);
-    auxv.push(AT_PHENT);
-    auxv.push(main_elf.e_phentsize(endian) as _);
+    let mut auxv = vec![AT_PHNUM, main_elf.e_phnum.get(endian) as _, AT_PHENT, main_elf.e_phentsize(endian) as _];
 
     // Find PHDR in main binary: assume p_offset == 0 contains headers
     for hdr in main_hdrs.iter() {
