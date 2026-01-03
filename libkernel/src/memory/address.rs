@@ -152,7 +152,7 @@ impl<K: MemKind, T> Address<K, T> {
     }
 
     #[must_use]
-    pub fn add_bytes(self, n: usize) -> Self {
+    pub const fn add_bytes(self, n: usize) -> Self {
         Self::from_value(self.value() + n)
     }
 

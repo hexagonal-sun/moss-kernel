@@ -64,8 +64,8 @@ impl<T: MemKind> MemoryRegion<T> {
     /// Create a memory region from a start and end address.
     ///
     /// The size is calculated as `end - start`. No alignment is enforced.
-    pub fn from_start_end_address(start: Address<T, ()>, end: Address<T, ()>) -> Self {
-        assert!(end >= start);
+    pub const fn from_start_end_address(start: Address<T, ()>, end: Address<T, ()>) -> Self {
+        assert!(end.value() >= start.value());
 
         Self {
             address: start,

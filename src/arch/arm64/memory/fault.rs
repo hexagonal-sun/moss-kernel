@@ -2,6 +2,7 @@ use core::mem;
 
 use crate::{
     arch::arm64::{
+        boot::memory::KERNEL_STACK_AREA,
         exceptions::{
             ExceptionState,
             esr::{AbortIss, Exception, IfscCategory},
@@ -100,7 +101,16 @@ pub fn handle_kernel_mem_fault(exception: Exception, info: AbortIss, state: &mut
     // If the source of the fault (ELR), wasn't in the uacess fixup section,
     // then any abort genereated by the kernel is a panic since we don't
     // demand-page any kernel memory.
-    panic!("Kernel memory fault detected.  Context: {}", state);
+    //
+    // Try and differentiate between a stack overflow condition and other
+    // faults.
+    if let Some(far) = info.far
+        && KERNEL_STACK_AREA.contains_address(VA::from_value(far as _))
+    {
+        panic!("Kernel stack overflow detected.  Context:\n{}", state);
+    } else {
+        panic!("Kernel memory fault detected.  Context:\n{}", state);
+    }
 }
 
 pub fn handle_mem_fault(exception: Exception, info: AbortIss) {

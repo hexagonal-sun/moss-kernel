@@ -42,6 +42,17 @@ SECTIONS
         __percpu_end = .;
     }
 
+    /*
+     * Vectors are here in the binary, but they might be remapped virtually
+     * later. `.vectors` and `.vectors.impl` must remain contiguous.
+     */
+    . = ALIGN(PAGE_SIZE);
+    .vectors : {
+        __vectors_start = .;
+        KEEP(*(.vectors))
+        *(.vectors.impl)
+        __vectors_end = .;
+    }
 
     .bss :
     {

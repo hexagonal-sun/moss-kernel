@@ -21,8 +21,14 @@ use libkernel::{
 };
 use log::info;
 
-const KERNEL_STACK_SZ: usize = 256 * 1024; // 32 KiB
+const KERNEL_STACK_SHIFT: usize = 15; // 32KiB.
+const KERNEL_STACK_SZ: usize = 1 << KERNEL_STACK_SHIFT;
 pub const KERNEL_STACK_PG_ORDER: usize = (KERNEL_STACK_SZ / PAGE_SIZE).ilog2() as usize;
+
+pub const KERNEL_STACK_AREA: VirtMemoryRegion = VirtMemoryRegion::from_start_end_address(
+    VA::from_value(0xffff_b800_0000_0000),
+    VA::from_value(0xffff_c000_0000_0000),
+);
 
 const KERNEL_HEAP_SZ: usize = 64 * 1024 * 1024; // 64 MiB
 
@@ -100,12 +106,20 @@ pub fn setup_allocator(dtb_ptr: TPA<u8>, image_start: PA, image_end: PA) -> Resu
 }
 
 pub fn allocate_kstack_region() -> VirtMemoryRegion {
-    static mut CURRENT_VA: VA = VA::from_value(0xffff_b800_0000_0000);
+    // Start allocating stacks at the second valid stack slot in
+    // `KERNEL_STACK_AREA`. This ensures that the faulting address of a stack
+    // overflow on the first allocated stack would still lie withing
+    // `KERNEL_STACK_AREA`.
+    static mut CURRENT_VA: VA = KERNEL_STACK_AREA
+        .start_address()
+        .add_bytes(KERNEL_STACK_SZ * 2);
 
     let range = VirtMemoryRegion::new(unsafe { CURRENT_VA }, KERNEL_STACK_SZ);
 
-    // Add a guard page between allocations.
-    unsafe { CURRENT_VA = range.end_address().add_pages(1) };
+    // Add a guard region between allocations, this ensures that the
+    // `KERNEL_STACK_SHIFT` bit is set between stacks, allow us to detect stack
+    // overflow in the kernel.
+    unsafe { CURRENT_VA = CURRENT_VA.add_bytes(KERNEL_STACK_SZ * 2) };
 
     range
 }

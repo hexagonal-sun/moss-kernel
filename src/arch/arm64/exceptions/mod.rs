@@ -3,9 +3,10 @@ use super::memory::{
     fault::{handle_kernel_mem_fault, handle_mem_fault},
 };
 use crate::{
-    arch::ArchImpl,
+    arch::{ArchImpl, arm64::boot::memory::KERNEL_STACK_PG_ORDER},
     interrupts::get_interrupt_root,
     ksym_pa,
+    memory::PAGE_ALLOC,
     sched::{current::current_task, uspc_ret::dispatch_userspace_task},
     spawn_kernel_work,
 };
@@ -16,6 +17,7 @@ use libkernel::{
     KernAddressSpace, VirtualMemory,
     error::Result,
     memory::{
+        address::VA,
         permissions::PtePermissions,
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
@@ -26,11 +28,13 @@ use tock_registers::interfaces::Writeable;
 pub mod esr;
 mod syscall;
 
-const EXCEPTION_TBL_SZ: usize = 0x800;
-
 unsafe extern "C" {
-    pub static exception_vectors: u8;
+    pub static __vectors_start: u8;
+    pub static __vectors_end: u8;
 }
+
+#[unsafe(no_mangle)]
+pub static EMERG_STACK_END: VA = VA::from_value(0xffff_c000_0000_0000);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -200,15 +204,33 @@ extern "C" fn el0_serror(state: &mut ExceptionState) {
 }
 
 pub fn exceptions_init() -> Result<()> {
-    let pa = ksym_pa!(exception_vectors);
-    let region = PhysMemoryRegion::new(pa, EXCEPTION_TBL_SZ);
+    let start = ksym_pa!(__vectors_start);
+    let end = ksym_pa!(__vectors_end);
+    let region = PhysMemoryRegion::from_start_end_address(start, end);
 
     let mappable_region = region.to_mappable_region();
 
-    ArchImpl::kern_address_space().lock_save_irq().map_normal(
+    let mut kspc = ArchImpl::kern_address_space().lock_save_irq();
+
+    kspc.map_normal(
         mappable_region.region(),
         VirtMemoryRegion::new(EXCEPTION_BASE, mappable_region.region().size()),
         PtePermissions::rx(false),
+    )?;
+
+    let emerg_stack = PAGE_ALLOC
+        .get()
+        .unwrap()
+        .alloc_frames(KERNEL_STACK_PG_ORDER as _)?
+        .leak();
+
+    kspc.map_normal(
+        emerg_stack,
+        VirtMemoryRegion::new(
+            EMERG_STACK_END.sub_bytes(emerg_stack.size()),
+            emerg_stack.size(),
+        ),
+        PtePermissions::rw(false),
     )?;
 
     secondary_exceptions_init();

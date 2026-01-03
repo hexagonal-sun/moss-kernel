@@ -36,7 +36,7 @@ use secondary::{boot_secondaries, cpu_count, save_idmap, secondary_booted};
 
 mod exception_level;
 mod logical_map;
-mod memory;
+pub(super) mod memory;
 mod paging_bootstrap;
 pub(super) mod secondary;
 
