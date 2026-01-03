@@ -109,7 +109,7 @@ pub async fn sys_exit(exit_code: usize) -> Result<usize> {
         copy_to_user(ptr, 0u32).await?;
 
         if let Ok(key) = FutexKey::new_shared(ptr) {
-            futex::wake_key(1, key);
+            futex::wake_key(1, key, u32::MAX);
         } else {
             warn!("Failed to get futex wake key on sys_exit");
         }

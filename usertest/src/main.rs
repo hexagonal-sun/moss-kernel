@@ -6,6 +6,10 @@ use std::{
     thread,
 };
 
+use futex_bitset::test_futex_bitset;
+
+mod futex_bitset;
+
 fn test_sync() {
     print!("Testing sync syscall ...");
     unsafe {
@@ -792,6 +796,7 @@ fn main() {
     run_test(test_symlink);
     run_test(test_rename);
     run_test(test_futex);
+    run_test(test_futex_bitset);
     run_test(test_truncate);
     run_test(test_ftruncate);
     run_test(test_utimens);
