@@ -11,7 +11,7 @@ Regardless of stdlib, you will need:
 - [aarch64-none-elf](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads)
 - [Homebrew](https://brew.sh)
 - QEMU (`brew install qemu`)
-- dosfstools (`brew install dosfstools`)
+- e2fsprogs (`brew install e2fsprogs`)
 
 If building for the GNU library:
 - aarch64-unknown-linux-gnu (`brew tap messense/macos-cross-toolchains && brew install aarch64-unknown-linux-gnu`)

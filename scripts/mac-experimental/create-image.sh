@@ -10,19 +10,11 @@ mount="$base/build/mount"
 mkdir -p "$mount"
 
 dd if=/dev/zero of="$img" bs=1M count=128
-mkfs.vfat -F 32 "$img"
+mkfs.ext4 -F "$img"
 
-if ! mount | grep -q "$mount"; then
-    hdiutil attach -mountpoint "$mount" "$img"
-fi
+debugfs -w -f  "$base/scripts/symlinks.cmds" "$img"
+for file in "$base/build/bin"/*; do
+    debugfs -w "$img" -R "write $file /bin/$(basename "$file")"
+done
 
-mkdir -p "$mount/bin"
-mkdir -p "$mount/dev"
-
-cp "$base/build/bin"/* "$mount/bin"
-
-mounted=$(mount | grep "on $mount " | awk '{print $1}')
-if [ -n "$mounted" ]; then
-    hdiutil detach "$mounted"
-fi
 popd &>/dev/null || exit 1

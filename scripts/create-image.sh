@@ -7,13 +7,11 @@ pushd "$base" &>/dev/null || exit 1
 img="$base/moss.img"
 
 dd if=/dev/zero of="$img" bs=1M count=128
-mkfs.vfat -F 32 "$img"
+mkfs.ext4 -F "$img"
 
-mmd -i "$img" ::/bin
-mmd -i "$img" ::/dev
-mmd -i "$img" ::/proc
-mmd -i "$img" ::/tmp
-
-mcopy -i "$img" "$base/build/bin"/* "::/bin"
+debugfs -w -f  "$base/scripts/symlinks.cmds" "$img"
+for file in "$base/build/bin"/*; do
+    debugfs -w "$img" -R "write $file /bin/$(basename "$file")"
+done
 
 popd &>/dev/null || exit 1
