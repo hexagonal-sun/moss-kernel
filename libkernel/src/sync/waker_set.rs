@@ -9,8 +9,8 @@ use crate::CpuOps;
 
 use super::spinlock::SpinLockIrq;
 
-pub struct WakerSet {
-    waiters: BTreeMap<u64, Waker>,
+pub struct WakerSet<T = ()> {
+    waiters: BTreeMap<u64, (Waker, T)>,
     next_id: u64,
 }
 
@@ -20,7 +20,7 @@ impl Default for WakerSet {
     }
 }
 
-impl WakerSet {
+impl<T> WakerSet<T> {
     pub fn new() -> Self {
         Self {
             waiters: BTreeMap::new(),
@@ -34,16 +34,6 @@ impl WakerSet {
         // Use wrapping_add to prevent panic on overflow, though it's
         // astronomically unlikely.
         self.next_id = self.next_id.wrapping_add(1);
-
-        id
-    }
-
-    /// Registers a waker, returning a drop-aware token. When the token is
-    /// dropped, the waker is removed from the queue.
-    pub fn register(&mut self, waker: &Waker) -> u64 {
-        let id = self.allocate_id();
-
-        self.waiters.insert(id, waker.clone());
 
         id
     }
@@ -62,7 +52,7 @@ impl WakerSet {
     /// Returns `true` if a waker was awoken, `false` otherwise.
     pub fn wake_one(&mut self) -> bool {
         if let Some((_, waker)) = self.waiters.pop_first() {
-            waker.wake();
+            waker.0.wake();
             true
         } else {
             false
@@ -72,8 +62,42 @@ impl WakerSet {
     /// Wakes all waiting tasks.
     pub fn wake_all(&mut self) {
         for (_, waker) in core::mem::take(&mut self.waiters) {
-            waker.wake();
+            waker.0.wake();
         }
+    }
+
+    /// Apply `predicate` to wakers in the set. For the first element where
+    /// `predicate` returns `true`, `wake()` is called and this function returns
+    /// `true`. If `predicate` doesn't match any wakers, `false` is returned.
+    pub fn wake_if(&mut self, predicate: impl Fn(&T) -> bool) -> bool {
+        if let Some(key) = self
+            .waiters
+            .iter()
+            .find(|(_, (_, data))| predicate(data))
+            .map(|(key, _)| *key)
+        {
+            self.waiters.remove(&key).unwrap().0.wake();
+
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn register_with_data(&mut self, waker: &Waker, data: T) -> u64 {
+        let id = self.allocate_id();
+
+        self.waiters.insert(id, (waker.clone(), data));
+
+        id
+    }
+}
+
+impl WakerSet<()> {
+    /// Registers a waker, returning a drop-aware token. When the token is
+    /// dropped, the waker is removed from the queue.
+    pub fn register(&mut self, waker: &Waker) -> u64 {
+        self.register_with_data(waker, ())
     }
 }
 
