@@ -86,9 +86,10 @@ pub async fn sys_mmap(
 
     let requested_len = len as usize;
 
-    let kind = if flags & (MAP_ANON | MAP_ANONYMOUS) != 0 {
+    let kind = if (flags & (MAP_ANON | MAP_ANONYMOUS)) != 0 {
         VMAreaKind::Anon
-    } else if flags == MAP_FILE {
+    } else {
+        // File-backed mapping: require a valid fd and use the provided offset.
         let fd = current_task()
             .fd_table
             .lock_save_irq()
@@ -98,9 +99,6 @@ pub async fn sys_mmap(
         let inode = fd.inode().ok_or(KernelError::BadFd)?;
 
         VMAreaKind::new_file(inode, offset, len)
-    } else {
-        // One of MAP_FILE or MAP_ANONYMOUS must be set.
-        return Err(KernelError::InvalidValue);
     };
 
     let address_request = if addr.is_null() {

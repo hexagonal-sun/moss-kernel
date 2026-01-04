@@ -208,23 +208,49 @@ fn setup_user_stack(
     info_block.extend(envp_addrs.iter().map(|&addr| addr as u64));
     info_block.push(0); // Null terminator for envp
 
+    // Prepare 16 random bytes for AT_RANDOM and place them just below strings.
+    let mut at_random_bytes = [0u8; 16];
+    // TODO: Better randomness
+    {
+        let mut seed: u64 = 0;
+        seed ^= (STACK_END as u64).wrapping_mul(0x9E3779B185EBCA87);
+        seed ^= (STACK_START as u64).wrapping_mul(0xC2B2AE3D27D4EB4F);
+        for i in 0..16 {
+            let val = seed.wrapping_mul(STACK_END as u64);
+            at_random_bytes[i] = (val >> ((i % 8) * 8)) as u8;
+        }
+    }
+
     // Add auxiliary vectors
     auxv.push(AT_PAGESZ);
     auxv.push(PAGE_SIZE as u64);
     auxv.push(AT_RANDOM);
-    // TODO: SECURITY: Actually make this a random value.
-    auxv.push(STACK_END as u64 - 0x10);
+    // Placeholder; will be overwritten below.
+    auxv.push(0);
     auxv.push(AT_NULL);
     auxv.push(0);
 
-    info_block.append(&mut auxv);
-
-    let info_block_size = info_block.len() * mem::size_of::<u64>();
+    // Compute sizes for info block to maintain alignment.
 
     // The top of the info block must be 16-byte aligned. The stack pointer on
     // entry to the new process must also be 16-byte aligned.
     let strings_base_va = STACK_END - total_string_size;
-    let final_sp_unaligned = strings_base_va - info_block_size;
+
+    // Place the 16 random bytes immediately below the strings region to avoid overlapping.
+    let at_random_va = strings_base_va - 16;
+
+    if let Some(pos) = auxv.iter().position(|&v| v == AT_RANDOM) {
+        if pos + 1 < auxv.len() {
+            auxv[pos + 1] = at_random_va as u64;
+        }
+    }
+
+    // Append auxv after argc/argv/envp in info_block.
+    info_block.append(&mut auxv);
+
+    let info_block_size = info_block.len() * mem::size_of::<u64>();
+
+    let final_sp_unaligned = strings_base_va - 16 /* AT_RANDOM bytes */ - info_block_size;
     let final_sp_val = final_sp_unaligned & !0xF; // Align down to 16 bytes
 
     let total_stack_size = STACK_END - final_sp_val;
@@ -241,6 +267,12 @@ fn setup_user_stack(
         let offset = total_stack_size - (STACK_END - string_cursor);
         stack_image[offset..offset + s.len()].copy_from_slice(s.as_bytes());
         // Null terminator is already there from vec![0;...].
+    }
+
+    // Write the random bytes at at_random_va
+    {
+        let offset = total_stack_size - (STACK_END - at_random_va);
+        stack_image[offset..offset + 16].copy_from_slice(&at_random_bytes);
     }
 
     // Write info block into the image
@@ -291,6 +323,8 @@ async fn exec_with_interp(
     let task = current_task_shared();
     let path = Path::new(&interp_path);
     let interp_inode = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
+    // Debug: interpreter path
+    log::info!("PT_INTERP path: {}", interp_path);
 
     // Parse interpreter ELF header
     let mut hdr_buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
@@ -327,47 +361,134 @@ async fn exec_with_interp(
 
     let main_entry = main_elf.e_entry(endian);
 
-    // Map interpreter at a fixed high base address.
+    // Map interpreter at a fixed high base address
     let interp_base = LINKER_BASE;
+    log::info!("Interp base: 0x{:016x}", interp_base);
     let mut interp_entry = 0;
 
     for hdr in interp_hdrs.iter() {
         if hdr.p_type(iendian) == PT_LOAD {
-            let vaddr = interp_base + hdr.p_vaddr(iendian);
-            let size = hdr.p_memsz(iendian) as usize;
-
-            let region = VirtMemoryRegion::new(VA::from_value(vaddr as usize), size);
-            let kind = VMAreaKind::new_file(
-                interp_inode.clone(),
-                hdr.p_offset(iendian),
-                hdr.p_filesz(iendian),
+            let seg_vaddr = hdr.p_vaddr(iendian);
+            let seg_offset = hdr.p_offset(iendian);
+            let filesz = hdr.p_filesz(iendian);
+            let memsz = hdr.p_memsz(iendian);
+            log::info!(
+                "Interp PT_LOAD: off=0x{:x} vaddr=0x{:x} filesz=0x{:x} memsz=0x{:x} flags=0x{:x}",
+                seg_offset,
+                seg_vaddr,
+                filesz,
+                memsz,
+                hdr.p_flags(iendian)
             );
 
-            let permissions = {
-                let mut perms = VMAPermissions {
-                    read: false,
-                    write: false,
-                    execute: false,
-                };
+            let page_mask = !(PAGE_SIZE as u64 - 1);
+            let map_start_file_off = seg_offset & page_mask;
+            let map_start_vaddr = (interp_base + seg_vaddr) & page_mask;
+            let file_backed_end_vaddr = ((interp_base + seg_vaddr + filesz) + (PAGE_SIZE as u64 - 1)) & page_mask; // round up
+            let mem_end_vaddr = ((interp_base + seg_vaddr + memsz) + (PAGE_SIZE as u64 - 1)) & page_mask; // round up
+            log::info!(
+                "map file: file_off=0x{:x} va=0x{:x} -> 0x{:x} (len=0x{:x})",
+                map_start_file_off,
+                map_start_vaddr,
+                file_backed_end_vaddr,
+                (file_backed_end_vaddr - map_start_vaddr)
+            );
+            log::info!(
+                "mem end (incl. BSS): 0x{:x}",
+                mem_end_vaddr
+            );
 
-                let flags = hdr.p_flags(iendian);
-                if flags & elf::PF_R != 0 {
-                    perms.read = true;
+            let file_map_size = (file_backed_end_vaddr - map_start_vaddr) as usize;
+            if file_map_size > 0 {
+                // Exact file-backed length in VA space: leading partial page + filesz
+                let leading = (seg_offset - map_start_file_off) as u64;
+                let file_va_len_exact = (filesz + leading) as usize;
+                let file_va_end_exact = map_start_vaddr as usize + file_va_len_exact;
+
+                // File-backed region: [map_start_vaddr, file_va_end_exact)
+                if file_va_len_exact > 0 {
+                    let region = VirtMemoryRegion::new(
+                        VA::from_value(map_start_vaddr as usize),
+                        file_va_len_exact,
+                    );
+                    let kind = VMAreaKind::new_file(
+                        interp_inode.clone(),
+                        map_start_file_off,
+                        (filesz + leading) as u64,
+                    );
+                    let permissions = {
+                        let mut perms = VMAPermissions { read: false, write: false, execute: false };
+                        let flags = hdr.p_flags(iendian);
+                        if flags & elf::PF_R != 0 { perms.read = true; }
+                        if flags & elf::PF_W != 0 { perms.write = true; }
+                        if flags & elf::PF_X != 0 { perms.execute = true; }
+                        perms
+                    };
+                    log::info!(
+                        "file VMA exact: VA[0x{:x}..0x{:x}) perms=r{}w{}x{} back_len=0x{:x}",
+                        map_start_vaddr,
+                        file_va_end_exact,
+                        if permissions.read {1}else{0},
+                        if permissions.write {1}else{0},
+                        if permissions.execute {1}else{0},
+                        (filesz + leading)
+                    );
+                    vmas.push(VMArea::new(region, kind, permissions));
                 }
-                if flags & elf::PF_W != 0 {
-                    perms.write = true;
+
+                // If the exact file-backed end is before the rounded-up end, add anon zero-fill for the remainder of the page.
+                if (file_va_end_exact as u64) < file_backed_end_vaddr {
+                    let region = VirtMemoryRegion::new(
+                        VA::from_value(file_va_end_exact),
+                        (file_backed_end_vaddr - file_va_end_exact as u64) as usize,
+                    );
+                    let permissions = {
+                        let mut perms = VMAPermissions { read: false, write: false, execute: false };
+                        let flags = hdr.p_flags(iendian);
+                        if flags & elf::PF_R != 0 { perms.read = true; }
+                        if flags & elf::PF_W != 0 { perms.write = true; }
+                        if flags & elf::PF_X != 0 { perms.execute = true; }
+                        perms
+                    };
+                    log::info!(
+                        "file-tail anon VMA: VA[0x{:x}..0x{:x}) perms=r{}w{}x{}",
+                        file_va_end_exact,
+                        file_backed_end_vaddr,
+                        if permissions.read {1}else{0},
+                        if permissions.write {1}else{0},
+                        if permissions.execute {1}else{0}
+                    );
+                    vmas.push(VMArea::new(region, VMAreaKind::Anon, permissions));
                 }
-                if flags & elf::PF_X != 0 {
-                    perms.execute = true;
+            }
+
+            // If there is a BSS tail (memsz > filesz), map an anonymous zero-filled region.
+            if memsz > filesz {
+                let bss_start = ((interp_base + seg_vaddr + filesz) + (PAGE_SIZE as u64 - 1)) & page_mask; // start at next page boundary
+                let bss_size = (mem_end_vaddr - bss_start) as usize;
+                if bss_size > 0 {
+                    let region = VirtMemoryRegion::new(VA::from_value(bss_start as usize), bss_size);
+                    let permissions = {
+                        let mut perms = VMAPermissions { read: false, write: false, execute: false };
+                        let flags = hdr.p_flags(iendian);
+                        if flags & elf::PF_R != 0 { perms.read = true; }
+                        if flags & elf::PF_W != 0 { perms.write = true; }
+                        if flags & elf::PF_X != 0 { perms.execute = true; }
+                        perms
+                    };
+                    log::info!(
+                        "BSS VMA: VA[0x{:x}..0x{:x}) perms=r{}w{}x{}",
+                        bss_start,
+                        mem_end_vaddr,
+                        if permissions.read {1}else{0},
+                        if permissions.write {1}else{0},
+                        if permissions.execute {1}else{0}
+                    );
+                    vmas.push(VMArea::new(region, VMAreaKind::Anon, permissions));
                 }
+            }
 
-                perms
-            };
-
-            let vma = VMArea::new(region, kind, permissions);
-            vmas.push(vma);
-
-            let end = vaddr + hdr.p_memsz(iendian);
+            let end = mem_end_vaddr;
             if end > highest_addr {
                 highest_addr = end;
             }
@@ -375,11 +496,8 @@ async fn exec_with_interp(
     }
 
     interp_entry = interp_base + interp_elf.e_entry(iendian);
+    log::info!("Interp entry: 0x{:x} (e_entry=0x{:x})", interp_entry, interp_elf.e_entry(iendian));
 
-    // Build auxv for dynamic case:
-    // - AT_PHDR/AT_PHENT/AT_PHNUM: main executable
-    // - AT_ENTRY: main executable entry
-    // - AT_BASE: interpreter base address
     let mut auxv = vec![
         AT_PHNUM,
         main_elf.e_phnum.get(endian) as _,
@@ -387,20 +505,28 @@ async fn exec_with_interp(
         main_elf.e_phentsize(endian) as _,
     ];
 
-    // Find PHDR in main binary: assume p_offset == 0 contains headers
     for hdr in main_hdrs.iter() {
         if hdr.p_type(endian) == PT_LOAD && hdr.p_offset(endian) == 0 {
+            let at_phdr_va = hdr.p_vaddr(endian) + main_elf.e_phoff.get(endian);
+            log::info!(
+                "AT_PHDR: VA=0x{:x} (vaddr=0x{:x} e_phoff=0x{:x})",
+                at_phdr_va,
+                hdr.p_vaddr(endian),
+                main_elf.e_phoff.get(endian)
+            );
             auxv.push(AT_PHDR);
-            auxv.push(hdr.p_vaddr(endian) + main_elf.e_phoff.get(endian));
+            auxv.push(at_phdr_va);
             break;
         }
     }
 
     auxv.push(AT_ENTRY);
     auxv.push(main_entry);
+    log::info!("AT_ENTRY: 0x{:x}", main_entry);
 
     auxv.push(AT_BASE);
     auxv.push(interp_base);
+    log::info!("AT_BASE: 0x{:x}", interp_base);
 
     // Stack VMA
     vmas.push(VMArea::new(
