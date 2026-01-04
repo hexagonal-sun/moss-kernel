@@ -1,5 +1,5 @@
 use crate::ArchImpl;
-use crate::process::Comm;
+use crate::process::{Comm, TaskState};
 use crate::sched::current::current_task_shared;
 use crate::{
     arch::Arch,
@@ -90,11 +90,16 @@ pub async fn kernel_exec(
     }
 
     if let Some(path) = interp_path {
-        return exec_with_interp(inode, &elf, endian, &ph_buf, &hdrs, path, argv, envp).await;
+        return exec_with_interp(inode, elf, endian, &ph_buf, hdrs, path, argv, envp).await;
     }
 
     // static ELF ...
-    let mut auxv = vec![AT_PHNUM, elf.e_phnum.get(endian) as _, AT_PHENT, elf.e_phentsize(endian) as _];
+    let mut auxv = vec![
+        AT_PHNUM,
+        elf.e_phnum.get(endian) as _,
+        AT_PHENT,
+        elf.e_phentsize(endian) as _,
+    ];
 
     let mut vmas = Vec::new();
     let mut highest_addr = 0;
@@ -271,6 +276,7 @@ fn setup_user_stack(
 
 // Dynamic linker path: map main executable and its PT_INTERP interpreter and
 // start execution at the interpreter entry point.
+#[expect(clippy::too_many_arguments)]
 async fn exec_with_interp(
     inode_main: Arc<dyn Inode>,
     main_elf: &elf::FileHeader64<LittleEndian>,
@@ -282,11 +288,9 @@ async fn exec_with_interp(
     envp: Vec<String>,
 ) -> Result<()> {
     // Resolve interpreter path from root; this assumes interp_path is absolute.
-    let task = current_task();
+    let task = current_task_shared();
     let path = Path::new(&interp_path);
-    let interp_inode = VFS
-        .resolve_path(path, VFS.root_inode(), task.clone())
-        .await?;
+    let interp_inode = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
 
     // Parse interpreter ELF header
     let mut hdr_buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
@@ -376,7 +380,12 @@ async fn exec_with_interp(
     // - AT_PHDR/AT_PHENT/AT_PHNUM: main executable
     // - AT_ENTRY: main executable entry
     // - AT_BASE: interpreter base address
-    let mut auxv = vec![AT_PHNUM, main_elf.e_phnum.get(endian) as _, AT_PHENT, main_elf.e_phentsize(endian) as _];
+    let mut auxv = vec![
+        AT_PHNUM,
+        main_elf.e_phnum.get(endian) as _,
+        AT_PHENT,
+        main_elf.e_phentsize(endian) as _,
+    ];
 
     // Find PHDR in main binary: assume p_offset == 0 contains headers
     for hdr in main_hdrs.iter() {
@@ -411,12 +420,12 @@ async fn exec_with_interp(
     vm.mm_mut().address_space_mut().activate();
 
     let new_comm = argv.first().map(|s| Comm::new(s.as_str()));
-    let current_task = current_task();
+    let mut current_task = current_task();
 
     if let Some(new_comm) = new_comm {
         *current_task.comm.lock_save_irq() = new_comm;
     }
-    *current_task.ctx.lock_save_irq() = Context::from_user_ctx(user_ctx);
+    current_task.ctx = Context::from_user_ctx(user_ctx);
     *current_task.state.lock_save_irq() = TaskState::Runnable;
     *current_task.vm.lock_save_irq() = vm;
     *current_task.process.signals.lock_save_irq() = SignalState::new_default();
