@@ -36,3 +36,20 @@ jobs:
         with:
           name: test-output-${{ matrix.smp-feature || 'up' }}
           path: out.log
+  upload-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Build dockerfile
+        run: docker build -t moss .
+      - name: Run container
+        run: docker run -d --name moss-container moss
+      - name: Copy image file
+        run: docker cp moss-container:/moss/moss.img moss.img
+      - name: Upload image as artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: moss.img
+          path: moss.img
