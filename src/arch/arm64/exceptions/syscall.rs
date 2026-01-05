@@ -54,6 +54,7 @@ use crate::{
             select::{sys_ppoll, sys_pselect6},
         },
         prctl::sys_prctl,
+        ptrace::sys_ptrace,
         sleep::sys_nanosleep,
         thread_group::{
             Pgid,
@@ -291,6 +292,13 @@ pub async fn handle_syscall() {
         0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
+        0x75 => sys_ptrace(
+            arg1 as _,
+            arg2 as _,
+            TUA::from_value(arg3 as _),
+            TUA::from_value(arg4 as _),
+        )
+        .await,
         0x7b => Err(KernelError::NotSupported),
         0x7c => sys_sched_yield(),
         0x81 => sys_kill(arg1 as _, arg2.into()),
