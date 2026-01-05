@@ -171,7 +171,12 @@ impl Inode for Ext4Inode {
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.inner.metadata.clone().into())
+        let mut attrs: FileAttr = self.inner.metadata.clone().into();
+        let fs = self.fs_ref.upgrade().ok_or(FsError::InvalidFs)?;
+
+        attrs.id = InodeId::from_fsid_and_inodeid(fs.id(), self.inner.index.get() as _);
+
+        Ok(attrs)
     }
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
