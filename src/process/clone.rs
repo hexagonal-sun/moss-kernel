@@ -8,6 +8,7 @@ use crate::{
     sync::SpinLock,
 };
 use alloc::boxed::Box;
+use core::sync::atomic::AtomicBool;
 use bitflags::bitflags;
 use libkernel::memory::address::TUA;
 use libkernel::{
@@ -153,6 +154,7 @@ pub async fn sys_clone(
                 creds: SpinLock::new(creds),
                 state: Arc::new(SpinLock::new(TaskState::Runnable)),
                 last_cpu: SpinLock::new(CpuId::this()),
+                ptrace: AtomicBool::new(flags.contains(CloneFlags::CLONE_PTRACE) && current_task.ptrace.load(core::sync::atomic::Ordering::SeqCst)),
             }),
         }
     };
