@@ -4,6 +4,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use core::fmt::Display;
+use core::sync::atomic::AtomicBool;
 use creds::Credentials;
 use fd_table::FileDescriptorTable;
 use libkernel::{VirtualMemory, fs::Inode};
@@ -19,6 +20,7 @@ pub mod exit;
 pub mod fd_table;
 pub mod owned;
 pub mod prctl;
+pub mod ptrace;
 pub mod sleep;
 pub mod thread_group;
 pub mod threading;
@@ -164,6 +166,7 @@ pub struct Task {
     pub fd_table: Arc<SpinLock<FileDescriptorTable>>,
     pub state: Arc<SpinLock<TaskState>>,
     pub last_cpu: SpinLock<CpuId>,
+    pub ptrace: AtomicBool
 }
 
 impl Task {
