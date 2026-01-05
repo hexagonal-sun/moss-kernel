@@ -50,6 +50,7 @@ mod kernel;
 mod memory;
 mod process;
 mod sched;
+mod socket;
 mod sync;
 #[cfg(test)]
 pub mod testing;

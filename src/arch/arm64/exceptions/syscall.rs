@@ -89,6 +89,10 @@ use crate::{
         threading::{futex::sys_futex, sys_set_robust_list, sys_set_tid_address},
     },
     sched::{current::current_task, sys_sched_yield},
+    socket::syscalls::{
+        accept::sys_accept, bind::sys_bind, connect::sys_connect, listen::sys_listen,
+        shutdown::sys_shutdown, socket::sys_socket,
+    },
 };
 use alloc::boxed::Box;
 use libkernel::{
@@ -511,7 +515,12 @@ pub async fn handle_syscall() {
         0xb1 => sys_getegid().map_err(|e| match e {}),
         0xb2 => sys_gettid().map_err(|e| match e {}),
         0xb3 => sys_sysinfo(TUA::from_value(arg1 as _)).await,
-        0xc6 => Err(KernelError::NotSupported),
+        0xc6 => sys_socket(arg1 as _, arg2 as _, arg3 as _).await,
+        0xc8 => sys_bind(arg1.into(), UA::from_value(arg2 as _), arg3 as _).await,
+        0xc9 => sys_listen(arg1.into(), arg2 as _).await,
+        0xca => sys_accept(arg1.into()).await,
+        0xcb => sys_connect(arg1.into(), UA::from_value(arg2 as _), arg3 as _).await,
+        0xd2 => sys_shutdown(arg1.into(), arg2 as _).await,
         0xd6 => sys_brk(VA::from_value(arg1 as _))
             .await
             .map_err(|e| match e {}),
