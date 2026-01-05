@@ -141,6 +141,9 @@ pub enum KernelError {
     #[error("Operation not supported")]
     NotSupported,
 
+    #[error("Address family not supported")]
+    AddressFamilyNotSupported,
+
     #[error("Device probe failed: {0}")]
     Probe(#[from] ProbeError),
 
@@ -197,6 +200,9 @@ pub enum KernelError {
 
     #[error("Name too long")]
     NameTooLong,
+
+    #[error("Not a socket")]
+    NotASocket,
 
     #[error("{0}")]
     Other(&'static str),
