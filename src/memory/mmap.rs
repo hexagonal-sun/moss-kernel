@@ -136,8 +136,22 @@ pub async fn sys_mmap(
 pub async fn sys_munmap(addr: VA, len: usize) -> Result<usize> {
     let region = VirtMemoryRegion::new(addr, len);
 
-    // TODO: reclaim pages.
-    current_task().vm.lock_save_irq().mm_mut().munmap(region)?;
+    let pages = current_task().vm.lock_save_irq().mm_mut().munmap(region)?;
+
+    // Free any physical frames that were unmapped.
+    if !pages.is_empty() {
+        // The frames returned by munmap are no longer mapped and belong to this process;
+        // creating temporary allocations from these regions allows the allocator to reclaim them on drop.
+        let allocator = crate::memory::PAGE_ALLOC
+            .get()
+            .ok_or(KernelError::NoMemory)?;
+
+        for p in pages {
+            // Create a temporary allocation from the single-page region and drop it immediately to free.
+            let tmp = unsafe { allocator.alloc_from_region(p.as_phys_range()) };
+            drop(tmp);
+        }
+    }
 
     Ok(0)
 }
