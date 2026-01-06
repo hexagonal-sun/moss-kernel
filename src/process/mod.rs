@@ -18,6 +18,7 @@ pub mod exec;
 pub mod exit;
 pub mod fd_table;
 pub mod owned;
+pub mod prctl;
 pub mod sleep;
 pub mod thread_group;
 pub mod threading;
