@@ -399,10 +399,16 @@ impl VFS {
                     .find_char_driver(char_dev_descriptor.major)
                     .ok_or(FsError::NoDevice)?;
 
-                Ok(char_driver
+                let mut open_file = char_driver
                     .get_device(char_dev_descriptor.minor)
                     .ok_or(FsError::NoDevice)?
-                    .open(flags)?)
+                    .open(flags)?;
+
+                if let Some(of) = Arc::get_mut(&mut open_file) {
+                    of.update(target_inode, path.to_owned());
+                }
+
+                Ok(open_file)
             }
             FileType::Fifo => todo!(),
             FileType::Socket => todo!(),
