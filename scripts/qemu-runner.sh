@@ -10,9 +10,9 @@ if [ $# -lt 1 ]; then
 fi
 
 if [ -n "$2" ]; then
-    init_script="$2"
+    append_args="--init=$2"
 else
-    init_script="/bin/bash"
+    append_args="--init=/bin/bash --init-arg=-i"
 fi
 
 
@@ -23,4 +23,4 @@ bin="${elf%.elf}.bin"
 
 # Convert to binary format
 aarch64-none-elf-objcopy -O binary "$elf" "$bin"
-qemu-system-aarch64 -M virt,gic-version=3 -initrd moss.img -cpu cortex-a72 -m 2G -smp 4 -nographic -s -kernel "$bin" -append "--init=$init_script --rootfs=ext4fs --automount=/dev,devfs --automount=/tmp,tmpfs --automount=/proc,procfs"
+qemu-system-aarch64 -M virt,gic-version=3 -initrd moss.img -cpu cortex-a72 -m 2G -smp 4 -nographic -s -kernel "$bin" -append "$append_args --rootfs=ext4fs --automount=/dev,devfs --automount=/tmp,tmpfs --automount=/proc,procfs"
