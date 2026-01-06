@@ -11,6 +11,7 @@ jobs:
   build-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         smp-feature: [ "", "smp" ]
 
