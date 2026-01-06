@@ -67,7 +67,7 @@ fn on_panic(info: &PanicInfo) -> ! {
     ArchImpl::power_off();
 }
 
-async fn launch_init(opts: KOptions) {
+async fn launch_init(mut opts: KOptions) {
     let init = opts
         .init
         .unwrap_or_else(|| panic!("No init specified in kernel command line"));
@@ -163,7 +163,11 @@ async fn launch_init(opts: KOptions) {
 
     drop(task);
 
-    process::exec::kernel_exec(inode, vec![init.as_str().to_string()], vec![])
+    let mut init_args = vec![init.as_str().to_string()];
+
+    init_args.append(&mut opts.init_args);
+
+    process::exec::kernel_exec(inode, init_args, vec![])
         .await
         .expect("Could not launch init process");
 }
@@ -172,6 +176,7 @@ struct KOptions {
     init: Option<PathBuf>,
     root_fs: Option<String>,
     automounts: Vec<(PathBuf, String)>,
+    init_args: Vec<String>,
 }
 
 fn parse_args(args: &str) -> KOptions {
@@ -179,6 +184,7 @@ fn parse_args(args: &str) -> KOptions {
         init: None,
         root_fs: None,
         automounts: Vec::new(),
+        init_args: Vec::new(),
     };
 
     let mut opts = Options::new(args.split(" "));
@@ -187,6 +193,7 @@ fn parse_args(args: &str) -> KOptions {
         match opts.next_opt() {
             Ok(Some(arg)) => match arg {
                 Opt::Long("init") => kopts.init = Some(PathBuf::from(opts.value().unwrap())),
+                Opt::Long("init-arg") => kopts.init_args.push(opts.value().unwrap().to_string()),
                 Opt::Long("rootfs") => kopts.root_fs = Some(opts.value().unwrap().to_string()),
                 Opt::Long("automount") => {
                     let string = opts.value().unwrap();
