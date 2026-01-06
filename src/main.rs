@@ -163,7 +163,9 @@ async fn launch_init(opts: KOptions) {
 
     drop(task);
 
-    process::exec::kernel_exec(inode, vec![init.as_str().to_string()], vec![])
+    let default_env: Vec<String> = vec!["PATH=/usr/bin:/bin:/usr/sbin:/sbin".to_string()];
+
+    process::exec::kernel_exec(inode, vec![init.as_str().to_string()], default_env)
         .await
         .expect("Could not launch init process");
 }
