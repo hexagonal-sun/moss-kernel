@@ -93,6 +93,16 @@ pub fn sys_getegid() -> core::result::Result<usize, Infallible> {
     Ok(gid as _)
 }
 
+pub fn sys_setfsuid(_new_id: usize) -> core::result::Result<usize, Infallible> {
+    // Return the uid.  This syscall is deprecated.
+    sys_getuid()
+}
+
+pub fn sys_setfsgid(_new_id: usize) -> core::result::Result<usize, Infallible> {
+    // Return the gid. This syscall is deprecated.
+    sys_getgid()
+}
+
 pub fn sys_gettid() -> core::result::Result<usize, Infallible> {
     let tid: u32 = current_task().tid.0;
 

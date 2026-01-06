@@ -44,7 +44,7 @@ use crate::{
         clone::sys_clone,
         creds::{
             sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_gettid,
-            sys_getuid,
+            sys_getuid, sys_setfsgid, sys_setfsuid,
         },
         exec::sys_execve,
         exit::{sys_exit, sys_exit_group},
@@ -339,6 +339,8 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x97 => sys_setfsuid(arg1 as _).map_err(|e| match e {}),
+        0x98 => sys_setfsgid(arg1 as _).map_err(|e| match e {}),
         0x9a => sys_setpgid(arg1 as _, Pgid(arg2 as _)),
         0x9b => sys_getpgid(arg1 as _),
         0xa0 => sys_uname(TUA::from_value(arg1 as _)).await,
