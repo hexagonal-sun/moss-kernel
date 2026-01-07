@@ -17,6 +17,7 @@ use crate::{
     },
 };
 use alloc::string::ToString;
+use alloc::vec::Vec;
 use alloc::{
     boxed::Box,
     sync::{Arc, Weak},
