@@ -3,6 +3,7 @@
 ![Architecture](https://img.shields.io/badge/arch-aarch64-blue)
 ![Language](https://img.shields.io/badge/language-Rust-orange)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
+[![IRC](https://img.shields.io/badge/OFTC_IRC-%23moss-blue)](https://webchat.oftc.net/?nick=&channels=%23moss)
 
 ![Moss Boot Demo](etc/moss_demo.gif)
 
@@ -35,19 +36,23 @@ model within the kernel context:
 * The compiler enforces that spinlocks cannot be held over sleep points,
   eliminating a common class of kernel deadlocks.
 
-###  Process Management
-* Full task management including scheduling and task migration via IPIs.
-* Currently implements [51 Linux syscalls](./etc/syscalls_linux_aarch64.md); sufficient to execute most BusyBox
+### Process Management
+* Full task management including both UP and SMP scheduling via EEVDF and task migration via IPIs.
+* Currently implements [85 Linux syscalls](./etc/syscalls_linux_aarch64.md); sufficient to execute most BusyBox
   commands.
 * Advanced forking capabilities via `clone()`.
 * Process and thread signal delivery and raising support.
+* Dynamic ELF binary loading with support for shared libraries.
 
 ### VFS & Filesystems
 * Virtual File System with full async abstractions.
 * Drivers:
     * Ramdisk block device implementation.
     * FAT32 filesystem driver (ro).
-    * `devtmpfs` driver for kernel character device access.
+    * Ext2/3/4 filesystem driver (ro).
+    * `devfs` driver for kernel character device access.
+    * `tmpfs` driver for temporary file storage in RAM (rw).
+    * `procfs` driver for process and kernel information exposure.
 
 ## `libkernel` & Testing
 `moss` is built on top of `libkernel`, a utility library designed to be
@@ -62,6 +67,7 @@ x86) before running on bare metal.
 * Test Suite: A comprehensive suite of 230+ tests ensuring functionality across
   architectures (e.g., validating Aarch64 page table parsing logic on an x86
   host).
+* Userspace Testing: A dedicated userspace test-suite to validate syscall behavior.
 
 ## Building and Running
 
@@ -109,7 +115,7 @@ Once that is done, you can create the image using the following command:
 ```
 
 This will create an image file named `moss.img` in the root directory of the
-project, format it as VFAT 32 and create the necessary files and directories for
+project, format it as ext4 image and create the necessary files and directories for
 the kernel.
 
 ### Running via QEMU
@@ -137,8 +143,8 @@ moss is under active development. Current focus areas include:
 * Basic Linux Syscall Compatibility (Testing through BusyBox).
 * Networking Stack: TCP/IP implementation.
 * Scheduler Improvements: Task load balancing.
-* A fully read/write capable filesystem driver (e.g., ext2/4).
-* Expanding coverage beyond the current 49 calls.
+* A fully read/write capable filesystem driver.
+* Expanding coverage beyond the current 85 calls.
 
 ## Contributing
 
