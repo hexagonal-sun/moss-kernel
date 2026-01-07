@@ -380,6 +380,7 @@ pub async fn handle_syscall() {
             .await
         }
         0xde => sys_mmap(arg1, arg2, arg3, arg4, arg5.into(), arg6).await,
+        0xdf => Ok(0), // fadvise64_64 is a no-op
         0xe2 => sys_mprotect(VA::from_value(arg1 as _), arg2 as _, arg3 as _),
         0xe9 => Ok(0), // sys_madvise is a no-op
         0x104 => {
@@ -452,6 +453,7 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x1b8 => Ok(0), // process_madvise is a no-op
         _ => panic!(
             "Unhandled syscall 0x{nr:x}, PC: 0x{:x}",
             current_task().ctx.user().elr_el1
