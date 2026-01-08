@@ -73,6 +73,9 @@ impl From<Metadata> for FileAttr {
             mode: FilePermissions::from_bits(meta.mode.bits()).unwrap(),
             uid: Uid::new(meta.uid),
             gid: Gid::new(meta.gid),
+            atime: meta.atime,
+            ctime: meta.ctime,
+            mtime: meta.mtime,
             ..Default::default()
         }
     }
