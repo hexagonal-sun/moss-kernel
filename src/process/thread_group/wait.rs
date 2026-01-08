@@ -97,6 +97,34 @@ impl ChildNotifiers {
     }
 }
 
+fn do_wait(
+    state: &mut BTreeMap<Tgid, ChildState>,
+    pid: PidT,
+    flags: WaitFlags,
+) -> Option<(Tgid, ChildState)> {
+    let key = if pid == -1 {
+        state.iter().find_map(|(k, v)| {
+            if v.matches_wait_flags(flags) {
+                Some(*k)
+            } else {
+                None
+            }
+        })
+    } else {
+        state
+            .get_key_value(&Tgid::from_pid_t(pid))
+            .and_then(|(k, v)| {
+                if v.matches_wait_flags(flags) {
+                    Some(*k)
+                } else {
+                    None
+                }
+            })
+    }?;
+
+    Some(state.remove_entry(&key).unwrap())
+}
+
 pub async fn sys_wait4(
     pid: PidT,
     stat_addr: TUA<i32>,
@@ -139,34 +167,24 @@ pub async fn sys_wait4(
 
     let task = current_task_shared();
 
-    let (tgid, child_state) = task
-        .process
-        .child_notifiers
-        .inner
-        .wait_until(|state| {
-            let key = if pid == -1 {
-                state.iter().find_map(|(k, v)| {
-                    if v.matches_wait_flags(flags) {
-                        Some(*k)
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                state
-                    .get_key_value(&Tgid::from_pid_t(pid))
-                    .and_then(|(k, v)| {
-                        if v.matches_wait_flags(flags) {
-                            Some(*k)
-                        } else {
-                            None
-                        }
-                    })
-            }?;
+    let (tgid, child_state) = if flags.contains(WaitFlags::WNOHANG) {
+        let mut ret = None;
+        task.process.child_notifiers.inner.update(|s| {
+            ret = do_wait(s, pid, flags);
+            WakeupType::None
+        });
 
-            Some(state.remove_entry(&key).unwrap())
-        })
-        .await;
+        match ret {
+            None => return Ok(0),
+            Some(ret) => ret,
+        }
+    } else {
+        task.process
+            .child_notifiers
+            .inner
+            .wait_until(|state| do_wait(state, pid, flags))
+            .await
+    };
 
     if !stat_addr.is_null() {
         match child_state {
