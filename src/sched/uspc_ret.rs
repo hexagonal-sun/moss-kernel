@@ -239,6 +239,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             None => continue,
                             Some(KSignalAction::Term | KSignalAction::Core) => {
                                 // Terminate the process, and find a new task.
+                                drop(task);
                                 kernel_exit_with_signal(signal, false);
 
                                 state = State::PickNewTask;
