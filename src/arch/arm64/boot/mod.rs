@@ -1,6 +1,7 @@
 use super::{
     exceptions::{ExceptionState, secondary_exceptions_init},
     memory::{fixmap::FIXMAPS, mmu::setup_kern_addr_space},
+    proc::vdso::vdso_init,
 };
 use crate::drivers::timer::kick_current_cpu;
 use crate::{
@@ -52,6 +53,7 @@ global_asm!(include_str!("start.s"));
 ///
 /// 0xffff_0000_0000_0000 - 0xffff_8000_0000_0000 | Logical Memory Map
 /// 0xffff_8000_0000_0000 - 0xffff_8000_1fff_ffff | Kernel image
+/// 0xffff_8100_0000_0000 - 0xffff_8100_0000_1000 | VDSO (userspace)
 /// 0xffff_9000_0000_0000 - 0xffff_9000_0020_1fff | Fixed mappings
 /// 0xffff_b000_0000_0000 - 0xffff_b000_0400_0000 | Kernel Heap
 /// 0xffff_b800_0000_0000 - 0xffff_b800_0000_8000 | Kernel Stack (per CPU)
@@ -121,6 +123,10 @@ fn arch_init_stage2(frame: *mut ExceptionState) -> *mut ExceptionState {
     unsafe { setup_percpu(cpu_count()) };
 
     cpu_messenger_init(cpu_count());
+
+    if let Err(e) = vdso_init() {
+        panic!("VDSO setup failed: {e}");
+    }
 
     let cmdline = super::fdt::get_cmdline();
 

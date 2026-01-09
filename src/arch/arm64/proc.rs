@@ -4,6 +4,7 @@ use libkernel::UserAddressSpace;
 
 pub mod idle;
 pub mod signal;
+pub mod vdso;
 
 pub fn context_switch(new: Arc<Task>) {
     new.vm

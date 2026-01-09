@@ -54,11 +54,18 @@ SECTIONS
         __vectors_end = .;
     }
 
+    . = ALIGN(PAGE_SIZE);
+    .vdso : {
+        __vdso_start = .;
+        KEEP(*(.vdso))
+        __vdso_end = .;
+    }
+
     .bss :
     {
         . = ALIGN(16);
         __bss_start = .;
-        *(.bss*);
+        *(.bss*)
         . = ALIGN(16);
         __bss_end = .;
     }
