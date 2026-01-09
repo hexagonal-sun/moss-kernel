@@ -54,7 +54,7 @@ use crate::{
             select::{sys_ppoll, sys_pselect6},
         },
         prctl::sys_prctl,
-        ptrace::sys_ptrace,
+        ptrace::{TracePoint, ptrace_stop, sys_ptrace},
         sleep::sys_nanosleep,
         thread_group::{
             Pgid,
@@ -80,6 +80,8 @@ use libkernel::{
 };
 
 pub async fn handle_syscall() {
+    ptrace_stop(TracePoint::SyscallEntry).await;
+
     let (nr, arg1, arg2, arg3, arg4, arg5, arg6) = {
         let mut task = current_task();
 
@@ -292,13 +294,15 @@ pub async fn handle_syscall() {
         0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
-        0x75 => sys_ptrace(
-            arg1 as _,
-            arg2 as _,
-            TUA::from_value(arg3 as _),
-            TUA::from_value(arg4 as _),
-        )
-        .await,
+        0x75 => {
+            sys_ptrace(
+                arg1 as _,
+                arg2 as _,
+                TUA::from_value(arg3 as _),
+                TUA::from_value(arg4 as _),
+            )
+            .await
+        }
         0x7b => Err(KernelError::NotSupported),
         0x7c => sys_sched_yield(),
         0x81 => sys_kill(arg1 as _, arg2.into()),
@@ -474,4 +478,5 @@ pub async fn handle_syscall() {
     };
 
     current_task().ctx.user_mut().x[0] = ret_val.cast_unsigned() as u64;
+    ptrace_stop(TracePoint::SyscallExit).await;
 }

@@ -54,6 +54,7 @@ pub enum ChildState {
     NormalExit { code: u32 },
     SignalExit { signal: SigId, core: bool },
     Stop { signal: SigId },
+    TraceTrap { signal: SigId, mask: i32 },
     Continue,
 }
 
@@ -64,6 +65,8 @@ impl ChildState {
                 flags.contains(WaitFlags::WEXITED)
             }
             ChildState::Stop { .. } => flags.contains(WaitFlags::WSTOPPED),
+            // Always wake up on a trace trap.
+            ChildState::TraceTrap { .. } => true,
             ChildState::Continue => flags.contains(WaitFlags::WCONTINUED),
         }
     }
@@ -199,7 +202,14 @@ pub async fn sys_wait4(
                 .await?;
             }
             ChildState::Stop { signal } => {
-                copy_to_user(stat_addr, ((signal as i32) << 8) | 0x7f).await?;
+                copy_to_user(stat_addr, ((signal.user_id() as i32) << 8) | 0x7f).await?;
+            }
+            ChildState::TraceTrap { signal, mask } => {
+                copy_to_user(
+                    stat_addr,
+                    ((signal.user_id() as i32) << 8) | 0x7f | mask << 8,
+                )
+                .await?;
             }
             ChildState::Continue => {
                 copy_to_user(stat_addr, 0xffff).await?;

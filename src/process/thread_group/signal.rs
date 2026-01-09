@@ -138,6 +138,13 @@ impl SigId {
     pub fn user_id(self) -> u64 {
         self as u64 + 1
     }
+
+    pub fn is_stopping(self) -> bool {
+        matches!(
+            self,
+            Self::SIGSTOP | Self::SIGTSTP | Self::SIGTTIN | Self::SIGTTOU
+        )
+    }
 }
 
 impl Display for SigId {

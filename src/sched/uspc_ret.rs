@@ -178,9 +178,10 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             }
 
                             // Kernel work finished. Ensure we have no other new
-                            // work to process (i.e. a signal was rasied). We
-                            // don't need to clear the kernel context here as we
-                            // used the *take* function above.
+                            // work to process (i.e. a signal was rasied, trace
+                            // point was hit). We don't need to clear the kernel
+                            // context here as we used the *take* function
+                            // above.
                             state = State::ProcessKernelWork;
                             continue;
                         }
@@ -232,6 +233,19 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                     let mut task = current_task();
 
                     while let Some(signal) = task.take_signal() {
+                        let mut ptrace = task.ptrace.lock_save_irq();
+                        if ptrace.trace_signal(signal, task.ctx.user()) {
+                            ptrace.notify_parent_of_trap(task.process.clone());
+                            ptrace.set_waker(create_waker(task.descriptor()));
+
+                            *task.state.lock_save_irq() = TaskState::Stopped;
+                            force_resched();
+
+                            state = State::PickNewTask;
+                            continue 'dispatch;
+                        }
+                        drop(ptrace);
+
                         let sigaction = task.process.signals.lock_save_irq().action_signal(signal);
 
                         match sigaction {
@@ -272,6 +286,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                                     }
                                 }
 
+                                force_resched();
                                 state = State::PickNewTask;
                                 continue 'dispatch;
                             }

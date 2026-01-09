@@ -1,5 +1,6 @@
 use crate::ArchImpl;
 use crate::process::Comm;
+use crate::process::ptrace::{TracePoint, ptrace_stop};
 use crate::sched::current::current_task_shared;
 use crate::{
     arch::Arch,
@@ -172,6 +173,9 @@ pub async fn kernel_exec(
     let mut mem_map = MemoryMap::from_vmas(vmas)?;
     let stack_ptr = setup_user_stack(&mut mem_map, &argv, &envp, auxv)?;
 
+    // We are now committed to the exec.  Inform ptrace.
+    ptrace_stop(TracePoint::Exec).await;
+
     let user_ctx = ArchImpl::new_user_context(entry_addr, stack_ptr);
     let mut vm = ProcessVM::from_map(mem_map);
 
@@ -183,15 +187,17 @@ pub async fn kernel_exec(
 
     let new_comm = argv.first().map(|s| Comm::new(s.as_str()));
 
-    let mut current_task = current_task();
+    {
+        let mut current_task = current_task();
 
-    if let Some(new_comm) = new_comm {
-        *current_task.comm.lock_save_irq() = new_comm;
+        if let Some(new_comm) = new_comm {
+            *current_task.comm.lock_save_irq() = new_comm;
+        }
+
+        current_task.ctx = Context::from_user_ctx(user_ctx);
+        *current_task.vm.lock_save_irq() = vm;
+        *current_task.process.signals.lock_save_irq() = SignalActionState::new_default();
     }
-
-    current_task.ctx = Context::from_user_ctx(user_ctx);
-    *current_task.vm.lock_save_irq() = vm;
-    *current_task.process.signals.lock_save_irq() = SignalActionState::new_default();
 
     Ok(())
 }

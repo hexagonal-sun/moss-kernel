@@ -17,6 +17,7 @@ use memory::{
     mmu::{Arm64KernelAddressSpace, KERN_ADDR_SPC},
     uaccess::{Arm64CopyFromUser, Arm64CopyStrnFromUser, Arm64CopyToUser, try_copy_from_user},
 };
+use ptrace::Arm64PtraceGPRegs;
 
 use crate::{
     process::{
@@ -36,6 +37,7 @@ mod fdt;
 mod memory;
 mod proc;
 pub mod psci;
+pub mod ptrace;
 
 pub struct Aarch64 {}
 
@@ -77,6 +79,7 @@ impl VirtualMemory for Aarch64 {
 
 impl Arch for Aarch64 {
     type UserContext = ExceptionState;
+    type PTraceGpRegs = Arm64PtraceGPRegs;
 
     fn new_user_context(entry_point: VA, stack_top: VA) -> Self::UserContext {
         ExceptionState {

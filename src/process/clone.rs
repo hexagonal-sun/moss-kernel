@@ -1,4 +1,5 @@
 use super::owned::OwnedTask;
+use super::ptrace::PTrace;
 use super::{ctx::Context, thread_group::signal::SigSet};
 use crate::kernel::cpu_id::CpuId;
 use crate::memory::uaccess::copy_to_user;
@@ -8,7 +9,6 @@ use crate::{
     sync::SpinLock,
 };
 use alloc::boxed::Box;
-use core::sync::atomic::AtomicBool;
 use bitflags::bitflags;
 use libkernel::memory::address::TUA;
 use libkernel::{
@@ -128,6 +128,12 @@ pub async fn sys_clone(
             Arc::new(SpinLock::new(current_task.root.lock_save_irq().clone()))
         };
 
+        let ptrace = if flags.contains(CloneFlags::CLONE_PTRACE) {
+            current_task.ptrace.lock_save_irq().clone()
+        } else {
+            PTrace::new()
+        };
+
         let creds = current_task.creds.lock_save_irq().clone();
 
         let new_sigmask = current_task.sig_mask;
@@ -154,7 +160,7 @@ pub async fn sys_clone(
                 creds: SpinLock::new(creds),
                 state: Arc::new(SpinLock::new(TaskState::Runnable)),
                 last_cpu: SpinLock::new(CpuId::this()),
-                ptrace: AtomicBool::new(flags.contains(CloneFlags::CLONE_PTRACE) && current_task.ptrace.load(core::sync::atomic::Ordering::SeqCst)),
+                ptrace: SpinLock::new(ptrace),
             }),
         }
     };

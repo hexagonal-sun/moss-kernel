@@ -5,6 +5,7 @@ use super::{
     creds::Credentials,
     ctx::{Context, UserCtx},
     fd_table::FileDescriptorTable,
+    ptrace::PTrace,
     thread_group::{
         Tgid,
         builder::ThreadGroupBuilder,
@@ -19,7 +20,6 @@ use crate::{
     sync::SpinLock,
 };
 use alloc::sync::Arc;
-use core::sync::atomic::AtomicBool;
 use libkernel::{
     VirtualMemory,
     fs::pathbuf::PathBuf,
@@ -76,7 +76,7 @@ impl OwnedTask {
             vm: Arc::new(SpinLock::new(vm)),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             last_cpu: SpinLock::new(CpuId::this()),
-            ptrace: AtomicBool::new(false),
+            ptrace: SpinLock::new(PTrace::new()),
         };
 
         Self {
@@ -104,7 +104,7 @@ impl OwnedTask {
             )),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             last_cpu: SpinLock::new(CpuId::this()),
-            ptrace: AtomicBool::new(false),
+            ptrace: SpinLock::new(PTrace::new()),
         };
 
         Self {

@@ -8,10 +8,13 @@
 //! The rest of the kernel should use the `ArchImpl` type alias to access
 //! architecture-specific functions and types.
 
-use crate::process::{
-    Task,
-    owned::OwnedTask,
-    thread_group::signal::{SigId, ksigaction::UserspaceSigAction},
+use crate::{
+    memory::uaccess::UserCopyable,
+    process::{
+        Task,
+        owned::OwnedTask,
+        thread_group::signal::{SigId, ksigaction::UserspaceSigAction},
+    },
 };
 use alloc::sync::Arc;
 use libkernel::{
@@ -25,6 +28,9 @@ pub trait Arch: CpuOps + VirtualMemory {
     /// context switch. The kernel's scheduler and exception handlers will work
     /// with this type.
     type UserContext: Sized + Send + Sync + Clone;
+
+    /// The type for GP regs copied via `PTRACE_GETREGSET`.
+    type PTraceGpRegs: UserCopyable + for<'a> From<&'a Self::UserContext>;
 
     fn name() -> &'static str;
 
