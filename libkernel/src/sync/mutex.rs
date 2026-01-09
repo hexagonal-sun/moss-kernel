@@ -131,3 +131,47 @@ impl<T: ?Sized, CPU: CpuOps> DerefMut for AsyncMutexGuard<'_, T, CPU> {
 
 unsafe impl<T: ?Sized + Send, CPU: CpuOps> Send for Mutex<T, CPU> {}
 unsafe impl<T: ?Sized + Send, CPU: CpuOps> Sync for Mutex<T, CPU> {}
+
+impl<CPU: CpuOps> Mutex<(), CPU> {
+    /// Acquires the mutex lock without caring about the data.
+    pub(crate) fn acquire(&self) -> MutexAcquireFuture<'_, CPU> {
+        MutexAcquireFuture { mutex: self }
+    }
+
+    /// Releases the mutex lock without caring about the data.
+    ///
+    /// # Safety
+    /// The caller must ensure that they have previously called [`Self::acquire()`].
+    pub(crate) unsafe fn release(&self) {
+        let mut state = self.state.lock_save_irq();
+
+        if let Some(next_waker) = state.waiters.pop_front() {
+            next_waker.wake();
+        }
+
+        state.is_locked = false;
+    }
+}
+
+/// A future that resolves to a locked mutex
+pub struct MutexAcquireFuture<'a, CPU: CpuOps> {
+    mutex: &'a Mutex<(), CPU>,
+}
+
+impl<CPU: CpuOps> Future for MutexAcquireFuture<'_, CPU> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut state = self.mutex.state.lock_save_irq();
+
+        if !state.is_locked {
+            state.is_locked = true;
+            Poll::Ready(())
+        } else {
+            if state.waiters.iter().all(|w| !w.will_wake(cx.waker())) {
+                state.waiters.push_back(cx.waker().clone());
+            }
+            Poll::Pending
+        }
+    }
+}
