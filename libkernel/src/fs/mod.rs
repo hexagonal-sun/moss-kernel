@@ -26,6 +26,7 @@ use crate::{
     error::{FsError, KernelError, Result},
     fs::{path::Path, pathbuf::PathBuf},
 };
+use alloc::vec::Vec;
 use alloc::{boxed::Box, string::String, sync::Arc};
 use async_trait::async_trait;
 use attr::{FileAttr, FilePermissions};
@@ -209,6 +210,26 @@ pub trait Inode: Send + Sync + Any {
     /// Sets the metadata for this inode.
     async fn setattr(&self, _attr: FileAttr) -> Result<()> {
         Err(KernelError::NotSupported)
+    }
+
+    /// Gets an extended attribute.
+    async fn getxattr(&self, _name: &str) -> Result<Vec<u8>> {
+        Err(KernelError::NotSupported)
+    }
+
+    /// Sets an extended attribute.
+    async fn setxattr(&self, _name: &str, _buf: &[u8], _flags: i32) -> Result<()> {
+        Err(KernelError::NotSupported)
+    }
+
+    /// Removes an extended attribute.
+    async fn removexattr(&self, _name: &str) -> Result<()> {
+        Err(KernelError::NotSupported)
+    }
+
+    /// Lists all extended attribute names.
+    async fn listxattr(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
     }
 
     /// Looks up a name within a directory, returning the corresponding inode.

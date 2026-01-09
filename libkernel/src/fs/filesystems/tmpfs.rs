@@ -687,6 +687,7 @@ struct TmpFsSymlinkInode<C: CpuOps> {
     id: InodeId,
     target: PathBuf,
     attr: SpinLockIrq<FileAttr, C>,
+    xattr: SpinLockIrq<Vec<(String, Vec<u8>)>, C>,
 }
 
 #[async_trait]
@@ -707,6 +708,16 @@ impl<C: CpuOps> Inode for TmpFsSymlinkInode<C> {
     async fn readlink(&self) -> Result<PathBuf> {
         Ok(self.target.clone())
     }
+
+    async fn getxattr(&self, name: &str) -> Result<Vec<u8>> {
+        let guard = self.xattr.lock_save_irq();
+        for (key, value) in guard.iter() {
+            if key == name {
+                return Ok(value.clone());
+            }
+        }
+        Err(FsError::NotFound.into())
+    }
 }
 
 impl<C: CpuOps> TmpFsSymlinkInode<C> {
@@ -720,6 +731,7 @@ impl<C: CpuOps> TmpFsSymlinkInode<C> {
                 nlinks: 1,
                 ..Default::default()
             }),
+            xattr: SpinLockIrq::new(Vec::new()),
         })
     }
 }

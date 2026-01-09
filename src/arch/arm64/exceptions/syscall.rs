@@ -24,10 +24,14 @@ use crate::{
             chmod::sys_fchmod,
             chown::sys_fchown,
             close::sys_close,
+            getxattr::{sys_fgetxattr, sys_getxattr, sys_lgetxattr},
             ioctl::sys_ioctl,
             iov::{sys_preadv, sys_preadv2, sys_pwritev, sys_pwritev2, sys_readv, sys_writev},
+            listxattr::{sys_flistxattr, sys_listxattr, sys_llistxattr},
+            removexattr::{sys_fremovexattr, sys_lremovexattr, sys_removexattr},
             rw::{sys_pread64, sys_pwrite64, sys_read, sys_write},
             seek::sys_lseek,
+            setxattr::{sys_fsetxattr, sys_lsetxattr, sys_setxattr},
             splice::sys_sendfile,
             stat::sys_fstat,
             sync::{sys_fdatasync, sys_fsync, sys_sync, sys_syncfs},
@@ -97,6 +101,83 @@ pub async fn handle_syscall() {
     };
 
     let res = match nr {
+        0x5 => {
+            sys_setxattr(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+                arg5 as _,
+            )
+            .await
+        }
+        0x6 => {
+            sys_lsetxattr(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+                arg5 as _,
+            )
+            .await
+        }
+        0x7 => {
+            sys_fsetxattr(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+                arg5 as _,
+            )
+            .await
+        }
+        0x8 => {
+            sys_getxattr(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+            )
+            .await
+        }
+        0x9 => {
+            sys_lgetxattr(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+            )
+            .await
+        }
+        0xa => {
+            sys_fgetxattr(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+            )
+            .await
+        }
+        0xb => {
+            sys_listxattr(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+            )
+            .await
+        }
+        0xc => {
+            sys_llistxattr(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+            )
+            .await
+        }
+        0xd => sys_flistxattr(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
+        0xe => sys_removexattr(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0xf => sys_lremovexattr(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0x10 => sys_fremovexattr(arg1.into(), TUA::from_value(arg2 as _)).await,
         0x11 => sys_getcwd(TUA::from_value(arg1 as _), arg2 as _).await,
         0x17 => sys_dup(arg1.into()),
         0x18 => sys_dup3(arg1.into(), arg2.into(), arg3 as _),
