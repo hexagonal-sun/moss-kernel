@@ -19,7 +19,29 @@ use super::TaskState;
 use super::thread_group::ThreadGroup;
 use super::thread_group::wait::ChildState;
 
+const PTRACE_EVENT_FORK: usize = 1;
+const PTRACE_EVENT_VFORK: usize = 2;
+const PTRACE_EVENT_CLONE: usize = 3;
+const PTRACE_EVENT_EXEC: usize = 4;
+const PTRACE_EVENT_VFORK_DONE: usize = 5;
+const PTRACE_EVENT_EXIT: usize = 6;
+const PTRACE_EVENT_SECCOMP: usize = 7;
+
 bitflags::bitflags! {
+    #[derive(Clone, Copy, PartialEq)]
+    pub struct PTraceOptions: usize {
+        const PTRACE_O_TRACESYSGOOD    = 1;
+        const PTRACE_O_TRACEFORK       = 1 << PTRACE_EVENT_FORK;
+        const PTRACE_O_TRACEVFORK      = 1 << PTRACE_EVENT_VFORK;
+        const PTRACE_O_TRACECLONE      = 1 << PTRACE_EVENT_CLONE;
+        const PTRACE_O_TRACEEXEC       = 1 << PTRACE_EVENT_EXEC;
+        const PTRACE_O_TRACEVFORK_DONE = 1 << PTRACE_EVENT_VFORK_DONE;
+        const PTRACE_O_TRACEEXIT       = 1 << PTRACE_EVENT_EXIT;
+        const PTRACE_O_TRACESECCOMP    = 1 << PTRACE_EVENT_SECCOMP;
+        const PTRACE_O_EXITKILL        = 1 << 20;
+        const PTRACE_O_SUSPEND_SECCOMP = 1 << 21;
+    }
+
     #[derive(Clone, Copy, PartialEq)]
     pub struct TracePoint: u32 {
         const SyscallEntry = 0x01;
@@ -50,6 +72,7 @@ pub struct PTrace {
     break_points: TracePoint,
     state: Option<PTraceState>,
     waker: Option<Waker>,
+    sysgood: bool,
 }
 
 impl PTrace {
@@ -58,6 +81,7 @@ impl PTrace {
             state: None,
             break_points: TracePoint::empty(),
             waker: None,
+            sysgood: false,
         }
     }
 
@@ -210,6 +234,7 @@ enum PtraceOperation {
     // Attach = 16,
     // Detach = 17,
     Syscall = 24,
+    SetOptions = 0x4200,
     GetRegSet = 0x4204,
 }
 
@@ -223,6 +248,7 @@ impl TryFrom<i32> for PtraceOperation {
             2 => Ok(PtraceOperation::PeekData),
             7 => Ok(PtraceOperation::Cont),
             24 => Ok(PtraceOperation::Syscall),
+            0x4200 => Ok(PtraceOperation::SetOptions),
             0x4204 => Ok(PtraceOperation::GetRegSet),
             // TODO: Should be EIO
             _ => Err(KernelError::InvalidValue),
@@ -309,6 +335,36 @@ pub async fn sys_ptrace(op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> 
             } else {
                 Err(KernelError::NoProcess)
             }
+        }
+        PtraceOperation::SetOptions => {
+            let opts = PTraceOptions::from_bits_truncate(data.value());
+            let mut ptrace = target_task.ptrace.lock_save_irq();
+
+            // Reset to defaults.
+            ptrace.break_points.clear();
+            ptrace.sysgood = false;
+
+            for opt in opts.iter() {
+                match opt {
+                    PTraceOptions::PTRACE_O_TRACESYSGOOD => ptrace.sysgood = true,
+                    PTraceOptions::PTRACE_O_EXITKILL => todo!(),
+                    PTraceOptions::PTRACE_O_TRACECLONE => {
+                        ptrace.break_points.insert(TracePoint::Clone)
+                    }
+                    PTraceOptions::PTRACE_O_TRACEEXIT => {
+                        ptrace.break_points.insert(TracePoint::Exit)
+                    }
+                    PTraceOptions::PTRACE_O_TRACEFORK => {
+                        ptrace.break_points.insert(TracePoint::Fork)
+                    }
+                    PTraceOptions::PTRACE_O_TRACEEXEC => {
+                        ptrace.break_points.insert(TracePoint::Exec);
+                    }
+                    _ => todo!(),
+                }
+            }
+
+            Ok(0)
         }
         PtraceOperation::Cont => {
             let mut ptrace = target_task.ptrace.lock_save_irq();
