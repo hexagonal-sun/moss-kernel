@@ -221,6 +221,8 @@ impl TryFrom<i32> for PtraceOperation {
             0 => Ok(PtraceOperation::TraceMe),
             1 => Ok(PtraceOperation::PeekText),
             2 => Ok(PtraceOperation::PeekData),
+            7 => Ok(PtraceOperation::Cont),
+            24 => Ok(PtraceOperation::Syscall),
             0x4204 => Ok(PtraceOperation::GetRegSet),
             // TODO: Should be EIO
             _ => Err(KernelError::InvalidValue),
@@ -307,6 +309,31 @@ pub async fn sys_ptrace(op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> 
             } else {
                 Err(KernelError::NoProcess)
             }
+        }
+        PtraceOperation::Cont => {
+            let mut ptrace = target_task.ptrace.lock_save_irq();
+            ptrace.state = Some(PTraceState::Running);
+
+            ptrace
+                .break_points
+                .remove(TracePoint::SyscallEntry | TracePoint::SyscallExit);
+
+            *target_task.state.lock_save_irq() = TaskState::Runnable;
+
+            Ok(0)
+        }
+        PtraceOperation::Syscall => {
+            let mut ptrace = target_task.ptrace.lock_save_irq();
+            ptrace.state = Some(PTraceState::Running);
+            ptrace
+                .break_points
+                .insert(TracePoint::SyscallEntry | TracePoint::SyscallExit);
+
+            if let Some(waker) = ptrace.waker.take() {
+                waker.wake();
+            }
+
+            Ok(0)
         }
         // TODO: Wrong error
         _ => Err(KernelError::InvalidValue),
