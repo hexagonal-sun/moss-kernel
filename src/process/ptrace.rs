@@ -26,6 +26,7 @@ const PTRACE_EVENT_EXEC: usize = 4;
 const PTRACE_EVENT_VFORK_DONE: usize = 5;
 const PTRACE_EVENT_EXIT: usize = 6;
 const PTRACE_EVENT_SECCOMP: usize = 7;
+const PTRACE_EVENT_STOP: usize = 128;
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq)]
@@ -120,7 +121,13 @@ impl PTrace {
             None => 0,
             Some(PTraceState::Running) => 0,
             // No masking for real signal delivery.
-            Some(PTraceState::SignalTrap { .. }) => 0,
+            Some(PTraceState::SignalTrap { signal, .. }) => {
+                if signal.is_stopping() {
+                    (PTRACE_EVENT_STOP as i32) << 8
+                } else {
+                    0
+                }
+            }
             Some(PTraceState::TracePointHit { hit_point, .. }) => match hit_point {
                 TracePoint::SyscallEntry | TracePoint::SyscallExit => {
                     if self.sysgood {
