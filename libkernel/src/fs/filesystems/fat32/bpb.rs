@@ -42,7 +42,10 @@ pub struct BiosParameterBlock {
 unsafe impl Pod for BiosParameterBlock {}
 
 impl BiosParameterBlock {
-    pub async fn new(dev: &BlockBuffer) -> Result<Self> {
+    pub async fn new<CPU>(dev: &BlockBuffer<CPU>) -> Result<Self>
+    where
+        CPU: crate::CpuOps,
+    {
         let bpb: Self = dev.read_obj(0).await?;
 
         if bpb._fat_size_16 != 0 || bpb._root_entry_count != 0 {

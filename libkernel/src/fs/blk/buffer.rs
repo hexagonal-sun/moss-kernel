@@ -1,7 +1,9 @@
 use core::{mem, slice};
 
-use crate::{error::Result, fs::BlockDevice, pod::Pod};
+use crate::{CpuOps, error::Result, fs::BlockDevice, pod::Pod};
 
+use crate::fs::blk::block_cache::BlockCache;
+use crate::sync::mutex::Mutex;
 use alloc::{boxed::Box, vec};
 
 /// A buffer that provides byte-level access to an underlying BlockDevice.
@@ -11,17 +13,25 @@ use alloc::{boxed::Box, vec};
 /// blocks or are not aligned to block boundaries.
 ///
 /// TODO: Cache blocks.
-pub struct BlockBuffer {
-    dev: Box<dyn BlockDevice>,
+pub struct BlockBuffer<CPU: CpuOps> {
+    // TODO: Change to rwlock when we have one.
+    // This would require a bit of rearchitecture to maximize read sharing.
+    cache: Mutex<BlockCache, CPU>,
     block_size: usize,
 }
 
-impl BlockBuffer {
+impl<CPU> BlockBuffer<CPU>
+where
+    CPU: CpuOps,
+{
     /// Creates a new `BlockBuffer` that wraps the given block device.
     pub fn new(dev: Box<dyn BlockDevice>) -> Self {
         let block_size = dev.block_size();
 
-        Self { dev, block_size }
+        Self {
+            cache: Mutex::new(BlockCache::new(64, block_size, dev)),
+            block_size,
+        }
     }
 
     /// Reads a sequence of bytes starting at a specific offset.
@@ -41,7 +51,14 @@ impl BlockBuffer {
 
         let mut temp_buf = vec![0; num_blocks_to_read as usize * self.block_size];
 
-        self.dev.read(start_block, &mut temp_buf).await?;
+        let mut cache = self.cache.lock().await;
+        for block_index in 0..num_blocks_to_read {
+            let block_number = start_block + block_index;
+            let block_data = cache.get_or_load(block_number).await?;
+            let start = (block_index as usize) * self.block_size;
+            let end = start + self.block_size;
+            temp_buf[start..end].copy_from_slice(block_data);
+        }
 
         let start_in_temp_buf = (offset % self.block_size as u64) as usize;
         let end_in_temp_buf = start_in_temp_buf + len;
@@ -89,25 +106,34 @@ impl BlockBuffer {
         let num_blocks_to_rw = end_block - start_block + 1;
         let mut temp_buf = vec![0; num_blocks_to_rw as usize * self.block_size];
 
-        // Read all affected blocks from the device into our temporary buffer.
-        // This preserves the data in the blocks that we are not modifying.
-        self.dev.read(start_block, &mut temp_buf).await?;
-
-        // Copy the user's data into the correct position in our temporary
-        // buffer.
-        let start_in_temp_buf = (offset % self.block_size as u64) as usize;
-        let end_in_temp_buf = start_in_temp_buf + len;
-
-        temp_buf[start_in_temp_buf..end_in_temp_buf].copy_from_slice(buf);
-
-        // Write the entire modified buffer back to the device.
-        self.dev.write(start_block, &temp_buf).await?;
+        let mut cache = self.cache.lock().await;
+        for block_index in 0..num_blocks_to_rw {
+            let block_number = start_block + block_index;
+            let block_data = cache.get_or_load_mut(block_number).await?;
+            let start = (block_index as usize) * self.block_size;
+            let end = start + self.block_size;
+            temp_buf[start..end].copy_from_slice(block_data);
+        }
+        // // Read all affected blocks from the device into our temporary buffer.
+        // // This preserves the data in the blocks that we are not modifying.
+        // self.dev.read(start_block, &mut temp_buf).await?;
+        //
+        // // Copy the user's data into the correct position in our temporary
+        // // buffer.
+        // let start_in_temp_buf = (offset % self.block_size as u64) as usize;
+        // let end_in_temp_buf = start_in_temp_buf + len;
+        //
+        // temp_buf[start_in_temp_buf..end_in_temp_buf].copy_from_slice(buf);
+        //
+        // // Write the entire modified buffer back to the device.
+        // self.dev.write(start_block, &temp_buf).await?;
 
         Ok(())
     }
 
     /// Forwards a sync call to the underlying device.
     pub async fn sync(&self) -> Result<()> {
-        self.dev.sync().await
+        self.cache.lock().await.write_dirty().await?;
+        self.cache.lock().await.dev.sync().await
     }
 }

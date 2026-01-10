@@ -1,4 +1,5 @@
 use crate::{
+    CpuOps,
     error::{FsError, IoError, Result},
     fs::blk::buffer::BlockBuffer,
 };
@@ -72,11 +73,14 @@ impl<'a> Iterator for ClusterChainIterator<'a> {
 }
 
 impl Fat {
-    pub async fn read_fat(
-        dev: &BlockBuffer,
+    pub async fn read_fat<CPU>(
+        dev: &BlockBuffer<CPU>,
         bpb: &BiosParameterBlock,
         fat_number: usize,
-    ) -> Result<Self> {
+    ) -> Result<Self>
+    where
+        CPU: CpuOps,
+    {
         let (start, end) = bpb.fat_region(fat_number).ok_or(FsError::InvalidFs)?;
 
         let mut fat: Vec<FatEntry> = Vec::with_capacity(
@@ -113,6 +117,7 @@ mod test {
     use crate::fs::filesystems::fat32::bpb::test::create_test_bpb;
     use crate::fs::filesystems::fat32::fat::{Fat, FatEntry};
     use crate::fs::{BlockDevice, blk::buffer::BlockBuffer};
+    use crate::test::MockCpuOps;
     use async_trait::async_trait;
 
     const EOC: u32 = 0xFFFFFFFF;
@@ -150,7 +155,7 @@ mod test {
         }
     }
 
-    fn setup_fat_test(fat_data: &[u32]) -> BlockBuffer {
+    fn setup_fat_test(fat_data: &[u32]) -> BlockBuffer<MockCpuOps> {
         let mut data = Vec::new();
         data.extend(fat_data.iter().flat_map(|x| x.to_le_bytes()));
 
