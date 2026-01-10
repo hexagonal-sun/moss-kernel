@@ -41,6 +41,7 @@ use crate::{
         process_vm::sys_process_vm_readv,
     },
     process::{
+        TaskState,
         caps::{sys_capget, sys_capset},
         clone::sys_clone,
         creds::{
@@ -278,8 +279,28 @@ pub async fn handle_syscall() {
         }
         0x5a => sys_capget(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x5b => sys_capset(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
-        0x5d => sys_exit(arg1 as _).await,
-        0x5e => sys_exit_group(arg1 as _),
+        0x5d => {
+            let _ = sys_exit(arg1 as _).await;
+
+            debug_assert!(matches!(
+                *current_task().state.lock_save_irq(),
+                TaskState::Finished
+            ));
+
+            // Don't process result on exit.
+            return;
+        }
+        0x5e => {
+            let _ = sys_exit_group(arg1 as _);
+
+            debug_assert!(matches!(
+                *current_task().state.lock_save_irq(),
+                TaskState::Finished
+            ));
+
+            // Don't process result on exit.
+            return;
+        }
         0x60 => sys_set_tid_address(TUA::from_value(arg1 as _)),
         0x62 => {
             sys_futex(
