@@ -9,6 +9,7 @@ use crate::fs::pathbuf::PathBuf;
 use crate::fs::{DirStream, Dirent};
 use crate::proc::ids::{Gid, Uid};
 use crate::{
+    CpuOps,
     error::{KernelError, Result},
     fs::{
         FileType, Filesystem, Inode, InodeId,
@@ -29,7 +30,10 @@ use ext4_view::{
 };
 
 #[async_trait]
-impl Ext4Read for BlockBuffer {
+impl<CPU> Ext4Read for BlockBuffer<CPU>
+where
+    CPU: crate::CpuOps + Send + Sync,
+{
     async fn read(
         &self,
         start_byte: u64,
@@ -247,7 +251,10 @@ pub struct Ext4Filesystem {
 
 impl Ext4Filesystem {
     /// Construct a new EXT4 filesystem instance.
-    pub async fn new(dev: BlockBuffer, id: u64) -> Result<Arc<Self>> {
+    pub async fn new<CPU>(dev: BlockBuffer<CPU>, id: u64) -> Result<Arc<Self>>
+    where
+        CPU: CpuOps + Send + Sync + 'static,
+    {
         let inner = Ext4::load(Box::new(dev)).await?;
         Ok(Arc::new_cyclic(|weak| Self {
             inner,
