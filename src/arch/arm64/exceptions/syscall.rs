@@ -346,7 +346,7 @@ pub async fn handle_syscall() {
         0xa0 => sys_uname(TUA::from_value(arg1 as _)).await,
         0xa3 => Err(KernelError::InvalidValue),
         0xa6 => sys_umask(arg1 as _).map_err(|e| match e {}),
-        0xa7 => sys_prctl(arg1 as _, arg2 as _),
+        0xa7 => sys_prctl(arg1 as _, arg2).await,
         0xa9 => sys_gettimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xac => sys_getpid().map_err(|e| match e {}),
         0xad => sys_getppid().map_err(|e| match e {}),
