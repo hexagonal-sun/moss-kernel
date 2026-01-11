@@ -177,6 +177,9 @@ pub enum KernelError {
     #[error("No such process")]
     NoProcess,
 
+    #[error("No child process")]
+    NoChildProcess,
+
     #[error("Operation timed out")]
     TimedOut,
 

@@ -53,6 +53,7 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::NotSupported => ENOSYS,
         KernelError::NoMemory => ENOMEM,
         KernelError::TimedOut => ETIMEDOUT,
+        KernelError::NoChildProcess => ECHILD,
         e => todo!("{e}"),
     }
 }

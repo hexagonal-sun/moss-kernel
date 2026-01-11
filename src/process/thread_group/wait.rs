@@ -170,7 +170,12 @@ pub async fn sys_wait4(
 
     let task = current_task_shared();
 
-    let (tgid, child_state) = if flags.contains(WaitFlags::WNOHANG) {
+    let child_proc_count = task.process.children.lock_save_irq().iter().count();
+
+    let (tgid, child_state) = if child_proc_count == 0 || flags.contains(WaitFlags::WNOHANG) {
+        // Special case for no children. See if there are any pending child
+        // notification events without sleeping. If there are no children and no
+        // pending events, return ECHILD.
         let mut ret = None;
         task.process.child_notifiers.inner.update(|s| {
             ret = do_wait(s, pid, flags);
@@ -178,8 +183,9 @@ pub async fn sys_wait4(
         });
 
         match ret {
-            None => return Ok(0),
             Some(ret) => ret,
+            None if child_proc_count == 0 => return Err(KernelError::NoChildProcess),
+            None => return Ok(0),
         }
     } else {
         task.process
