@@ -7,8 +7,13 @@ use std::{
 };
 
 use futex_bitset::test_futex_bitset;
+use socket::{
+    test_tcp_socket_creation, test_unix_socket_basic_functions, test_unix_socket_creation,
+    test_unix_socket_fork_msg_passing,
+};
 
 mod futex_bitset;
+mod socket;
 
 fn test_sync() {
     print!("Testing sync syscall ...");
@@ -766,10 +771,7 @@ fn run_test(test_fn: fn()) {
             let mut status = 0;
             libc::waitpid(pid, &mut status, 0);
             if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
-                panic!(
-                    "Test failed in child process: {}",
-                    std::io::Error::last_os_error()
-                );
+                panic!("Test failed in child process.");
             }
         }
     }
@@ -806,6 +808,10 @@ fn main() {
     run_test(test_rust_thread);
     run_test(test_rust_mutex);
     run_test(test_parking_lot_mutex_timeout);
+    run_test(test_tcp_socket_creation);
+    run_test(test_unix_socket_creation);
+    run_test(test_unix_socket_basic_functions);
+    run_test(test_unix_socket_fork_msg_passing);
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }
