@@ -38,7 +38,7 @@ pub async fn sys_rt_sigprocmask(
             };
 
             // SIGSTOP and SIGKILL can never be masked.
-            new_sigmask = new_sigmask.union(UNMASKABLE_SIGNALS);
+            new_sigmask.remove(UNMASKABLE_SIGNALS);
 
             task.sig_mask = new_sigmask;
         }
