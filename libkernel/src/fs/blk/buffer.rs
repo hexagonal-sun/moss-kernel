@@ -76,7 +76,7 @@ impl BlockBuffer {
     ///
     /// NOTE: This is a simple but potentially inefficient implementation that
     /// uses a read-modify-write approach for all writes.
-    pub async fn write_at(&mut self, offset: u64, buf: &[u8]) -> Result<()> {
+    pub async fn write_at(&self, offset: u64, buf: &[u8]) -> Result<()> {
         let len = buf.len();
         if len == 0 {
             return Ok(());
