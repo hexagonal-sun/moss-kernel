@@ -38,6 +38,7 @@ use crate::{
     memory::{
         brk::sys_brk,
         mmap::{sys_mmap, sys_mprotect, sys_munmap},
+        process_vm::sys_process_vm_readv,
     },
     process::{
         caps::{sys_capget, sys_capset},
@@ -414,6 +415,17 @@ pub async fn handle_syscall() {
             .await
         }
         0x10b => sys_syncfs(arg1.into()).await,
+        0x10e => {
+            sys_process_vm_readv(
+                arg1 as _,
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                TUA::from_value(arg4 as _),
+                arg5 as _,
+                arg6 as _,
+            )
+            .await
+        }
         0x114 => {
             sys_renameat2(
                 arg1.into(),

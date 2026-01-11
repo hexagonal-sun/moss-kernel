@@ -12,6 +12,7 @@ pub mod brk;
 pub mod fault;
 pub mod mmap;
 pub mod page;
+pub mod process_vm;
 pub mod uaccess;
 
 pub type PageOffsetTranslator = libkernel::memory::pg_offset::PageOffsetTranslator<ArchImpl>;
