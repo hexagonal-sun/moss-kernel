@@ -26,7 +26,7 @@ unsafe fn wake_waker(data: *const ()) {
 
         match *state {
             // If the task has been put to sleep, then wake it up.
-            TaskState::Sleeping => {
+            TaskState::Sleeping | TaskState::Stopped => {
                 if locus == CpuId::this() {
                     *state = TaskState::Runnable;
                     SCHED_STATE.borrow_mut().wakeup(desc);

@@ -1,5 +1,5 @@
-use super::{Task, Tid};
-use crate::{memory::uaccess::UserCopyable, sync::SpinLock};
+use super::{Task, TaskState, Tid};
+use crate::{memory::uaccess::UserCopyable, sched::waker::create_waker, sync::SpinLock};
 use alloc::{
     collections::btree_map::BTreeMap,
     sync::{Arc, Weak},
@@ -12,7 +12,7 @@ use core::{
 };
 use pid::PidT;
 use rsrc_lim::ResourceLimits;
-use signal::{SigSet, SignalActionState};
+use signal::{SigId, SigSet, SignalActionState};
 use wait::ChildNotifiers;
 
 pub mod builder;
@@ -154,6 +154,30 @@ impl ThreadGroup {
 
     pub fn get(id: Tgid) -> Option<Arc<Self>> {
         TG_LIST.lock_save_irq().get(&id).and_then(|x| x.upgrade())
+    }
+
+    pub fn deliver_signal(&self, signal: SigId) {
+        match signal {
+            SigId::SIGKILL => {
+                // Set the sigkill marker in the pending signals and wake up all
+                // tasks in this group.
+                *self.pending_signals.lock_save_irq() = SigSet::SIGKILL;
+
+                for task in self.tasks.lock_save_irq().values() {
+                    if let Some(task) = task.upgrade()
+                        && matches!(
+                            *task.state.lock_save_irq(),
+                            TaskState::Stopped | TaskState::Sleeping
+                        )
+                    {
+                        create_waker(task.descriptor()).wake();
+                    }
+                }
+            }
+            _ => {
+                self.pending_signals.lock_save_irq().set_signal(signal);
+            }
+        }
     }
 }
 

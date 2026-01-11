@@ -16,18 +16,15 @@ pub fn sys_kill(pid: PidT, signal: UserSigId) -> Result<usize> {
     let current_task = current_task();
     // Kill ourselves
     if pid == current_task.process.tgid.value() as PidT {
-        current_task
-            .process
-            .pending_signals
-            .lock_save_irq()
-            .set_signal(signal);
+        current_task.process.deliver_signal(signal);
+
         return Ok(0);
     }
 
     match pid {
         p if p > 0 => {
             let target_tg = ThreadGroup::get(Tgid(p as _)).ok_or(KernelError::NoProcess)?;
-            target_tg.pending_signals.lock_save_irq().set_signal(signal);
+            target_tg.deliver_signal(signal);
         }
 
         0 => {
@@ -41,7 +38,7 @@ pub fn sys_kill(pid: PidT, signal: UserSigId) -> Result<usize> {
                 if let Some(tg) = tg_weak.upgrade()
                     && *tg.pgid.lock_save_irq() == our_pgid
                 {
-                    tg.pending_signals.lock_save_irq().set_signal(signal);
+                    tg.deliver_signal(signal);
                 }
             }
         }
@@ -55,7 +52,7 @@ pub fn sys_kill(pid: PidT, signal: UserSigId) -> Result<usize> {
                 if let Some(tg) = tg_weak.upgrade()
                     && *tg.pgid.lock_save_irq() == target_pgid
                 {
-                    tg.pending_signals.lock_save_irq().set_signal(signal);
+                    tg.deliver_signal(signal);
                 }
             }
         }

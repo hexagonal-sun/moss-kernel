@@ -274,10 +274,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                                         .child_notifiers
                                         .child_update(process.tgid, ChildState::Stop { signal });
 
-                                    parent
-                                        .pending_signals
-                                        .lock_save_irq()
-                                        .set_signal(SigId::SIGCHLD);
+                                    parent.deliver_signal(SigId::SIGCHLD);
                                 }
 
                                 for thr_weak in process.tasks.lock_save_irq().values() {
@@ -313,10 +310,8 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                                     parent
                                         .child_notifiers
                                         .child_update(process.tgid, ChildState::Continue);
-                                    parent
-                                        .pending_signals
-                                        .lock_save_irq()
-                                        .set_signal(SigId::SIGCHLD);
+
+                                    parent.deliver_signal(SigId::SIGCHLD);
                                 }
 
                                 // Re-process kernel work for this task (there may be more to do).
