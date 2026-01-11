@@ -1,3 +1,4 @@
+use crate::arch::ArchImpl;
 use crate::{drivers::Driver, fs::FilesystemDriver};
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
@@ -33,7 +34,7 @@ impl FilesystemDriver for Ext4FsDriver {
         device: Option<Box<dyn BlockDevice>>,
     ) -> Result<Arc<dyn Filesystem>> {
         match device {
-            Some(dev) => Ok(Ext4Filesystem::new(BlockBuffer::new(dev), fs_id).await?),
+            Some(dev) => Ok(Ext4Filesystem::<ArchImpl>::new(BlockBuffer::new(dev), fs_id).await?),
             None => {
                 warn!("Could not mount fat32 fs with no block device");
                 Err(KernelError::InvalidValue)
