@@ -751,6 +751,19 @@ fn test_parking_lot_mutex_timeout() {
     println!(" OK");
 }
 
+fn test_thread_with_name() {
+    print!("Testing thread with name ...");
+    let handle = thread::Builder::new()
+        .name("test_thread".to_string())
+        .spawn(|| {
+            let current_thread = thread::current();
+            assert_eq!(current_thread.name(), Some("test_thread"));
+        })
+        .unwrap();
+    handle.join().unwrap();
+    println!(" OK");
+}
+
 fn run_test(test_fn: fn()) {
     // Fork a new process to run the test
     unsafe {
@@ -806,6 +819,7 @@ fn main() {
     run_test(test_rust_thread);
     run_test(test_rust_mutex);
     run_test(test_parking_lot_mutex_timeout);
+    run_test(test_thread_with_name);
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }
