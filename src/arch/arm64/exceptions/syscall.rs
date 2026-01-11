@@ -291,7 +291,7 @@ pub async fn handle_syscall() {
             return;
         }
         0x5e => {
-            let _ = sys_exit_group(arg1 as _);
+            let _ = sys_exit_group(arg1 as _).await;
 
             debug_assert!(matches!(
                 *current_task().state.lock_save_irq(),

@@ -1,5 +1,6 @@
 use super::{
     TASK_LIST, TaskState,
+    ptrace::{TracePoint, ptrace_stop},
     thread_group::{ProcessState, Tgid, ThreadGroup, signal::SigId, wait::ChildState},
     threading::futex::{self, key::FutexKey},
 };
@@ -96,7 +97,9 @@ pub fn kernel_exit_with_signal(signal: SigId, core: bool) {
     do_exit_group(ChildState::SignalExit { signal, core });
 }
 
-pub fn sys_exit_group(exit_code: usize) -> Result<usize> {
+pub async fn sys_exit_group(exit_code: usize) -> Result<usize> {
+    ptrace_stop(TracePoint::Exit).await;
+
     do_exit_group(ChildState::NormalExit {
         code: exit_code as _,
     });
@@ -107,6 +110,8 @@ pub fn sys_exit_group(exit_code: usize) -> Result<usize> {
 pub async fn sys_exit(exit_code: usize) -> Result<usize> {
     // Honour CLONE_CHILD_CLEARTID: clear the user TID word and futex-wake any waiters.
     let ptr = current_task().child_tid_ptr.take();
+
+    ptrace_stop(TracePoint::Exit).await;
 
     if let Some(ptr) = ptr {
         copy_to_user(ptr, 0u32).await?;
