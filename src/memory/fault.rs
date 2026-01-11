@@ -1,5 +1,6 @@
-use crate::{process::ProcVM, sched::current::current_task};
+use crate::{process::ProcVM, sync::SpinLock};
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use libkernel::{
     PageInfo, UserAddressSpace,
     error::{KernelError, MapError, Result},
@@ -38,10 +39,12 @@ pub enum FaultResolution {
 
 /// Handle a page fault when a PTE is not present.
 pub fn handle_demand_fault(
-    vm: &mut ProcVM,
+    proc_vm: Arc<SpinLock<ProcVM>>,
     faulting_addr: VA,
     access_kind: AccessKind,
 ) -> Result<FaultResolution> {
+    let mut vm = proc_vm.lock_save_irq();
+
     let vma = match vm.find_vma_for_fault(faulting_addr, access_kind) {
         Some(vma) => vma,
         None => return Ok(FaultResolution::Denied),
@@ -52,6 +55,8 @@ pub fn handle_demand_fault(
     let page_va = faulting_addr.page_aligned();
 
     if let Some(vma_read) = vma.resolve_fault(faulting_addr) {
+        drop(vm);
+
         Ok(FaultResolution::Deferred(Box::new(async move {
             let pg_buf = &mut new_page.as_slice_mut()
                 [vma_read.page_offset..vma_read.page_offset + vma_read.read_len];
@@ -60,8 +65,7 @@ pub fn handle_demand_fault(
 
             // Since the above may have put the task to sleep, revalidate the
             // VMA access.
-            let task = current_task();
-            let mut vm = task.vm.lock_save_irq();
+            let mut vm = proc_vm.lock_save_irq();
 
             // If the handler in the deferred case is no longer valid. Allow
             // the program to back to user-space without touching the page

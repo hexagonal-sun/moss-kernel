@@ -1,12 +1,30 @@
-use crate::{arch::ArchImpl, kernel::cpu_id::CpuId, sync::SpinLock};
+use crate::{
+    arch::ArchImpl,
+    kernel::cpu_id::CpuId,
+    memory::{
+        PAGE_ALLOC,
+        fault::{FaultResolution, handle_demand_fault},
+    },
+    sync::SpinLock,
+};
 use alloc::{
+    boxed::Box,
     collections::btree_map::BTreeMap,
     sync::{Arc, Weak},
 };
 use core::fmt::Display;
 use creds::Credentials;
 use fd_table::FileDescriptorTable;
-use libkernel::{VirtualMemory, fs::Inode};
+use libkernel::{
+    UserAddressSpace, VirtualMemory,
+    error::{KernelError, Result},
+    fs::Inode,
+    memory::{
+        address::{UA, VA},
+        page_alloc::PageAllocation,
+        proc_vm::vmarea::AccessKind,
+    },
+};
 use libkernel::{fs::pathbuf::PathBuf, memory::proc_vm::ProcessVM};
 use ptrace::PTrace;
 use thread_group::{Tgid, ThreadGroup};
@@ -186,6 +204,69 @@ impl Task {
     /// system.
     pub fn descriptor(&self) -> TaskDescriptor {
         TaskDescriptor::from_tgid_tid(self.process.tgid, self.tid)
+    }
+
+    /// Get a page from the task's address space, in an atomic fasion - i.e.
+    /// with the process address space locked.
+    ///
+    /// Handle any faults such that the page will be resident in memory and return
+    /// an incremented refcount for the page such that it will not be free'd until
+    /// the returned allocation handle is dropped.
+    ///
+    /// SAFETY: The caller *must* guarantee that the returned page will only be
+    /// used as described in `access_kind`. i.e. if `AccessKind::Read` is passed
+    /// but data is written to this page, *bad* things will happen.
+    pub async unsafe fn get_page(
+        &self,
+        va: UA,
+        access_kind: AccessKind,
+    ) -> Result<PageAllocation<'static, ArchImpl>> {
+        let va = VA::from_value(va.value());
+
+        let mut fut = None;
+
+        loop {
+            if let Some(fut) = fut.take() {
+                // Handle async fault.
+                Box::into_pin(fut).await?;
+            }
+
+            {
+                let mut vm = self.vm.lock_save_irq();
+
+                if let Some(pa) = vm.mm_mut().address_space_mut().translate(va) {
+                    let region = pa.pfn.as_phys_range();
+
+                    if match access_kind {
+                        AccessKind::Read => pa.perms.is_read(),
+                        AccessKind::Write => pa.perms.is_write(),
+                        AccessKind::Execute => pa.perms.is_execute(),
+                    } {
+                        let alloc = unsafe { PAGE_ALLOC.get().unwrap().alloc_from_region(region) };
+                        // Increase refcount on this page, ensuring it isn't reused
+                        // while we copy the data.
+                        let ret = alloc.clone();
+
+                        // The original allocation is still owned by the address
+                        // space.
+                        alloc.leak();
+
+                        return Ok(ret);
+                    }
+                }
+            }
+
+            // Try to handle the fault.
+            match handle_demand_fault(self.vm.clone(), va, access_kind)? {
+                // Resolved the fault.   Try again
+                FaultResolution::Resolved => continue,
+                FaultResolution::Denied => return Err(KernelError::Fault),
+                FaultResolution::Deferred(future) => {
+                    fut = Some(future);
+                    continue;
+                }
+            }
+        }
     }
 }
 

@@ -43,11 +43,14 @@ fn run_mem_fault_handler(exception: Exception, info: AbortIss) -> Result<FaultRe
         let fault_addr = VA::from_value(far as usize);
 
         let task = current_task();
-        let mut vm = task.vm.lock_save_irq();
 
         match info.ifsc.category() {
-            IfscCategory::TranslationFault => handle_demand_fault(&mut vm, fault_addr, access_kind),
+            IfscCategory::TranslationFault => {
+                handle_demand_fault(task.vm.clone(), fault_addr, access_kind)
+            }
             IfscCategory::PermissionFault => {
+                let mut vm = task.vm.lock_save_irq();
+
                 let pg_info = vm
                     .mm_mut()
                     .address_space_mut()
