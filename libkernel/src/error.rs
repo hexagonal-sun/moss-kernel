@@ -111,6 +111,9 @@ pub enum ExecError {
     #[error("Invalid ELF Format")]
     InvalidElfFormat,
 
+    #[error("Invalid Script Format")]
+    InvalidScriptFormat,
+
     #[error("Invalid Porgram Header Format")]
     InvalidPHdrFormat,
 }

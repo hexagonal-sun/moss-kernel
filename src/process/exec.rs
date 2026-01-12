@@ -80,11 +80,7 @@ fn process_prog_headers<E: Endian>(
     hdr_addr
 }
 
-pub async fn kernel_exec(
-    inode: Arc<dyn Inode>,
-    argv: Vec<String>,
-    envp: Vec<String>,
-) -> Result<()> {
+async fn exec_elf(inode: Arc<dyn Inode>, argv: Vec<String>, envp: Vec<String>) -> Result<()> {
     // Read ELF header
     let mut buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
     inode.read_at(0, &mut buf).await?;
@@ -200,6 +196,60 @@ pub async fn kernel_exec(
     }
 
     Ok(())
+}
+
+async fn exec_script(
+    path: &Path,
+    inode: Arc<dyn Inode>,
+    argv: Vec<String>,
+    envp: Vec<String>,
+) -> Result<()> {
+    // Parse shebang line to get interpreter path and arguments
+    let mut buf = vec![0u8; 256];
+    let n = inode.read_at(0, &mut buf).await?;
+    let shebang_line =
+        core::str::from_utf8(&buf[..n]).map_err(|_| ExecError::InvalidScriptFormat)?;
+    let first_line = shebang_line
+        .lines()
+        .next()
+        .ok_or(ExecError::InvalidScriptFormat)?;
+    let parts: Vec<&str> = first_line[2..].split_whitespace().collect();
+    if parts.is_empty() {
+        return Err(ExecError::InvalidScriptFormat)?;
+    }
+    let interp_path = parts[0];
+    let interp_args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+    // Build new argv: [interpreter, interp_args..., script_path, original_argv...]
+    let mut new_argv = Vec::new();
+    new_argv.push(interp_path.to_string());
+    new_argv.extend(interp_args);
+    new_argv.push(path.as_str().to_string());
+    new_argv.extend(argv.into_iter().skip(1)); // Skip original argv[0]
+    // Resolve interpreter inode
+    let task = current_task_shared();
+    let interp_inode = VFS
+        .resolve_path(Path::new(interp_path), VFS.root_inode(), &task)
+        .await?;
+    // Execute interpreter
+    exec_elf(interp_inode, new_argv, envp).await?;
+    Ok(())
+}
+
+pub async fn kernel_exec(
+    path: &Path,
+    inode: Arc<dyn Inode>,
+    argv: Vec<String>,
+    envp: Vec<String>,
+) -> Result<()> {
+    let mut buf = [0u8; 4];
+    inode.read_at(0, &mut buf).await?;
+    if buf == [0x7F, b'E', b'L', b'F'] {
+        exec_elf(inode, argv, envp).await
+    } else if buf.starts_with(b"#!") {
+        exec_script(path, inode, argv, envp).await
+    } else {
+        Err(ExecError::InvalidElfFormat.into())
+    }
 }
 
 // Sets up the user stack according to the System V ABI.
@@ -383,7 +433,7 @@ pub async fn sys_execve(
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let inode = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
 
-    kernel_exec(inode, argv, envp).await?;
+    kernel_exec(path, inode, argv, envp).await?;
 
     Ok(0)
 }

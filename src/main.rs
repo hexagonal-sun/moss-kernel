@@ -167,7 +167,7 @@ async fn launch_init(mut opts: KOptions) {
 
     init_args.append(&mut opts.init_args);
 
-    process::exec::kernel_exec(inode, init_args, vec![])
+    process::exec::kernel_exec(init.as_path(), inode, init_args, vec![])
         .await
         .expect("Could not launch init process");
 }
