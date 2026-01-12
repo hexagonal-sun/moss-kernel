@@ -57,7 +57,7 @@ use crate::{
         },
         prctl::sys_prctl,
         ptrace::{TracePoint, ptrace_stop, sys_ptrace},
-        sleep::sys_nanosleep,
+        sleep::{sys_clock_nanosleep, sys_nanosleep},
         thread_group::{
             Pgid,
             pid::{sys_getpgid, sys_getpid, sys_getppid, sys_setpgid},
@@ -316,6 +316,14 @@ pub async fn handle_syscall() {
         0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
+        0x73 => {
+            sys_clock_nanosleep(
+                arg1 as _,
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+            )
+            .await
+        }
         0x75 => {
             sys_ptrace(
                 arg1 as _,
