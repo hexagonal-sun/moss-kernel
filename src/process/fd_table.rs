@@ -88,8 +88,8 @@ impl FileDescriptorTable {
         Ok(fd)
     }
 
-    // Insert the given etnry at the specified index. If there was an entry at
-    // that index `Some(entry)` is returned. Otherwise, `None` is returned.
+    /// Insert the given entry at the specified index. If there was an entry at
+    /// that index `Some(entry)` is returned. Otherwise, `None` is returned.
     fn insert_at(&mut self, fd: Fd, entry: FileDescriptorEntry) -> Option<FileDescriptorEntry> {
         let fd_idx = fd.0 as usize;
 
@@ -99,6 +99,29 @@ impl FileDescriptorTable {
         }
 
         self.entries[fd_idx].replace(entry)
+    }
+
+    /// Insert the given entry at or above the specified index, returning the
+    /// file descriptor used.
+    fn insert_above(&mut self, min_fd: Fd, file: Arc<OpenFile>) -> Result<Fd> {
+        let start_idx = min_fd.0 as usize;
+        let entry = FileDescriptorEntry {
+            file,
+            flags: FdFlags::default(),
+        };
+
+        for i in start_idx..self.entries.len() {
+            if self.entries[i].is_none() {
+                let fd = Fd(i as i32);
+                self.insert_at(fd, entry);
+                return Ok(fd);
+            }
+        }
+
+        // No free slot found, so we need to expand the table.
+        let fd = Fd(self.entries.len() as i32);
+        self.entries.push(Some(entry));
+        Ok(fd)
     }
 
     /// Removes a file descriptor from the table, returning the file if it

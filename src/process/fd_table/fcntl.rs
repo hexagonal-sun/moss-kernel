@@ -1,9 +1,9 @@
 use bitflags::Flags;
 use libkernel::error::{KernelError, Result};
 
-use crate::{process::fd_table::FdFlags, sched::current::current_task_shared};
-
 use super::Fd;
+use crate::process::fd_table::dup::dup_fd;
+use crate::{process::fd_table::FdFlags, sched::current::current_task_shared};
 
 const F_DUPFD: u32 = 0; // Duplicate file descriptor.
 const F_GETFD: u32 = 1; // Get file descriptor flags.
@@ -15,7 +15,7 @@ pub async fn sys_fcntl(fd: Fd, op: u32, arg: usize) -> Result<usize> {
     let task = current_task_shared();
 
     match op {
-        F_DUPFD => todo!(),
+        F_DUPFD => dup_fd(fd, Some(Fd(arg as i32))).map(|new_fd| new_fd.as_raw() as _),
         F_GETFD => {
             let fds = task.fd_table.lock_save_irq();
             let fd = fds
