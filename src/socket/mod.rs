@@ -4,6 +4,7 @@ mod tcp;
 mod unix;
 
 use crate::drivers::timer::now;
+use crate::memory::uaccess::copy_from_user;
 use crate::sync::OnceLock;
 use crate::sync::SpinLock;
 use alloc::vec;
@@ -22,14 +23,6 @@ fn sockets() -> &'static SpinLock<SocketSet<'static>> {
 }
 
 // static INTERFACE: OnceLock<SpinLock<EthernetInterface<OurDevice>>> = OnceLock::new();
-// static DHCP_CLIENT: OnceLock<SpinLock<Dhcpv4Client>> = OnceLock::new();
-
-static DHCP_ENABLED: OnceLock<bool> = OnceLock::new();
-
-#[expect(dead_code)]
-fn dhcp_enabled() -> bool {
-    *DHCP_ENABLED.get().unwrap()
-}
 
 static SOCKET_WAIT_QUEUE: OnceLock<SpinLock<WakerSet>> = OnceLock::new();
 
@@ -97,11 +90,7 @@ impl TryFrom<SockAddr> for IpEndpoint {
         match sockaddr {
             SockAddr::In(SockAddrIn { port, addr, .. }) => Ok(IpEndpoint {
                 port: u16::from_be_bytes(port),
-                addr: if u32::from_be_bytes(addr) == 0 {
-                    IpAddress::Ipv4(Ipv4Addr::UNSPECIFIED)
-                } else {
-                    IpAddress::Ipv4(Ipv4Addr::from(addr))
-                },
+                addr: IpAddress::Ipv4(Ipv4Addr::from(addr)),
             }),
             _ => Err(KernelError::InvalidValue),
         }
@@ -129,7 +118,7 @@ pub fn process_packets() {
     socket_wait_queue().lock_save_irq().wake_all();
 }
 
-pub fn parse_sockaddr(uaddr: UA, len: usize) -> Result<SockAddr, KernelError> {
+pub async fn parse_sockaddr(uaddr: UA, len: usize) -> Result<SockAddr, KernelError> {
     use crate::memory::uaccess::try_copy_from_user;
     use libkernel::memory::address::TUA;
 
@@ -138,7 +127,7 @@ pub fn parse_sockaddr(uaddr: UA, len: usize) -> Result<SockAddr, KernelError> {
         return Err(KernelError::InvalidValue);
     }
 
-    let family: u16 = try_copy_from_user(TUA::from_value(uaddr.value()))?;
+    let family: u16 = copy_from_user(TUA::from_value(uaddr.value())).await?;
 
     match family as i32 {
         AF_INET => {

@@ -10,7 +10,7 @@ pub async fn sys_bind(fd: Fd, addr: UA, addrlen: usize) -> libkernel::error::Res
         .ok_or(libkernel::error::KernelError::BadFd)?;
 
     let (ops, _ctx) = &mut *file.lock().await;
-    let addr = parse_sockaddr(addr, addrlen)?;
+    let addr = parse_sockaddr(addr, addrlen).await?;
 
     ops.as_socket()
         .ok_or(libkernel::error::KernelError::NotASocket)?
