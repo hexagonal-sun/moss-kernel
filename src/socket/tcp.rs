@@ -58,7 +58,7 @@ impl TcpSocket {
             None => return Err(KernelError::InvalidValue),
         };
 
-        for _ in 0..(self.num_backlogs.load(Ordering::SeqCst) - backlogs.len()) {
+        for _ in 0..(self.num_backlogs.load(Ordering::Relaxed) - backlogs.len()) {
             let socket = TcpSocket::new();
             sockets()
                 .lock_save_irq()
