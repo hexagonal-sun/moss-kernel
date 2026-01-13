@@ -1,4 +1,5 @@
 use crate::{
+    CpuOps,
     error::{FsError, Result},
     fs::{FileType, Filesystem, Inode, InodeId, attr::FileAttr, blk::buffer::BlockBuffer},
 };
@@ -71,16 +72,22 @@ impl Display for Cluster {
     }
 }
 
-pub struct Fat32Filesystem {
-    dev: BlockBuffer,
+pub struct Fat32Filesystem<CPU>
+where
+    CPU: CpuOps,
+{
+    dev: BlockBuffer<CPU>,
     bpb: BiosParameterBlock,
     fat: Fat,
     id: u64,
     this: Weak<Self>,
 }
 
-impl Fat32Filesystem {
-    pub async fn new(dev: BlockBuffer, id: u64) -> Result<Arc<Self>> {
+impl<CPU> Fat32Filesystem<CPU>
+where
+    CPU: CpuOps,
+{
+    pub async fn new(dev: BlockBuffer<CPU>, id: u64) -> Result<Arc<Self>> {
         let bpb = BiosParameterBlock::new(&dev).await?;
         let fat = Fat::read_fat(&dev, &bpb, 0).await?;
 
@@ -123,7 +130,10 @@ trait Fat32Operations: Send + Sync + 'static {
     fn iter_clusters(&self, root: Cluster) -> impl Iterator<Item = Result<Cluster>> + Send;
 }
 
-impl Fat32Operations for Fat32Filesystem {
+impl<CPU> Fat32Operations for Fat32Filesystem<CPU>
+where
+    CPU: CpuOps,
+{
     async fn read_sector(&self, sector: Sector, offset: usize, buf: &mut [u8]) -> Result<usize> {
         debug_assert!(offset < self.bpb.sector_size());
 
@@ -163,7 +173,10 @@ impl Fat32Operations for Fat32Filesystem {
 }
 
 #[async_trait]
-impl Filesystem for Fat32Filesystem {
+impl<CPU> Filesystem for Fat32Filesystem<CPU>
+where
+    CPU: CpuOps,
+{
     fn id(&self) -> u64 {
         self.id
     }
