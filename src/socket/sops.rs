@@ -85,10 +85,6 @@ where
         Err(KernelError::NotSupported)
     }
 
-    fn is_socket(&self) -> bool {
-        true
-    }
-
     fn as_socket(&mut self) -> Option<&mut dyn SocketOps> {
         Some(self)
     }
