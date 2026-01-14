@@ -1,3 +1,4 @@
+use crate::memory::uaccess::cstr::UserCStr;
 use crate::{
     arch::{Arch, ArchImpl},
     clock::{
@@ -417,6 +418,7 @@ pub async fn handle_syscall() {
         }
         0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0x70 => Ok(0), // clock_settime is a no-op
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
         0x73 => {
             sys_clock_nanosleep(
@@ -607,6 +609,7 @@ pub async fn handle_syscall() {
             .await
         }
         0x125 => Err(KernelError::NotSupported),
+        0x1ae => Err(KernelError::NotSupported),
         0x1b4 => sys_close_range(arg1.into(), arg2.into(), arg3 as _).await,
         0x1b7 => {
             sys_faccessat2(
