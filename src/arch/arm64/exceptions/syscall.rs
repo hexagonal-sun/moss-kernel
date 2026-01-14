@@ -27,7 +27,7 @@ use crate::{
             chdir::{sys_chdir, sys_chroot, sys_fchdir, sys_getcwd},
             chmod::sys_fchmod,
             chown::sys_fchown,
-            close::sys_close,
+            close::{sys_close, sys_close_range},
             getxattr::{sys_fgetxattr, sys_getxattr, sys_lgetxattr},
             ioctl::sys_ioctl,
             iov::{sys_preadv, sys_preadv2, sys_pwritev, sys_pwritev2, sys_readv, sys_writev},
@@ -586,6 +586,7 @@ pub async fn handle_syscall() {
             .await
         }
         0x125 => Err(KernelError::NotSupported),
+        0x1b4 => sys_close_range(arg1.into(), arg2.into(), arg3 as _).await,
         0x1b7 => {
             sys_faccessat2(
                 arg1.into(),
