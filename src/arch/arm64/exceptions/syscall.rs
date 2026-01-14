@@ -623,6 +623,7 @@ pub async fn handle_syscall() {
             .await
         }
         0x125 => Err(KernelError::NotSupported),
+        0x1ae => Err(KernelError::NotSupported),
         0x1b4 => sys_close_range(arg1.into(), arg2.into(), arg3 as _).await,
         0x1b7 => {
             sys_faccessat2(
