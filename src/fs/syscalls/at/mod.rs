@@ -12,6 +12,7 @@ use libkernel::{
 pub mod access;
 pub mod chmod;
 pub mod chown;
+pub mod handle;
 pub mod link;
 pub mod mkdir;
 pub mod open;

@@ -189,6 +189,9 @@ pub enum KernelError {
     #[error("Value out of range")]
     RangeError,
 
+    #[error("Operation not supported on transport endpoint")]
+    OpNotSupported,
+
     #[error("{0}")]
     Other(&'static str),
 }

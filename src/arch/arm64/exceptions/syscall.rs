@@ -9,6 +9,7 @@ use crate::{
                 access::{sys_faccessat, sys_faccessat2},
                 chmod::sys_fchmodat,
                 chown::sys_fchownat,
+                handle::sys_name_to_handle_at,
                 link::sys_linkat,
                 mkdir::sys_mkdirat,
                 open::sys_openat,
@@ -524,6 +525,7 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x108 => sys_name_to_handle_at(),
         0x10b => sys_syncfs(arg1.into()).await,
         0x10e => {
             sys_process_vm_readv(
