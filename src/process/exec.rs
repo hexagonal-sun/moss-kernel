@@ -195,6 +195,11 @@ async fn exec_elf(inode: Arc<dyn Inode>, argv: Vec<String>, envp: Vec<String>) -
         *current_task.process.signals.lock_save_irq() = SignalActionState::new_default();
     }
 
+    // Close all the CLOEXEC FDs.
+    let mut fd_table = current_task().fd_table.lock_save_irq().clone();
+    fd_table.close_cloexec_entries().await;
+    *current_task().fd_table.lock_save_irq() = fd_table;
+
     Ok(())
 }
 

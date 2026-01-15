@@ -115,9 +115,7 @@ pub async fn sys_clone(
         let files = if flags.contains(CloneFlags::CLONE_FILES) {
             current_task.fd_table.clone()
         } else {
-            Arc::new(SpinLock::new(
-                current_task.fd_table.lock_save_irq().clone_for_exec(),
-            ))
+            Arc::new(SpinLock::new(current_task.fd_table.lock_save_irq().clone()))
         };
 
         let cwd = if flags.contains(CloneFlags::CLONE_FS) {

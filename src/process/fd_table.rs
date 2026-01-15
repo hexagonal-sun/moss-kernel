@@ -45,6 +45,7 @@ pub struct FileDescriptorEntry {
     flags: FdFlags,
 }
 
+#[derive(Clone)]
 pub struct FileDescriptorTable {
     entries: Vec<Option<FileDescriptorEntry>>,
     next_fd_hint: usize,
@@ -140,27 +141,30 @@ impl FileDescriptorTable {
         None
     }
 
-    /// Creates a new `FileDescriptorTable` for a child process during `execve`.
-    /// It duplicates all file descriptors that do not have the `CLOEXEC` flag
-    /// set.
-    pub fn clone_for_exec(&self) -> Self {
-        let new_entries = self
+    /// Called during an `execve`; closes all FDs marked with `CLOEXEC` flag.
+    pub async fn close_cloexec_entries(&mut self) {
+        let fds_to_close = self
             .entries
             .iter()
-            .map(|entry| {
-                entry.as_ref().and_then(|e| {
-                    if !e.flags.contains(FdFlags::CLOEXEC) {
-                        Some(e.clone())
-                    } else {
-                        None
-                    }
-                })
+            .enumerate()
+            .filter_map(|(i, fd)| {
+                if let Some(fd) = fd
+                    && fd.flags.contains(FdFlags::CLOEXEC)
+                {
+                    Some(i)
+                } else {
+                    None
+                }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
-        Self {
-            entries: new_entries,
-            next_fd_hint: 0, // Recalculate hint on first use in new process.
+        for fd in fds_to_close {
+            if let Some(fd) = self.remove(Fd(fd as _))
+                && let Some(file) = Arc::into_inner(fd)
+            {
+                let (ops, ctx) = &mut *file.lock().await;
+                let _ = ops.release(ctx).await;
+            }
         }
     }
 
