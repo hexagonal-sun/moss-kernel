@@ -12,6 +12,7 @@ use libkernel::{
 
 use super::Tgid;
 use super::signal::SigId;
+use super::{Pgid, ThreadGroup};
 
 pub type PidT = i32;
 
@@ -113,6 +114,23 @@ fn do_wait(
                 None
             }
         })
+    } else if pid < -1 {
+        // Wait for any child whose process group ID matches abs(pid)
+        let target_pgid = Pgid((-pid) as u32);
+        state.iter().find_map(|(k, v)| {
+            if !v.matches_wait_flags(flags) {
+                return None;
+            }
+            if let Some(tg) = ThreadGroup::get(*k) {
+                if *tg.pgid.lock_save_irq() == target_pgid {
+                    Some(*k)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
     } else {
         state
             .get_key_value(&Tgid::from_pid_t(pid))
@@ -134,11 +152,6 @@ pub async fn sys_wait4(
     flags: u32,
     rusage: TUA<RUsage>,
 ) -> Result<usize> {
-    if pid < -1 {
-        // TODO: Funky waiting.
-        return Err(KernelError::NotSupported);
-    }
-
     let mut flags = WaitFlags::from_bits_retain(flags);
 
     if flags.contains_unknown_bits() {
