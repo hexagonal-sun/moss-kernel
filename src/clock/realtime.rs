@@ -18,5 +18,12 @@ pub fn date() -> Duration {
     }
 }
 
+pub fn set_date(duration: Duration) {
+    if let Some(now) = now() {
+        let mut epoch_info = EPOCH_DURATION.lock_save_irq();
+        *epoch_info = Some((duration, now));
+    }
+}
+
 // Represents a known duration since the epoch at the assoicated instant.
 static EPOCH_DURATION: SpinLock<Option<(Duration, Instant)>> = SpinLock::new(None);

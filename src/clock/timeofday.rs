@@ -1,5 +1,6 @@
 use super::timespec::TimeSpec;
-use crate::memory::uaccess::{UserCopyable, copy_to_user};
+use crate::clock::realtime::{date, set_date};
+use crate::memory::uaccess::{UserCopyable, copy_from_user, copy_to_user};
 use core::time::Duration;
 use libkernel::{error::Result, memory::address::TUA};
 
@@ -12,7 +13,7 @@ pub struct TimeZone {
 unsafe impl UserCopyable for TimeZone {}
 
 pub async fn sys_gettimeofday(tv: TUA<TimeSpec>, tz: TUA<TimeZone>) -> Result<usize> {
-    let time: TimeSpec = Duration::new(0, 0).into();
+    let time: TimeSpec = date().into();
 
     copy_to_user(tv, time).await?;
 
@@ -27,5 +28,12 @@ pub async fn sys_gettimeofday(tv: TUA<TimeSpec>, tz: TUA<TimeZone>) -> Result<us
         .await?;
     }
 
+    Ok(0)
+}
+
+pub async fn sys_settimeofday(tv: TUA<TimeSpec>, _tz: TUA<TimeZone>) -> Result<usize> {
+    let time: TimeSpec = copy_from_user(tv).await?;
+    let duration: Duration = time.into();
+    set_date(duration);
     Ok(0)
 }

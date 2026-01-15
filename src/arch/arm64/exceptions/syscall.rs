@@ -1,6 +1,9 @@
 use crate::{
     arch::{Arch, ArchImpl},
-    clock::{gettime::sys_clock_gettime, timeofday::sys_gettimeofday},
+    clock::{
+        gettime::sys_clock_gettime,
+        timeofday::{sys_gettimeofday, sys_settimeofday},
+    },
     fs::{
         dir::sys_getdents64,
         pipe::sys_pipe2,
@@ -473,6 +476,7 @@ pub async fn handle_syscall() {
         0xa6 => sys_umask(arg1 as _).map_err(|e| match e {}),
         0xa7 => sys_prctl(arg1 as _, arg2, arg3).await,
         0xa9 => sys_gettimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0xaa => sys_settimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xac => sys_getpid().map_err(|e| match e {}),
         0xad => sys_getppid().map_err(|e| match e {}),
         0xae => sys_getuid().map_err(|e| match e {}),
