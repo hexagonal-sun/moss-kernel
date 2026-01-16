@@ -127,7 +127,11 @@ impl Inode for ProcRootInode {
         let mut entries: Vec<Dirent> = Vec::new();
         // Gather task list under interrupt-safe lock.
         let task_list = TASK_LIST.lock_save_irq();
-        for (idx, desc) in task_list.keys().enumerate() {
+        for (idx, (desc, _)) in task_list
+            .iter()
+            .filter(|(_, task)| task.upgrade().is_some())
+            .enumerate()
+        {
             // Use offset index as dirent offset.
             let name = desc.tgid().value().to_string();
             let inode_id =
