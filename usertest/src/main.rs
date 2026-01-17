@@ -6,21 +6,45 @@ use std::{
     thread,
 };
 
-use futex_bitset::test_futex_bitset;
-use signals::{
-    test_interruptible_nanosleep, test_interruptible_read_pipe, test_interruptible_waitpid,
-};
-
-mod futex_bitset;
+mod futex;
 mod signals;
 
+pub struct Test {
+    pub test_text: &'static str,
+    pub test_fn: fn(),
+}
+
+inventory::collect!(Test);
+
+#[macro_export]
+macro_rules! register_test {
+    ($name:ident) => {
+        // Add to inventory
+        inventory::submit! {
+            crate::Test {
+                test_text: stringify!($name),
+                test_fn: $name,
+            }
+        }
+    };
+    ($name:ident, $text:expr) => {
+        // Add to inventory
+        inventory::submit! {
+            crate::Test {
+                test_text: $text,
+                test_fn: $name,
+            }
+        }
+    };
+}
+
 fn test_sync() {
-    print!("Testing sync syscall ...");
     unsafe {
         libc::sync();
     }
-    println!(" OK");
 }
+
+register_test!(test_sync, "Testing sync syscall");
 
 fn test_clock_sleep() {
     use std::thread::sleep;
@@ -28,15 +52,14 @@ fn test_clock_sleep() {
 
     const SLEEP_LEN: Duration = Duration::from_millis(100);
 
-    print!("Testing clock and sleep syscalls ...");
     let now = Instant::now();
     sleep(SLEEP_LEN);
     assert!(now.elapsed() >= SLEEP_LEN);
-    println!(" OK");
 }
 
+register_test!(test_clock_sleep, "Testing clock sleep");
+
 fn test_opendir() {
-    print!("Testing opendir syscall ...");
     let path = CString::new("/").unwrap();
     unsafe {
         let dir = libc::opendir(path.as_ptr());
@@ -45,11 +68,11 @@ fn test_opendir() {
         }
         libc::closedir(dir);
     }
-    println!(" OK");
 }
 
+register_test!(test_opendir, "Testing opendir syscall");
+
 fn test_readdir() {
-    print!("Testing readdir syscall ...");
     let path = CString::new("/").unwrap();
     unsafe {
         let dir = libc::opendir(path.as_ptr());
@@ -69,11 +92,11 @@ fn test_readdir() {
             panic!("readdir returned no entries");
         }
     }
-    println!(" OK");
 }
 
+register_test!(test_readdir, "Testing readdir syscall");
+
 fn test_chdir() {
-    print!("Testing chdir syscall ...");
     let path = CString::new("/dev").unwrap();
     let mut buffer = [1u8; 16];
     unsafe {
@@ -92,11 +115,11 @@ fn test_chdir() {
             panic!("chdir failed");
         }
     }
-    println!(" OK");
 }
 
+register_test!(test_chdir, "Testing chdir syscall");
+
 fn test_fchdir() {
-    print!("Testing fchdir syscall ...");
     let path = CString::new("/dev").unwrap();
     let mut buffer = [1u8; 16];
     unsafe {
@@ -120,11 +143,11 @@ fn test_fchdir() {
         }
         libc::close(fd);
     }
-    println!(" OK");
 }
 
+register_test!(test_fchdir, "Testing fchdir syscall");
+
 fn test_chroot() {
-    print!("Testing chroot syscall ...");
     let file = "/bin/busybox";
     let c_file = CString::new(file).unwrap();
     let path = CString::new("/dev").unwrap();
@@ -138,11 +161,11 @@ fn test_chroot() {
             }
         }
     }
-    println!(" OK");
 }
 
+register_test!(test_chroot, "Testing chroot syscall");
+
 fn test_chmod() {
-    print!("Testing chmod syscall ..."); // this actually tests fchmodat
     let dir_path = "/tmp/chmod_test";
     let c_dir_path = CString::new(dir_path).unwrap();
     let mut buffer = MaybeUninit::uninit();
@@ -162,11 +185,11 @@ fn test_chmod() {
         }
     }
     fs::remove_dir(dir_path).expect("Failed to delete directory");
-    println!(" OK");
 }
 
+register_test!(test_chmod, "Testing chmod syscall");
+
 fn test_fchmod() {
-    print!("Testing fchmod syscall ...");
     let dir_path = "/tmp/fchmod_test";
     let c_dir_path = CString::new(dir_path).unwrap();
     let mut buffer = MaybeUninit::uninit();
@@ -191,11 +214,11 @@ fn test_fchmod() {
         libc::close(fd);
     }
     fs::remove_dir(dir_path).expect("Failed to delete directory");
-    println!(" OK");
 }
 
+register_test!(test_fchmod, "Testing fchmod syscall");
+
 fn test_chown() {
-    print!("Testing chown syscall ..."); // this actually tests fchownat
     let dir_path = "/tmp/chown_test";
     let c_dir_path = CString::new(dir_path).unwrap();
     let mut buffer = MaybeUninit::uninit();
@@ -215,11 +238,11 @@ fn test_chown() {
         }
     }
     fs::remove_dir(dir_path).expect("Failed to delete directory");
-    println!(" OK");
 }
 
+register_test!(test_chown, "Testing chown syscall");
+
 fn test_fchown() {
-    print!("Testing fchown syscall ...");
     let dir_path = "/tmp/fchown_test";
     let c_dir_path = CString::new(dir_path).unwrap();
     let mut buffer = MaybeUninit::uninit();
@@ -244,11 +267,11 @@ fn test_fchown() {
         libc::close(fd);
     }
     fs::remove_dir(dir_path).expect("Failed to delete directory");
-    println!(" OK");
 }
 
+register_test!(test_fchown, "Testing fchown syscall");
+
 fn test_fork() {
-    print!("Testing fork syscall ...");
     unsafe {
         let pid = libc::fork();
         if pid < 0 {
@@ -262,11 +285,11 @@ fn test_fork() {
             libc::waitpid(pid, &mut status, 0);
         }
     }
-    println!(" OK");
 }
 
+register_test!(test_fork, "Testing fork syscall");
+
 fn test_read() {
-    print!("Testing read syscall ...");
     let file = "/dev/zero";
     let c_file = CString::new(file).unwrap();
     let mut buffer = [1u8; 16];
@@ -282,11 +305,11 @@ fn test_read() {
         libc::close(fd);
         assert!(buffer.iter().take(ret as usize).all(|&b| b == 0));
     }
-    println!(" OK");
 }
 
+register_test!(test_read, "Testing read syscall");
+
 fn test_write() {
-    print!("Testing write syscall ...");
     let file = "/dev/null";
     let c_file = CString::new(file).unwrap();
     let data = b"Hello, world!";
@@ -301,11 +324,11 @@ fn test_write() {
         }
         libc::close(fd);
     }
-    println!(" OK");
 }
 
+register_test!(test_write, "Testing write syscall");
+
 fn test_link() {
-    print!("Testing link syscall ..."); // actually tests linkat
     let path = "/tmp/link_test";
     let link = "/tmp/link_test_link";
     let c_path = CString::new(path).unwrap();
@@ -338,14 +361,14 @@ fn test_link() {
     }
     fs::remove_file(path).expect("Failed to delete file");
     fs::remove_file(link).expect("Failed to delete link");
-    println!(" OK");
 }
+
+register_test!(test_link, "Testing link syscall");
 
 fn test_symlink() {
     use std::fs::{self, File};
     use std::io::{Read, Write};
 
-    print!("Testing symlink syscall ..."); // actually tests symlinkat
     let path = "/tmp/symlink_test";
     let link = "/tmp/symlink_test_link";
     let c_path = CString::new(path).unwrap();
@@ -379,14 +402,14 @@ fn test_symlink() {
     }
     fs::remove_file(path).expect("Failed to delete file");
     fs::remove_file(link).expect("Failed to delete link");
-    println!(" OK");
 }
+
+register_test!(test_symlink, "Testing symlink syscall");
 
 fn test_rename() {
     use std::fs::{self, File};
     use std::io::{Read, Write};
 
-    print!("Testing rename syscall ...");
     let old_path = "/tmp/rename_test";
     let new_path = "/tmp/rename_test_new";
     let c_old_path = CString::new(old_path).unwrap();
@@ -415,49 +438,11 @@ fn test_rename() {
     }
 
     fs::remove_file(new_path).expect("Failed to delete file");
-    println!(" OK");
 }
 
-fn test_futex() {
-    print!("Testing futex syscall ...");
-    let mut futex_word: libc::c_uint = 0;
-    let addr = &mut futex_word as *mut libc::c_uint;
-    unsafe {
-        // FUTEX_WAKE should succeed (no waiters, returns 0)
-        let ret = libc::syscall(
-            libc::SYS_futex,
-            addr,
-            libc::FUTEX_WAKE,
-            1,
-            std::ptr::null::<libc::c_void>(),
-            std::ptr::null::<libc::c_void>(),
-            0,
-        );
-        if ret < 0 {
-            panic!("futex wake failed");
-        }
-
-        // FUTEX_WAIT with an *unexpected* value (1) should fail immediately and
-        // return -1 with errno = EAGAIN.  We just check the return value here
-        // to avoid blocking the test.
-        let ret2 = libc::syscall(
-            libc::SYS_futex,
-            addr,
-            libc::FUTEX_WAIT,
-            1u32, // expected value differs from actual (0)
-            std::ptr::null::<libc::c_void>(),
-            std::ptr::null::<libc::c_void>(),
-            0,
-        );
-        if ret2 != -1 {
-            panic!("futex wait did not error out as expected");
-        }
-    }
-    println!(" OK");
-}
+register_test!(test_rename, "Testing rename syscall");
 
 fn test_truncate() {
-    print!("Testing truncate syscall ...");
     use std::fs::{self, File};
     use std::io::{Read, Seek, Write};
 
@@ -479,11 +464,11 @@ fn test_truncate() {
     }
 
     fs::remove_file(path).expect("Failed to delete file");
-    println!(" OK");
 }
 
+register_test!(test_truncate, "Testing truncate syscall");
+
 fn test_ftruncate() {
-    print!("Testing ftruncate syscall ...");
     let file = "/tmp/ftruncate_test.txt";
     let c_file = CString::new(file).unwrap();
     let data = b"Hello, world!";
@@ -510,11 +495,11 @@ fn test_ftruncate() {
         libc::close(fd);
     }
     fs::remove_file(file).expect("Failed to delete file");
-    println!(" OK");
 }
 
+register_test!(test_ftruncate, "Testing ftruncate syscall");
+
 fn test_utimens() {
-    print!("Testing utimens syscall ...");
     let file = "/tmp/utimens_test";
     let c_file = CString::new(file).unwrap();
     let mut buffer = MaybeUninit::uninit();
@@ -568,8 +553,9 @@ fn test_utimens() {
         libc::close(fd);
     }
     fs::remove_file(file).expect("Failed to delete file");
-    println!(" OK");
 }
+
+register_test!(test_utimens, "Testing utimens syscall");
 
 fn test_statx() {
     #[repr(C)]
@@ -620,7 +606,6 @@ fn test_statx() {
         pub __pad1: i32,
     }
 
-    print!("Testing statx syscall ...");
     let file = "/tmp/statx_test";
     let c_file = CString::new(file).unwrap();
     let data = b"Hello, world!";
@@ -655,11 +640,11 @@ fn test_statx() {
         assert_eq!(statx.stx_size, data.len() as u64);
     }
     fs::remove_file(file).expect("Failed to delete file");
-    println!(" OK");
 }
 
+register_test!(test_statx, "Testing statx syscall");
+
 fn test_rust_file() {
-    print!("Testing rust file operations ...");
     use std::fs::{self, File};
     use std::io::{Read, Write};
 
@@ -677,11 +662,11 @@ fn test_rust_file() {
         assert_eq!(contents, "Hello, Rust!");
     }
     fs::remove_file(path).expect("Failed to delete file");
-    println!(" OK");
 }
 
+register_test!(test_rust_file, "Testing rust file operations");
+
 fn test_rust_dir() {
-    print!("Testing rust directory operations ...");
     use std::fs;
     use std::path::Path;
 
@@ -689,23 +674,21 @@ fn test_rust_dir() {
     fs::create_dir(dir_path).expect("Failed to create directory");
     assert!(Path::new(dir_path).exists());
     fs::remove_dir(dir_path).expect("Failed to delete directory");
-    println!(" OK");
 }
 
-fn test_rust_thread() {
-    print!("Testing rust threads ...");
+register_test!(test_rust_dir, "Testing rust directory operations");
 
+fn test_rust_thread() {
     let handle = thread::spawn(|| 24);
 
     assert_eq!(handle.join().unwrap(), 24);
-    println!(" OK");
 }
+
+register_test!(test_rust_thread, "Testing rust threads");
 
 fn test_rust_mutex() {
     const THREADS: usize = 32;
     const ITERS: usize = 1_000;
-
-    print!("Testing rust mutex ...");
 
     let mtx = Arc::new(Mutex::new(0usize));
     let barrier = Arc::new(Barrier::new(THREADS));
@@ -733,12 +716,11 @@ fn test_rust_mutex() {
     let final_val = *mtx.lock().unwrap();
 
     assert_eq!(final_val, THREADS * ITERS);
-
-    println!(" OK");
 }
 
+register_test!(test_rust_mutex, "Testing rust mutex");
+
 fn test_parking_lot_mutex_timeout() {
-    print!("Testing parking_lot mutex with timeout ...");
     use parking_lot::Mutex;
     use std::time::Duration;
     let mtx = Arc::new(Mutex::new(()));
@@ -752,11 +734,14 @@ fn test_parking_lot_mutex_timeout() {
     });
     handle.join().unwrap();
     drop(guard);
-    println!(" OK");
 }
 
+register_test!(
+    test_parking_lot_mutex_timeout,
+    "Testing parking_lot mutex with timeout"
+);
+
 fn test_thread_with_name() {
-    print!("Testing thread with name ...");
     let handle = thread::Builder::new()
         .name("test_thread".to_string())
         .spawn(|| {
@@ -765,8 +750,9 @@ fn test_thread_with_name() {
         })
         .unwrap();
     handle.join().unwrap();
-    println!(" OK");
 }
+
+register_test!(test_thread_with_name, "Testing thread with name");
 
 fn run_test(test_fn: fn()) {
     // Fork a new process to run the test
@@ -795,38 +781,11 @@ fn run_test(test_fn: fn()) {
 fn main() {
     println!("Running userspace tests ...");
     let start = std::time::Instant::now();
-    run_test(test_sync);
-    run_test(test_clock_sleep);
-    run_test(test_opendir);
-    run_test(test_readdir);
-    run_test(test_chdir);
-    run_test(test_fchdir);
-    run_test(test_chroot);
-    run_test(test_chmod);
-    run_test(test_fchmod);
-    run_test(test_chown);
-    run_test(test_fchown);
-    run_test(test_fork);
-    run_test(test_read);
-    run_test(test_write);
-    run_test(test_link);
-    run_test(test_symlink);
-    run_test(test_rename);
-    run_test(test_futex);
-    run_test(test_futex_bitset);
-    run_test(test_truncate);
-    run_test(test_ftruncate);
-    run_test(test_utimens);
-    run_test(test_statx);
-    run_test(test_rust_file);
-    run_test(test_rust_dir);
-    run_test(test_rust_thread);
-    run_test(test_rust_mutex);
-    run_test(test_parking_lot_mutex_timeout);
-    run_test(test_thread_with_name);
-    run_test(test_interruptible_nanosleep);
-    run_test(test_interruptible_read_pipe);
-    run_test(test_interruptible_waitpid);
+    for test in inventory::iter::<Test> {
+        print!("{} ...", test.test_text);
+        run_test(test.test_fn);
+        println!(" OK");
+    }
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
 }

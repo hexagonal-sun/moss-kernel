@@ -1,7 +1,9 @@
+use crate::register_test;
 use std::{
     ptr,
     sync::atomic::{AtomicBool, Ordering},
 };
+
 static SIGNAL_CAUGHT: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn signal_handler(_: libc::c_int) {
@@ -25,7 +27,7 @@ fn register_handler(signum: libc::c_int, restart: bool) {
     }
 }
 
-pub fn test_interruptible_nanosleep() {
+fn test_interruptible_nanosleep() {
     print!("Testing interruptible nanosleep (EINTR) ...");
 
     register_handler(libc::SIGALRM, false);
@@ -73,7 +75,12 @@ pub fn test_interruptible_nanosleep() {
     println!(" OK");
 }
 
-pub fn test_interruptible_read_pipe() {
+register_test!(
+    test_interruptible_nanosleep,
+    "Testing interruptible nanosleep"
+);
+
+fn test_interruptible_read_pipe() {
     print!("Testing interruptible read (pipe) ...");
 
     register_handler(libc::SIGALRM, false);
@@ -113,7 +120,12 @@ pub fn test_interruptible_read_pipe() {
     println!(" OK");
 }
 
-pub fn test_interruptible_waitpid() {
+register_test!(
+    test_interruptible_read_pipe,
+    "Testing interruptible read (pipe)"
+);
+
+fn test_interruptible_waitpid() {
     print!("Testing interruptible waitpid ...");
 
     register_handler(libc::SIGALRM, false);
@@ -158,3 +170,5 @@ pub fn test_interruptible_waitpid() {
     }
     println!(" OK");
 }
+
+register_test!(test_interruptible_waitpid, "Testing interruptible waitpid");

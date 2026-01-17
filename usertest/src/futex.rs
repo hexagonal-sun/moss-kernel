@@ -1,3 +1,4 @@
+use crate::register_test;
 use std::sync::{
     Arc,
     atomic::{AtomicU32, Ordering},
@@ -5,9 +6,45 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-pub fn test_futex_bitset() {
-    print!("Testing futex bitset ...");
+fn test_futex() {
+    let mut futex_word: libc::c_uint = 0;
+    let addr = &mut futex_word as *mut libc::c_uint;
+    unsafe {
+        // FUTEX_WAKE should succeed (no waiters, returns 0)
+        let ret = libc::syscall(
+            libc::SYS_futex,
+            addr,
+            libc::FUTEX_WAKE,
+            1,
+            std::ptr::null::<libc::c_void>(),
+            std::ptr::null::<libc::c_void>(),
+            0,
+        );
+        if ret < 0 {
+            panic!("futex wake failed");
+        }
 
+        // FUTEX_WAIT with an *unexpected* value (1) should fail immediately and
+        // return -1 with errno = EAGAIN.  We just check the return value here
+        // to avoid blocking the test.
+        let ret2 = libc::syscall(
+            libc::SYS_futex,
+            addr,
+            libc::FUTEX_WAIT,
+            1u32, // expected value differs from actual (0)
+            std::ptr::null::<libc::c_void>(),
+            std::ptr::null::<libc::c_void>(),
+            0,
+        );
+        if ret2 != -1 {
+            panic!("futex wait did not error out as expected");
+        }
+    }
+}
+
+register_test!(test_futex, "Testing futex");
+
+fn test_futex_bitset() {
     // Wait on bit 1, Wake on bit 1
     {
         let futex_word = Arc::new(AtomicU32::new(0));
@@ -175,6 +212,6 @@ pub fn test_futex_bitset() {
         }
         t.join().expect("Thread panicked");
     }
-
-    println!(" OK");
 }
+
+register_test!(test_futex_bitset, "Testing futex bitset");
