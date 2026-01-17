@@ -1,5 +1,5 @@
 use crate::clock::timespec::TimeSpec;
-use crate::memory::uaccess::copy_to_user;
+use crate::memory::uaccess::{UserCopyable, copy_to_user};
 use crate::sched::current::current_task_shared;
 use crate::sync::CondVar;
 use alloc::collections::btree_map::BTreeMap;
@@ -51,6 +51,26 @@ bitflags::bitflags! {
     }
 }
 
+// TODO: more fields needed for full compatibility
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SigInfo {
+    pub signo: i32,
+    pub code: i32,
+    pub errno: i32,
+}
+
+unsafe impl UserCopyable for SigInfo {}
+
+// si_code values for SIGCHLD
+const CLD_EXITED: i32 = 1;
+const CLD_KILLED: i32 = 2;
+const CLD_DUMPED: i32 = 3;
+const CLD_STOPPED: i32 = 4;
+const CLD_TRAPPED: i32 = 5;
+const CLD_CONTINUED: i32 = 6;
+
+#[derive(Clone, Copy, Debug)]
 pub enum ChildState {
     NormalExit { code: u32 },
     SignalExit { signal: SigId, core: bool },
@@ -146,6 +166,51 @@ fn do_wait(
     Some(state.remove_entry(&key).unwrap())
 }
 
+// Non-consuming wait finder to support WNOWAIT
+fn find_waitable(
+    state: &BTreeMap<Tgid, ChildState>,
+    pid: PidT,
+    flags: WaitFlags,
+) -> Option<(Tgid, ChildState)> {
+    let key = if pid == -1 {
+        state.iter().find_map(|(k, v)| {
+            if v.matches_wait_flags(flags) {
+                Some(*k)
+            } else {
+                None
+            }
+        })
+    } else if pid < -1 {
+        let target_pgid = Pgid((-pid) as u32);
+        state.iter().find_map(|(k, v)| {
+            if !v.matches_wait_flags(flags) {
+                return None;
+            }
+            if let Some(tg) = ThreadGroup::get(*k) {
+                if *tg.pgid.lock_save_irq() == target_pgid {
+                    Some(*k)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+    } else {
+        state
+            .get_key_value(&Tgid::from_pid_t(pid))
+            .and_then(|(k, v)| {
+                if v.matches_wait_flags(flags) {
+                    Some(*k)
+                } else {
+                    None
+                }
+            })
+    }?;
+
+    state.get(&key).map(|v| (key, *v))
+}
+
 pub async fn sys_wait4(
     pid: PidT,
     stat_addr: TUA<i32>,
@@ -237,4 +302,133 @@ pub async fn sys_wait4(
     }
 
     Ok(tgid.value() as _)
+}
+
+// idtype for waitid
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+pub enum IdType {
+    P_ALL = 0,
+    P_PID = 1,
+    P_PGID = 2,
+}
+
+pub async fn sys_waitid(
+    idtype: i32,
+    id: PidT,
+    infop: TUA<SigInfo>,
+    options: u32,
+    rusage: TUA<RUsage>,
+) -> Result<usize> {
+    let which = match idtype {
+        0 => IdType::P_ALL,
+        1 => IdType::P_PID,
+        2 => IdType::P_PGID,
+        _ => return Err(KernelError::InvalidValue),
+    };
+
+    let flags = WaitFlags::from_bits_retain(options);
+
+    if flags.contains_unknown_bits() {
+        return Err(KernelError::InvalidValue);
+    }
+
+    // Validate options subset allowed for waitid
+    if !flags
+        .difference(
+            WaitFlags::WNOHANG
+                | WaitFlags::WSTOPPED
+                | WaitFlags::WCONTINUED
+                | WaitFlags::WEXITED
+                | WaitFlags::WNOWAIT,
+        )
+        .is_empty()
+    {
+        return Err(KernelError::InvalidValue);
+    }
+
+    if !rusage.is_null() {
+        todo!();
+    }
+
+    // Map which/id to pid selection used by our wait helpers
+    let sel_pid: PidT = match which {
+        IdType::P_ALL => -1,
+        IdType::P_PID => id,
+        IdType::P_PGID => -id.abs(), // negative means select by PGID in helpers
+    };
+
+    let task = current_task_shared();
+    let child_proc_count = task.process.children.lock_save_irq().iter().count();
+
+    // Try immediate check if no children or WNOHANG
+    let child_state = if child_proc_count == 0 || flags.contains(WaitFlags::WNOHANG) {
+        let mut ret: Option<ChildState> = None;
+        task.process.child_notifiers.inner.update(|s| {
+            // Use non-consuming finder for WNOWAIT, else consume
+            ret = if flags.contains(WaitFlags::WNOWAIT) {
+                find_waitable(s, sel_pid, flags).map(|(_, state)| state)
+            } else {
+                do_wait(s, sel_pid, flags).map(|(_, state)| state)
+            };
+            WakeupType::None
+        });
+
+        match ret {
+            Some(ret) => ret,
+            None if child_proc_count == 0 => return Err(KernelError::NoChildProcess),
+            None => return Ok(0),
+        }
+    } else {
+        // Wait until a child matches; first find key, then remove conditionally
+        let (_, state) = task
+            .process
+            .child_notifiers
+            .inner
+            .wait_until(|s| {
+                if flags.contains(WaitFlags::WNOWAIT) {
+                    find_waitable(s, sel_pid, flags)
+                } else {
+                    do_wait(s, sel_pid, flags)
+                }
+            })
+            .await;
+        state
+    };
+
+    // Populate siginfo
+    if !infop.is_null() {
+        let mut siginfo = SigInfo {
+            signo: SigId::SIGCHLD.user_id() as i32,
+            code: 0,
+            errno: 0,
+        };
+        match child_state {
+            ChildState::NormalExit { code } => {
+                siginfo.code = CLD_EXITED;
+                siginfo.errno = code as i32;
+            }
+            ChildState::SignalExit { signal, core } => {
+                siginfo.code = if core { CLD_DUMPED } else { CLD_KILLED };
+                siginfo.errno = signal.user_id() as i32;
+            }
+            ChildState::Stop { signal } => {
+                siginfo.code = CLD_STOPPED;
+                siginfo.errno = signal.user_id() as i32;
+            }
+            ChildState::TraceTrap { signal, .. } => {
+                siginfo.code = CLD_TRAPPED;
+                siginfo.errno = signal.user_id() as i32;
+            }
+            ChildState::Continue => {
+                siginfo.code = CLD_CONTINUED;
+            }
+        }
+        copy_to_user(infop, siginfo).await?;
+    }
+
+    // If WNOWAIT was specified, don't consume the state; our helpers already honored that
+    // Return 0 on success
+    Ok(0)
 }
