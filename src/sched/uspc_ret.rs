@@ -251,7 +251,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                     while let Some(signal) = task.take_signal() {
                         let mut ptrace = task.ptrace.lock_save_irq();
                         if ptrace.trace_signal(signal, task.ctx.user()) {
-                            ptrace.notify_parent_of_trap(task.process.clone());
+                            ptrace.notify_tracer_of_trap(&task.process);
                             ptrace.set_waker(create_waker(task.descriptor()));
 
                             *task.state.lock_save_irq() = TaskState::Stopped;

@@ -1,5 +1,5 @@
 use super::owned::OwnedTask;
-use super::ptrace::PTrace;
+use super::ptrace::{PTrace, TracePoint, ptrace_stop};
 use super::{ctx::Context, thread_group::signal::SigSet};
 use crate::kernel::cpu_id::CpuId;
 use crate::memory::uaccess::copy_to_user;
@@ -54,6 +54,10 @@ pub async fn sys_clone(
     tls: usize,
 ) -> Result<usize> {
     let flags = CloneFlags::from_bits_truncate(flags);
+
+    // TODO: differentiate between `TracePoint::Fork`, `TracePoint::Clone` and
+    // `TracePoint::VFork`.
+    let should_trace_new_tsk = ptrace_stop(TracePoint::Fork).await;
 
     let new_task = {
         let current_task = current_task();
@@ -128,7 +132,7 @@ pub async fn sys_clone(
             Arc::new(SpinLock::new(current_task.root.lock_save_irq().clone()))
         };
 
-        let ptrace = if flags.contains(CloneFlags::CLONE_PTRACE) {
+        let ptrace = if flags.contains(CloneFlags::CLONE_PTRACE) || should_trace_new_tsk {
             current_task.ptrace.lock_save_irq().clone()
         } else {
             PTrace::new()
@@ -142,7 +146,14 @@ pub async fn sys_clone(
             ctx: Context::from_user_ctx(user_ctx),
             priority: current_task.priority,
             sig_mask: new_sigmask,
-            pending_signals: SigSet::empty(),
+            pending_signals: if should_trace_new_tsk {
+                // When we want to trace a new task through one of
+                // PTRACE_O_TRACE{FORK,VFORK,CLONE}, stop the child as soon as
+                // it is created.
+                SigSet::SIGSTOP
+            } else {
+                SigSet::empty()
+            },
             robust_list: None,
             child_tid_ptr: if !child_tidptr.is_null() {
                 Some(child_tidptr)

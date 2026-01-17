@@ -73,6 +73,7 @@ pub struct PTrace {
     break_points: TracePoint,
     state: Option<PTraceState>,
     waker: Option<Waker>,
+    tracer: Option<Arc<ThreadGroup>>,
     sysgood: bool,
 }
 
@@ -82,6 +83,7 @@ impl PTrace {
             state: None,
             break_points: TracePoint::empty(),
             waker: None,
+            tracer: None,
             sysgood: false,
         }
     }
@@ -146,7 +148,7 @@ impl PTrace {
     }
 
     /// Notify parents of a trap event.
-    pub fn notify_parent_of_trap(&self, process: Arc<ThreadGroup>) {
+    pub fn notify_tracer_of_trap(&self, me: &Arc<ThreadGroup>) {
         let Some(trap_signal) = (match self.state {
             // For non-signal trace events, we use SIGTRAP.
             Some(PTraceState::TracePointHit { hit_point, .. }) => match hit_point {
@@ -161,21 +163,16 @@ impl PTrace {
         };
 
         // Notify the parent that we have stopped (SIGCHLD).
-        if let Some(parent) = process
-            .parent
-            .lock_save_irq()
-            .as_ref()
-            .and_then(|p| p.upgrade())
-        {
-            parent.child_notifiers.child_update(
-                process.tgid,
+        if let Some(tracer) = self.tracer.as_ref() {
+            tracer.child_notifiers.child_update(
+                me.tgid,
                 ChildState::TraceTrap {
                     signal: trap_signal,
                     mask: self.calc_trace_point_mask(),
                 },
             );
 
-            parent
+            tracer
                 .pending_signals
                 .lock_save_irq()
                 .set_signal(SigId::SIGCHLD);
@@ -263,15 +260,15 @@ impl TryFrom<i32> for PtraceOperation {
     }
 }
 
-pub async fn ptrace_stop(point: TracePoint) {
+pub async fn ptrace_stop(point: TracePoint) -> bool {
     let task_sh = current_task_shared();
     {
         let mut ptrace = task_sh.ptrace.lock_save_irq();
 
         if ptrace.hit_trace_point(point, current_task().ctx.user()) {
-            ptrace.notify_parent_of_trap(task_sh.process.clone());
+            ptrace.notify_tracer_of_trap(&task_sh.process);
         } else {
-            return;
+            return false;
         }
     }
 
@@ -279,13 +276,13 @@ pub async fn ptrace_stop(point: TracePoint) {
         let mut ptrace = task_sh.ptrace.lock_save_irq();
 
         if matches!(ptrace.state, Some(PTraceState::Running)) {
-            Poll::Ready(())
+            Poll::Ready(true)
         } else {
             ptrace.set_waker(cx.waker().clone());
             Poll::Pending
         }
     })
-    .await;
+    .await
 }
 
 pub async fn sys_ptrace(op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> {
@@ -296,6 +293,12 @@ pub async fn sys_ptrace(op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> 
         let mut ptrace = current_task.ptrace.lock_save_irq();
 
         ptrace.state = Some(PTraceState::Running);
+        ptrace.tracer = current_task
+            .process
+            .parent
+            .lock_save_irq()
+            .as_ref()
+            .and_then(|x| x.upgrade());
 
         // Set default breakpoint for TraceMe.
         ptrace.break_points = TracePoint::Exec;
@@ -361,7 +364,7 @@ pub async fn sys_ptrace(op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> 
                     PTraceOptions::PTRACE_O_TRACEEXIT => {
                         ptrace.break_points.insert(TracePoint::Exit)
                     }
-                    PTraceOptions::PTRACE_O_TRACEFORK => {
+                    PTraceOptions::PTRACE_O_TRACEFORK | PTraceOptions::PTRACE_O_TRACEVFORK => {
                         ptrace.break_points.insert(TracePoint::Fork)
                     }
                     PTraceOptions::PTRACE_O_TRACEEXEC => {
