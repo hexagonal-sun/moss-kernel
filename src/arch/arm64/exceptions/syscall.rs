@@ -77,7 +77,7 @@ use crate::{
                 sigprocmask::sys_rt_sigprocmask,
             },
             umask::sys_umask,
-            wait::sys_wait4,
+            wait::{sys_wait4, sys_waitid},
         },
         threading::{futex::sys_futex, sys_set_robust_list, sys_set_tid_address},
     },
@@ -386,6 +386,16 @@ pub async fn handle_syscall() {
 
             // Don't process result on exit.
             return;
+        }
+        0x5f => {
+            sys_waitid(
+                arg1 as _,
+                arg2 as _,
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+            )
+            .await
         }
         0x60 => sys_set_tid_address(TUA::from_value(arg1 as _)),
         0x62 => {
