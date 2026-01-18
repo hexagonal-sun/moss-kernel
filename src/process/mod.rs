@@ -1,3 +1,4 @@
+use crate::drivers::timer::Instant;
 use crate::{
     arch::ArchImpl,
     kernel::cpu_id::CpuId,
@@ -13,6 +14,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use core::fmt::Display;
+use core::sync::atomic::AtomicUsize;
 use creds::Credentials;
 use fd_table::FileDescriptorTable;
 use libkernel::{
@@ -185,6 +187,9 @@ pub struct Task {
     pub state: Arc<SpinLock<TaskState>>,
     pub last_cpu: SpinLock<CpuId>,
     pub ptrace: SpinLock<PTrace>,
+    pub utime: AtomicUsize,
+    pub stime: AtomicUsize,
+    last_account: AtomicUsize,
 }
 
 impl Task {
@@ -267,6 +272,44 @@ impl Task {
                 }
             }
         }
+    }
+
+    pub fn update_utime(&self, now: Instant) {
+        let now = now.user_normalized();
+        let now = now.ticks() as usize;
+        let last_account = self
+            .last_account
+            .load(core::sync::atomic::Ordering::Relaxed);
+        let delta = now.saturating_sub(last_account);
+        self.utime
+            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
+        self.process
+            .utime
+            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
+        self.last_account
+            .store(now, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn update_stime(&self, now: Instant) {
+        let now = now.user_normalized();
+        let now = now.ticks() as usize;
+        let last_account = self
+            .last_account
+            .load(core::sync::atomic::Ordering::Relaxed);
+        let delta = now.saturating_sub(last_account);
+        self.stime
+            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
+        self.process
+            .stime
+            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
+        self.last_account
+            .store(now, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn reset_last_account(&self, now: Instant) {
+        let now = now.ticks() as usize;
+        self.last_account
+            .store(now, core::sync::atomic::Ordering::Relaxed);
     }
 }
 

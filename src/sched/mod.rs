@@ -264,6 +264,7 @@ impl SchedState {
         let mut needs_resched = self.force_resched;
 
         if let Some(current) = self.run_q.current_mut() {
+            current.update_accounting(Some(now_inst));
             // If the current task is IDLE, we always want to proceed to the
             // scheduler core to see if a real task has arrived.
             if current.is_idle_task() {
@@ -310,6 +311,8 @@ impl SchedState {
         // Update all context since the task has switched.
         if let Some(new_current) = self.run_q.current_mut() {
             ArchImpl::context_switch(new_current.t_shared.clone());
+            let now = now().unwrap();
+            new_current.reset_last_account(now);
             CUR_TASK_PTR.borrow_mut().set_current(&mut new_current.task);
         }
     }

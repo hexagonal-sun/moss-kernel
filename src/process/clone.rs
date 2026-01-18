@@ -10,6 +10,7 @@ use crate::{
 };
 use alloc::boxed::Box;
 use bitflags::bitflags;
+use core::sync::atomic::AtomicUsize;
 use libkernel::memory::address::TUA;
 use libkernel::{
     error::{KernelError, Result},
@@ -170,7 +171,11 @@ pub async fn sys_clone(
                 state: Arc::new(SpinLock::new(TaskState::Runnable)),
                 last_cpu: SpinLock::new(CpuId::this()),
                 ptrace: SpinLock::new(ptrace),
+                utime: AtomicUsize::new(0),
+                stime: AtomicUsize::new(0),
+                last_account: AtomicUsize::new(0),
             }),
+            in_syscall: false,
         }
     };
 

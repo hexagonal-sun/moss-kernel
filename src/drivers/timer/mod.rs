@@ -12,11 +12,54 @@ use core::{
 
 pub mod armv8_arch;
 
+const USER_HZ: u64 = 100;
+
 /// Represents a fixed point in monotonic time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Instant {
     ticks: u64,
     freq: u64,
+}
+
+impl Instant {
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
+
+    pub fn freq(&self) -> u64 {
+        self.freq
+    }
+
+    pub fn user_normalized(&self) -> Self {
+        // Userspace assumes everything runs at USER_HZ frequency.
+        if self.freq == USER_HZ {
+            *self
+        } else {
+            let ticks = (self.ticks as u128 * USER_HZ as u128) / self.freq as u128;
+            Self {
+                ticks: ticks as u64,
+                freq: USER_HZ,
+            }
+        }
+    }
+
+    pub fn from_user_normalized(ticks: u64) -> Self {
+        Self {
+            ticks,
+            freq: USER_HZ,
+        }
+    }
+}
+
+impl From<Instant> for Duration {
+    fn from(instant: Instant) -> Self {
+        let secs = instant.ticks / instant.freq;
+        let remaining_ticks = instant.ticks % instant.freq;
+
+        let nanos = ((remaining_ticks as u128 * 1_000_000_000) / instant.freq as u128) as u32;
+
+        Duration::new(secs, nanos)
+    }
 }
 
 impl Ord for Instant {
