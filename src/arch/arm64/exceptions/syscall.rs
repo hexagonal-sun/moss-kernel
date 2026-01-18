@@ -91,6 +91,8 @@ use libkernel::{
 };
 
 pub async fn handle_syscall() {
+    current_task().update_accounting(None);
+    current_task().in_syscall = true;
     ptrace_stop(TracePoint::SyscallEntry).await;
 
     let (nr, arg1, arg2, arg3, arg4, arg5, arg6) = {
@@ -615,4 +617,6 @@ pub async fn handle_syscall() {
 
     current_task().ctx.user_mut().x[0] = ret_val.cast_unsigned() as u64;
     ptrace_stop(TracePoint::SyscallExit).await;
+    current_task().update_accounting(None);
+    current_task().in_syscall = false;
 }

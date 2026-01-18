@@ -13,6 +13,7 @@ use super::{
     },
     threading::RobustListHead,
 };
+use crate::drivers::timer::{Instant, now};
 use crate::{
     arch::{Arch, ArchImpl},
     fs::DummyInode,
@@ -20,6 +21,7 @@ use crate::{
     sync::SpinLock,
 };
 use alloc::sync::Arc;
+use core::sync::atomic::AtomicUsize;
 use libkernel::{
     VirtualMemory,
     fs::pathbuf::PathBuf,
@@ -39,6 +41,7 @@ pub struct OwnedTask {
     pub robust_list: Option<TUA<RobustListHead>>,
     pub child_tid_ptr: Option<TUA<u32>>,
     pub t_shared: Arc<Task>,
+    pub in_syscall: bool,
 }
 
 unsafe impl Send for OwnedTask {}
@@ -77,6 +80,9 @@ impl OwnedTask {
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             last_cpu: SpinLock::new(CpuId::this()),
             ptrace: SpinLock::new(PTrace::new()),
+            utime: AtomicUsize::new(0),
+            stime: AtomicUsize::new(0),
+            last_account: AtomicUsize::new(0),
         };
 
         Self {
@@ -87,6 +93,7 @@ impl OwnedTask {
             robust_list: None,
             child_tid_ptr: None,
             t_shared: Arc::new(task),
+            in_syscall: false,
         }
     }
 
@@ -105,6 +112,9 @@ impl OwnedTask {
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             last_cpu: SpinLock::new(CpuId::this()),
             ptrace: SpinLock::new(PTrace::new()),
+            last_account: AtomicUsize::new(0),
+            utime: AtomicUsize::new(0),
+            stime: AtomicUsize::new(0),
         };
 
         Self {
@@ -118,6 +128,7 @@ impl OwnedTask {
             robust_list: None,
             child_tid_ptr: None,
             t_shared: Arc::new(task),
+            in_syscall: false,
         }
     }
 
@@ -154,5 +165,14 @@ impl OwnedTask {
                 .lock_save_irq()
                 .peek_signal(self.sig_mask)
         })
+    }
+
+    pub fn update_accounting(&self, curr_time: Option<Instant>) {
+        let now = curr_time.unwrap_or_else(|| now().unwrap());
+        if self.in_syscall {
+            self.update_stime(now);
+        } else {
+            self.update_utime(now);
+        }
     }
 }
