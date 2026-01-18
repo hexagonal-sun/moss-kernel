@@ -5,17 +5,12 @@ use libkernel::{
 
 use crate::{drivers::timer::uptime, memory::uaccess::copy_to_user};
 
-use super::{realtime::date, timespec::TimeSpec};
+use super::{realtime::date, timespec::TimeSpec, ClockId};
 
-pub type ClockId = i32;
-
-const CLOCK_MONOTONIC: ClockId = 0;
-const CLOCK_REALTIME: ClockId = 1;
-
-pub async fn sys_clock_gettime(clockid: ClockId, time_spec: TUA<TimeSpec>) -> Result<usize> {
-    let time = match clockid {
-        CLOCK_MONOTONIC => uptime(),
-        CLOCK_REALTIME => date(),
+pub async fn sys_clock_gettime(clockid: i32, time_spec: TUA<TimeSpec>) -> Result<usize> {
+    let time = match ClockId::try_from(clockid).map_err(|_| KernelError::InvalidValue)? {
+        ClockId::Monotonic => uptime(),
+        ClockId::Realtime => date(),
         _ => return Err(KernelError::InvalidValue),
     };
 
