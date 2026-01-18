@@ -189,7 +189,7 @@ pub struct Task {
     pub ptrace: SpinLock<PTrace>,
     pub utime: AtomicUsize,
     pub stime: AtomicUsize,
-    last_account: AtomicUsize,
+    pub last_account: AtomicUsize,
 }
 
 impl Task {
@@ -307,7 +307,10 @@ impl Task {
     }
 
     pub fn reset_last_account(&self, now: Instant) {
+        let now = now.user_normalized();
         let now = now.ticks() as usize;
+        self.last_account
+            .store(now, core::sync::atomic::Ordering::Relaxed);
         self.last_account
             .store(now, core::sync::atomic::Ordering::Relaxed);
     }

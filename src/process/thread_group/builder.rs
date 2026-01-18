@@ -83,6 +83,7 @@ impl ThreadGroupBuilder {
             priority: SpinLock::new(self.pri.unwrap_or(0)),
             utime: AtomicUsize::new(0),
             stime: AtomicUsize::new(0),
+            last_account: AtomicUsize::new(0),
             // Don't start from '0'. Since clone expects the parent to return
             // the tid and the child to return '0', if we started from '0' we
             // couldn't then differentiate between a child and a parent.
