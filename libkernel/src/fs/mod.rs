@@ -322,3 +322,78 @@ pub trait Inode: Send + Sync + Any {
         Ok(())
     }
 }
+
+/// A simplified trait for read-only files in procfs/sysfs that provides default implementations
+/// for common inode operations.
+#[async_trait]
+pub trait SimpleFile {
+    fn id(&self) -> InodeId;
+    async fn getattr(&self) -> Result<FileAttr>;
+    async fn read(&self) -> Result<Vec<u8>>;
+    async fn readlink(&self) -> Result<PathBuf> {
+        Err(KernelError::NotSupported)
+    }
+}
+
+#[async_trait]
+impl<T> Inode for T
+where
+    T: SimpleFile + Send + Sync + 'static,
+{
+    fn id(&self) -> InodeId {
+        self.id()
+    }
+
+    async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
+        let bytes = self.read().await?;
+        let end = usize::min(bytes.len().saturating_sub(offset as usize), buf.len());
+        if end == 0 {
+            return Ok(0);
+        }
+        let slice = &bytes[offset as usize..offset as usize + end];
+        buf[..end].copy_from_slice(slice);
+        Ok(end)
+    }
+
+    async fn getattr(&self) -> Result<FileAttr> {
+        self.getattr().await
+    }
+
+    async fn lookup(&self, _name: &str) -> Result<Arc<dyn Inode>> {
+        Err(FsError::NotADirectory.into())
+    }
+
+    async fn readdir(&self, _start_offset: u64) -> crate::error::Result<Box<dyn DirStream>> {
+        Err(FsError::NotADirectory.into())
+    }
+
+    async fn readlink(&self) -> Result<PathBuf> {
+        self.readlink().await
+    }
+}
+
+pub struct SimpleDirStream {
+    entries: Vec<Dirent>,
+    idx: usize,
+}
+
+impl SimpleDirStream {
+    pub fn new(entries: Vec<Dirent>, start_offset: u64) -> Self {
+        Self {
+            entries,
+            idx: start_offset as usize,
+        }
+    }
+}
+
+#[async_trait]
+impl DirStream for SimpleDirStream {
+    async fn next_entry(&mut self) -> Result<Option<Dirent>> {
+        Ok(if let Some(entry) = self.entries.get(self.idx).cloned() {
+            self.idx += 1;
+            Some(entry)
+        } else {
+            None
+        })
+    }
+}
