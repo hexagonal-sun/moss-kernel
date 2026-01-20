@@ -13,7 +13,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 use current::{CUR_TASK_PTR, current_task};
 use libkernel::{UserAddressSpace, error::Result};
-use log::warn;
+use log::{info, warn};
 use runqueue::{RunQueue, SwitchResult};
 use sched_task::SchedulableTask;
 
@@ -290,6 +290,12 @@ impl SchedState {
 
         // Select Next Task.
         let next_task_desc = self.run_q.find_next_runnable_desc(self.vclock);
+        
+        if let Some(ref current) = self.run_q.current() {
+             if next_task_desc != current.descriptor() {
+                 info!("Scheduling: {:?} -> {:?}", current.descriptor(), next_task_desc);
+             }
+        }
 
         match self.run_q.switch_tasks(next_task_desc, now_inst) {
             SwitchResult::AlreadyRunning => {

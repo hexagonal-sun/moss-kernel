@@ -52,7 +52,10 @@ use libkernel::{
 
 //pub mod bcm2835_aux;
 pub mod imx_lp;
+#[cfg(target_arch = "x86_64")]
+pub mod x86_uart;
 pub mod pl011;
+
 
 /// A trait for low-level, hardware-specific UART drivers.
 ///

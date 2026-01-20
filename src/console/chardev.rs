@@ -61,6 +61,7 @@ struct ConsoleCharDev {
 
 impl ConsoleCharDev {
     pub fn new() -> Result<Self> {
+        log::info!("Creating /dev/console node...");
         devfs().mknod(
             "console".to_string(),
             CharDevDescriptor {
@@ -70,6 +71,7 @@ impl ConsoleCharDev {
             FilePermissions::from_bits_retain(0o600),
         )?;
 
+        log::info!("Creating /dev/tty node...");
         devfs().mknod(
             "tty".to_string(),
             CharDevDescriptor {
@@ -97,6 +99,7 @@ impl CharDriver for ConsoleCharDev {
 }
 
 pub fn console_chardev_init(_bus: &mut PlatformBus, dm: &mut DriverManager) -> Result<()> {
+    log::info!("Initializing console chardev...");
     let ccd = ConsoleCharDev::new()?;
 
     dm.register_char_driver(ReservedMajors::Console as _, Arc::new(ccd))?;

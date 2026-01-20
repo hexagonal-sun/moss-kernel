@@ -36,7 +36,7 @@ impl FilesystemDriver for Ext4FsDriver {
         match device {
             Some(dev) => Ok(Ext4Filesystem::<ArchImpl>::new(BlockBuffer::new(dev), fs_id).await?),
             None => {
-                warn!("Could not mount fat32 fs with no block device");
+                warn!("Could not mount ext4fs fs with no block device");
                 Err(KernelError::InvalidValue)
             }
         }

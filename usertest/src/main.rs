@@ -151,6 +151,25 @@ fn test_thread_with_name() {
 
 register_test!(test_thread_with_name, "Testing thread with name");
 
+#[cfg(target_arch = "x86_64")]
+fn test_raw_syscall() {
+    let ret: i64;
+    unsafe {
+       core::arch::asm!(
+           "syscall",
+           in("rax") 39, // getpid
+           lateout("rax") ret,
+           out("rcx") _,
+           out("r11") _,
+           options(nostack, preserves_flags)
+       );
+    }
+    assert!(ret > 0);
+}
+
+#[cfg(target_arch = "x86_64")]
+register_test!(test_raw_syscall, "Testing raw syscall instruction");
+
 fn run_test(test_fn: fn()) {
     // Fork a new process to run the test
     unsafe {

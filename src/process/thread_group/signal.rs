@@ -15,7 +15,7 @@ pub mod ksigaction;
 pub mod sigaction;
 pub mod sigaltstack;
 pub mod sigprocmask;
-mod uaccess;
+pub mod uaccess;
 
 bitflags! {
     #[repr(C)]
