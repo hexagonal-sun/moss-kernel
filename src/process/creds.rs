@@ -1,5 +1,6 @@
 use core::convert::Infallible;
 
+use crate::process::thread_group::Sid;
 use crate::{
     memory::uaccess::{UserCopyable, copy_to_user},
     sched::current::current_task,
@@ -127,4 +128,19 @@ pub async fn sys_getresgid(rgid: TUA<Gid>, egid: TUA<Gid>, sgid: TUA<Gid>) -> Re
     copy_to_user(sgid, creds.sgid).await?;
 
     Ok(0)
+}
+
+pub async fn sys_getsid() -> Result<usize> {
+    let sid: u32 = current_task().process.sid.lock_save_irq().value();
+
+    Ok(sid as _)
+}
+
+pub async fn sys_setsid() -> Result<usize> {
+    let process = current_task().process.clone();
+
+    let new_sid = process.tgid.value();
+    *process.sid.lock_save_irq() = Sid(new_sid);
+
+    Ok(new_sid as _)
 }
