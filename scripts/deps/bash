@@ -13,7 +13,7 @@ fi
 pushd "build" &>/dev/null || exit 1
 
 if [ ! -d "bash-5.3" ]; then
-    wget https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
+    wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 10 https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
     tar xzf bash-5.3.tar.gz
 fi
 

@@ -221,8 +221,15 @@ where
         Ok(total_written)
     }
 
-    async fn truncate(&self, _size: u64) -> Result<()> {
-        Err(KernelError::NotSupported)
+    async fn truncate(&self, size: u64) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if inner.metadata.file_type != ext4_view::FileType::Regular {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        let mut file = File::open_inode(&fs.inner, inner.clone())?;
+        file.truncate(size).await?;
+        Ok(())
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
