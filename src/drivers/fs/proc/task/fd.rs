@@ -80,6 +80,7 @@ impl Inode for ProcFdInode {
                 continue;
             }
             let fd_str = fd.to_string();
+            let next_offset = (entries.len() + 1) as u64;
             entries.push(Dirent {
                 id: InodeId::from_fsid_and_inodeid(
                     self.id.fs_id(),
@@ -89,7 +90,7 @@ impl Inode for ProcFdInode {
                         &fd_str,
                     ]),
                 ),
-                offset: fd as _,
+                offset: next_offset,
                 file_type: FileType::File,
                 name: fd_str,
             });

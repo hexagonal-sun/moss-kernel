@@ -22,10 +22,11 @@ pub struct ProcTaskInode {
     id: InodeId,
     attr: FileAttr,
     desc: TaskDescriptor,
+    is_task_dir: bool,
 }
 
 impl ProcTaskInode {
-    pub fn new(desc: TaskDescriptor, inode_id: InodeId) -> Self {
+    pub fn new(desc: TaskDescriptor, is_task_dir: bool, inode_id: InodeId) -> Self {
         Self {
             id: inode_id,
             attr: FileAttr {
@@ -34,6 +35,7 @@ impl ProcTaskInode {
                 ..FileAttr::default()
             },
             desc,
+            is_task_dir,
         }
     }
 }
@@ -54,7 +56,10 @@ impl Inode for ProcTaskInode {
             return Ok(Arc::new(fd::ProcFdInode::new(self.desc, true, inode_id)));
         } else if name == "fd" {
             return Ok(Arc::new(fd::ProcFdInode::new(self.desc, false, inode_id)));
-        } else if name == "task" && self.desc.tid().value() == self.desc.tgid().value() {
+        } else if name == "task"
+            && self.desc.tid().value() == self.desc.tgid().value()
+            && !self.is_task_dir
+        {
             return Ok(Arc::new(task::ProcTaskDirInode::new(
                 self.desc.tgid(),
                 inode_id,
@@ -64,6 +69,7 @@ impl Inode for ProcTaskInode {
             Ok(Arc::new(ProcTaskFileInode::new(
                 self.desc.tid(),
                 file_type,
+                self.is_task_dir,
                 inode_id,
             )))
         } else {
@@ -120,7 +126,7 @@ impl Inode for ProcTaskInode {
             FileType::Directory,
             7,
         ));
-        if self.desc.tid().value() == self.desc.tgid().value() {
+        if self.desc.tid().value() == self.desc.tgid().value() && !self.is_task_dir {
             entries.push(Dirent::new(
                 "task".to_string(),
                 InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "task"])),

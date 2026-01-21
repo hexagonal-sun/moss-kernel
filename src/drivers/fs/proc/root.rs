@@ -57,6 +57,7 @@ impl Inode for ProcRootInode {
 
         Ok(Arc::new(ProcTaskInode::new(
             desc,
+            false,
             InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[name])),
         )))
     }
@@ -73,15 +74,17 @@ impl Inode for ProcRootInode {
             .iter()
             .filter(|(_, task)| task.upgrade().is_some())
         {
-            // Use offset index as dirent offset.
             let name = desc.tgid().value().to_string();
-            let inode_id =
-                InodeId::from_fsid_and_inodeid(PROCFS_ID, ((desc.tgid().0 + 1) * 100) as u64);
+            let inode_id = InodeId::from_fsid_and_inodeid(
+                PROCFS_ID,
+                get_inode_id(&[&desc.tgid().value().to_string()]),
+            );
+            let next_offset = (entries.len() + 1) as u64;
             entries.push(Dirent::new(
                 name,
                 inode_id,
                 FileType::Directory,
-                get_inode_id(&[&desc.tgid().value().to_string()]),
+                next_offset,
             ));
         }
         let current_task = current_task();
@@ -90,6 +93,15 @@ impl Inode for ProcRootInode {
             InodeId::from_fsid_and_inodeid(
                 PROCFS_ID,
                 get_inode_id(&[&current_task.descriptor().tgid().value().to_string()]),
+            ),
+            FileType::Directory,
+            (entries.len() + 1) as u64,
+        ));
+        entries.push(Dirent::new(
+            "thread-self".to_string(),
+            InodeId::from_fsid_and_inodeid(
+                PROCFS_ID,
+                get_inode_id(&[&current_task.descriptor().tid().value().to_string()]),
             ),
             FileType::Directory,
             (entries.len() + 1) as u64,

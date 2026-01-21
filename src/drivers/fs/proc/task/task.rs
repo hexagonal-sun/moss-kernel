@@ -53,7 +53,7 @@ impl Inode for ProcTaskDirInode {
         );
         let desc = TaskDescriptor::from_tgid_tid(self.tgid, tid);
         find_task_by_descriptor(&desc).ok_or(FsError::NotFound)?;
-        Ok(Arc::new(ProcTaskInode::new(desc, inode_id)))
+        Ok(Arc::new(ProcTaskInode::new(desc, true, inode_id)))
     }
 
     async fn readdir(&self, start_offset: u64) -> libkernel::error::Result<Box<dyn DirStream>> {

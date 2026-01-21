@@ -14,6 +14,7 @@ pub enum TaskFileType {
     Status,
     Comm,
     Cwd,
+    Root,
     State,
     Stat,
 }
@@ -28,6 +29,7 @@ impl TryFrom<&str> for TaskFileType {
             "state" => Ok(TaskFileType::State),
             "stat" => Ok(TaskFileType::Stat),
             "cwd" => Ok(TaskFileType::Cwd),
+            "root" => Ok(TaskFileType::Root),
             _ => Err(()),
         }
     }
@@ -38,10 +40,11 @@ pub struct ProcTaskFileInode {
     file_type: TaskFileType,
     attr: FileAttr,
     tid: Tid,
+    process_stats: bool,
 }
 
 impl ProcTaskFileInode {
-    pub fn new(tid: Tid, file_type: TaskFileType, inode_id: InodeId) -> Self {
+    pub fn new(tid: Tid, file_type: TaskFileType, process_stats: bool, inode_id: InodeId) -> Self {
         Self {
             id: inode_id,
             attr: FileAttr {
@@ -50,11 +53,12 @@ impl ProcTaskFileInode {
                     | TaskFileType::Comm
                     | TaskFileType::State
                     | TaskFileType::Stat => FileType::File,
-                    TaskFileType::Cwd => FileType::Symlink,
+                    TaskFileType::Cwd | TaskFileType::Root => FileType::Symlink,
                 },
                 mode: FilePermissions::from_bits_retain(0o444),
                 ..FileAttr::default()
             },
+            process_stats,
             tid,
             file_type,
         }
@@ -119,8 +123,15 @@ Threads:\t{tasks}\n",
                     output.push_str(&format!("{} ", 0)); // cminflt
                     output.push_str(&format!("{} ", 0)); // majflt
                     output.push_str(&format!("{} ", 0)); // cmajflt
-                    output.push_str(&format!("{} ", task.process.utime.load(Ordering::Relaxed))); // utime
-                    output.push_str(&format!("{} ", task.process.stime.load(Ordering::Relaxed))); // stime
+                    if self.process_stats {
+                        output
+                            .push_str(&format!("{} ", task.process.utime.load(Ordering::Relaxed))); // utime
+                        output
+                            .push_str(&format!("{} ", task.process.stime.load(Ordering::Relaxed))); // stime
+                    } else {
+                        output.push_str(&format!("{} ", task.utime.load(Ordering::Relaxed))); // utime
+                        output.push_str(&format!("{} ", task.stime.load(Ordering::Relaxed))); // stime
+                    }
                     output.push_str(&format!("{} ", 0)); // cutime
                     output.push_str(&format!("{} ", 0)); // cstime
                     output.push_str(&format!("{} ", *task.process.priority.lock_save_irq())); // priority
@@ -162,6 +173,7 @@ Threads:\t{tasks}\n",
                     output
                 }
                 TaskFileType::Cwd => task.cwd.lock_save_irq().clone().1.as_str().to_string(),
+                TaskFileType::Root => task.root.lock_save_irq().1.as_str().to_string(),
             }
         } else {
             "State:\tGone\n".to_string()
@@ -173,15 +185,38 @@ Threads:\t{tasks}\n",
         if let TaskFileType::Cwd = self.file_type {
             let tid = self.tid;
             let task_list = TASK_LIST.lock_save_irq();
-            let id = task_list.iter().find(|(desc, _)| desc.tid() == tid);
-            let task_details = if let Some((desc, _)) = id {
-                find_task_by_descriptor(desc)
+            let id = task_list
+                .iter()
+                .find(|(desc, _)| desc.tid() == tid)
+                .map(|(desc, _)| *desc);
+            drop(task_list);
+            let task_details = if let Some(desc) = id {
+                find_task_by_descriptor(&desc)
             } else {
                 None
             };
             return if let Some(task) = task_details {
                 let cwd = task.cwd.lock_save_irq();
                 Ok(cwd.1.clone())
+            } else {
+                Err(FsError::NotFound.into())
+            };
+        } else if let TaskFileType::Root = self.file_type {
+            let tid = self.tid;
+            let task_list = TASK_LIST.lock_save_irq();
+            let id = task_list
+                .iter()
+                .find(|(desc, _)| desc.tid() == tid)
+                .map(|(desc, _)| *desc);
+            drop(task_list);
+            let task_details = if let Some(desc) = id {
+                find_task_by_descriptor(&desc)
+            } else {
+                None
+            };
+            return if let Some(task) = task_details {
+                let root = task.root.lock_save_irq();
+                Ok(root.1.clone())
             } else {
                 Err(FsError::NotFound.into())
             };

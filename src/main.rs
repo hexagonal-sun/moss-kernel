@@ -134,8 +134,8 @@ async fn launch_init(mut opts: KOptions) {
 
     // Now that the root fs has been mounted, set the real root inode as the
     // cwd and root.
-    *task.cwd.lock_save_irq() = (VFS.root_inode(), PathBuf::new());
-    *task.root.lock_save_irq() = (VFS.root_inode(), PathBuf::new());
+    *task.cwd.lock_save_irq() = (VFS.root_inode(), PathBuf::from("/"));
+    *task.root.lock_save_irq() = (VFS.root_inode(), PathBuf::from("/"));
 
     let console = VFS
         .open(
