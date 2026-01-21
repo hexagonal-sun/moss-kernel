@@ -8,6 +8,7 @@ pub mod getxattr;
 pub mod ioctl;
 pub mod iov;
 pub mod listxattr;
+pub mod mount;
 pub mod open;
 pub mod removexattr;
 pub mod rw;
