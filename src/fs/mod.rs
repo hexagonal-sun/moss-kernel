@@ -79,6 +79,13 @@ impl VfsState {
         self.mounts.insert(mount_point_id, mount);
     }
 
+    /// Removes a mount point by its inode ID.
+    fn remove_mount(&mut self, mount_point_id: &InodeId) -> Option<()> {
+        let mount = self.mounts.remove(mount_point_id)?;
+        self.filesystems.remove(&mount.fs.id())?;
+        Some(())
+    }
+
     /// Checks if an inode is a mount point and returns the root inode of the
     /// mounted filesystem if it is.
     fn get_mount_root(&self, inode_id: &InodeId) -> Option<Arc<dyn Inode>> {
@@ -173,6 +180,19 @@ impl VFS {
         self.state
             .lock_save_irq()
             .add_mount(mount_point_id, new_mount);
+
+        Ok(())
+    }
+
+    #[expect(unused)]
+    pub async fn unmount(&self, mount_point: Arc<dyn Inode>) -> Result<()> {
+        let mount_point_id = mount_point.id();
+
+        // Lock the state and remove the mount.
+        self.state
+            .lock_save_irq()
+            .remove_mount(&mount_point_id)
+            .ok_or(FsError::NotFound)?;
 
         Ok(())
     }
