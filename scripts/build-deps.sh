@@ -8,30 +8,10 @@ rm -f "$base/build/bin"/*
 
 pushd "$base/build" &>/dev/null || exit 1
 
-ARCH="${ARCH:-}"
-TARGET_ARCH="${TARGET_ARCH:-}"
-
-if [ -z "$ARCH" ]; then
-    ARCH="$(uname -m)"
-fi
-
-if [ -z "$TARGET_ARCH" ]; then
-    TARGET_ARCH="$ARCH"
-fi
-
-if [ "$TARGET_ARCH" == 'aarch64' ]; then
-    MUSL_ARCH="aarch64"
-elif [ "$TARGET_ARCH" == 'x86_64' ]; then
-    MUSL_ARCH="x86_64"
+if [ "$(uname -m)" == 'aarch64' ]; then
+    MUSL_CC="aarch64-linux-musl-native"
 else
-    echo "Unsupported architecture: $TARGET_ARCH"
-    exit 1
-fi
-
-if [ "$(uname -m)" == 'aarch64' ] && [ "$MUSL_ARCH" == 'aarch64' ]; then
-    MUSL_CC="${MUSL_ARCH}-linux-musl-native"
-else
-    MUSL_CC="${MUSL_ARCH}-linux-musl-cross"
+    MUSL_CC="aarch64-linux-musl-cross"
 fi
 
 # Decide download source by checking musl.cc reachability first
@@ -57,8 +37,7 @@ popd &>/dev/null || exit 1
 
 build=${build:-$(ls $base/scripts/deps)}
 
-export CC="$base/build/${MUSL_CC}/bin/${MUSL_ARCH}-linux-musl-gcc"
-export TARGET_ARCH="$MUSL_ARCH"
+export CC="$base/build/${MUSL_CC}/bin/aarch64-linux-musl-gcc"
 
 for script in "$base/scripts/deps/"*
 do
