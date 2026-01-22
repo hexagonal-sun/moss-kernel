@@ -1,5 +1,5 @@
 [build]
-target = "x86_64-unknown-none"
+target = "aarch64-unknown-none-softfloat"
 
-[target.x86_64-unknown-none]
-runner = "scripts/qemu-runner-x86_64.sh"
+[target.aarch64-unknown-none-softfloat]
+runner = "scripts/qemu-runner.sh"

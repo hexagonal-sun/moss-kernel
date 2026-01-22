@@ -13,8 +13,6 @@ use alloc::{
 use arch::{Arch, ArchImpl};
 use core::panic::PanicInfo;
 use drivers::{fdt_prober::get_fdt, fs::register_fs_drivers};
-use log::{error, info, warn};
-use memory::PageOffsetTranslator;
 use fs::VFS;
 use getargs::{Opt, Options};
 use libkernel::{
@@ -23,9 +21,12 @@ use libkernel::{
         BlockDevice, OpenFlags, attr::FilePermissions, blk::ramdisk::RamdiskBlkDev, path::Path,
         pathbuf::PathBuf,
     },
-    memory::address::PA,
-    memory::region::PhysMemoryRegion,
+    memory::{
+        address::{PA, VA},
+        region::PhysMemoryRegion,
+    },
 };
+use log::{error, warn};
 use process::ctx::UserCtx;
 use sched::{
     current::current_task_shared, sched_init, spawn_kernel_work, uspc_ret::dispatch_userspace_task,
@@ -65,38 +66,32 @@ fn on_panic(info: &PanicInfo) -> ! {
 
     ArchImpl::power_off();
 }
- 
+
 async fn launch_init(mut opts: KOptions) {
     let init = opts
         .init
-        .as_ref()
         .unwrap_or_else(|| panic!("No init specified in kernel command line"));
 
-    info!("Launching init process: {}", init.as_str());
+    let dt = get_fdt();
 
-    let initrd_region: Option<PhysMemoryRegion> = if cfg!(target_arch = "x86_64") {
-        info!("Discovering initrd via Multiboot...");
-        crate::arch::x86_64::get_initrd_region()
-    } else {
-        let dt = get_fdt();
-        if let Some(chosen) = dt.find_nodes("/chosen").next()
-            && let Some(start_addr) = chosen.find_property("linux,initrd-start").map(|prop| prop.u64())
-            && let Some(end_addr) = chosen.find_property("linux,initrd-end").map(|prop| prop.u64())
-        {
-            Some(PhysMemoryRegion::from_start_end_address(
-                PA::from_value(start_addr as _),
-                PA::from_value(end_addr as _),
-            ))
-        } else {
-            None
-        }
-    };
+    let initrd_block_dev: Option<Box<dyn BlockDevice>> = if let Some(chosen) =
+        dt.find_nodes("/chosen").next()
+        && let Some(start_addr) = chosen
+            .find_property("linux,initrd-start")
+            .map(|prop| prop.u64())
+        && let Some(end_addr) = chosen
+            .find_property("linux,initrd-end")
+            .map(|prop| prop.u64())
+    {
+        let region = PhysMemoryRegion::from_start_end_address(
+            PA::from_value(start_addr as _),
+            PA::from_value(end_addr as _),
+        );
 
-    let initrd_block_dev: Option<Box<dyn BlockDevice>> = if let Some(region) = initrd_region {
         Some(Box::new(
             RamdiskBlkDev::new(
                 region,
-                region.start_address().to_va::<PageOffsetTranslator>(),
+                VA::from_value(0xffff_9800_0000_0000),
                 &mut *ArchImpl::kern_address_space().lock_save_irq(),
             )
             .unwrap(),
@@ -109,11 +104,9 @@ async fn launch_init(mut opts: KOptions) {
         .root_fs
         .unwrap_or_else(|| panic!("No root FS driver specified in kernel command line"));
 
-    info!("Mounting root FS: {}...", root_fs);
     VFS.mount_root(&root_fs, initrd_block_dev)
         .await
         .unwrap_or_else(|e| panic!("Failed to mount root FS: {}", e));
-    info!("Root FS mounted successfully.");
 
     // Process all automounts.
     for (path, fs) in opts.automounts.iter() {
@@ -174,11 +167,9 @@ async fn launch_init(mut opts: KOptions) {
 
     init_args.append(&mut opts.init_args);
 
-    info!("Preparing to exec init...");
     process::exec::kernel_exec(init.as_path(), inode, init_args, vec![])
         .await
         .expect("Could not launch init process");
-    info!("Init process launched!");
 }
 
 struct KOptions {
@@ -226,23 +217,9 @@ pub fn kmain(args: String, ctx_frame: *mut UserCtx) {
 
     register_fs_drivers();
 
-    // Run all driver initialization routines
-    unsafe {
-        crate::drivers::init::run_initcalls();
-    }
-
     let kopts = parse_args(&args);
 
     spawn_kernel_work(launch_init(kopts));
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        arch::x86_64::boot::setup_stacks_primary();
-        arch::x86_64::boot::init_cpu_percpu();
-        arch::x86_64::enable_syscalls();
-    }
-
-    info!("Entering scheduler...");
-    dispatch_userspace_task(ctx_frame);
-
+    dispatch_userspace_task(ctx_frame)
 }

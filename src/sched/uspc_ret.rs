@@ -12,7 +12,6 @@ use crate::{
     },
 };
 use alloc::boxed::Box;
-use log::info;
 use core::{ptr, task::Poll};
 
 enum State {
@@ -169,7 +168,6 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                         .poll(&mut core::task::Context::from_waker(&create_waker(desc)))
                     {
                         Poll::Ready(()) => {
-                            info!("Kernel work for task {:?} finished.", desc);
                             let task = current_task();
 
                             // If the task just exited (entered the finished
@@ -341,14 +339,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
 
             State::ReturnToUserspace => {
                 // Real user-space return now.
-                if !ctx.is_null() {
-                    current_task().ctx.restore_user_ctx(ctx);
-                } else {
-                    // If we have no context, we have to pick a new task until we find one with a context.
-                    // This happens during bootstrap when kmain is called with null.
-                    state = State::PickNewTask;
-                    continue;
-                }
+                current_task().ctx.restore_user_ctx(ctx);
                 return;
             }
         }

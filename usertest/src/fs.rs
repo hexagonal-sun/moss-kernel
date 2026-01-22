@@ -55,7 +55,7 @@ fn test_chdir() {
         {
             panic!("getcwd failed");
         }
-        if CStr::from_ptr(buffer.as_ptr() as *const libc::c_char).to_string_lossy() != "/dev" {
+        if CStr::from_ptr(buffer.as_ptr()).to_string_lossy() != "/dev" {
             panic!("chdir failed");
         }
     }
@@ -82,7 +82,7 @@ fn test_fchdir() {
         {
             panic!("getcwd failed");
         }
-        if CStr::from_ptr(buffer.as_ptr() as *const libc::c_char).to_string_lossy() != "/dev" {
+        if CStr::from_ptr(buffer.as_ptr()).to_string_lossy() != "/dev" {
             panic!("fchdir failed");
         }
         libc::close(fd);
@@ -318,7 +318,7 @@ fn test_symlink() {
         if string != "Hello, world!" {
             panic!("symlink failed");
         }
-        let ret = libc::readlink(c_link.as_ptr(), buffer.as_mut_ptr() as *mut libc::c_char, buffer.len());
+        let ret = libc::readlink(c_link.as_ptr(), buffer.as_mut_ptr(), buffer.len());
         if ret < 0 {
             panic!("readlink failed");
         }

@@ -10,11 +10,7 @@ use core::{
     time::Duration,
 };
 
-#[cfg(target_arch = "aarch64")]
 pub mod armv8_arch;
-
-#[cfg(target_arch = "x86_64")]
-pub mod x86_tsc;
 
 /// Represents a fixed point in monotonic time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,15 +252,6 @@ pub async fn sleep(duration: Duration) {
 pub fn kick_current_cpu() {
     if let Some(timer) = SYS_TIMER.get() {
         timer.kick_current_cpu();
-    }
-}
-
-pub fn register_timer(driver: Arc<dyn HwTimer>) {
-    let timer = SysTimer::from_driver(driver);
-    if SYS_TIMER.set(Arc::new(timer)).is_err() {
-        // Log error but continue? or panic?
-        // Since it's boot, panic is probably better if we expect it to work.
-        panic!("SYS_TIMER already set");
     }
 }
 

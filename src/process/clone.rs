@@ -65,23 +65,11 @@ pub async fn sys_clone(
         let mut user_ctx = *current_task.ctx.user();
 
         // TODO: Make this arch indepdenant. The child returns '0' on clone.
-        // TODO: Make this arch indepdenant. The child returns '0' on clone.
-        #[cfg(target_arch = "aarch64")]
-        {
-            user_ctx.x[0] = 0;
-        }
-        #[cfg(target_arch = "x86_64")]
-        {
-            user_ctx.regs[0] = 0;
-        }
+        user_ctx.x[0] = 0;
 
         if flags.contains(CloneFlags::CLONE_SETTLS) {
             // TODO: Make this arch indepdenant.
-            #[cfg(target_arch = "aarch64")]
-            {
-                user_ctx.tpid_el0 = tls as _;
-            }
-            // TODO: x86_64 TLS support (FS_BASE)
+            user_ctx.tpid_el0 = tls as _;
         }
 
         let (tg, tid) = if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -90,14 +78,7 @@ pub async fn sys_clone(
                 // set.
                 return Err(KernelError::InvalidValue);
             }
-            #[cfg(target_arch = "aarch64")]
-            {
-                user_ctx.sp_el0 = newsp.value() as _;
-            }
-            #[cfg(target_arch = "x86_64")]
-            {
-                user_ctx.rsp = newsp.value() as _;
-            }
+            user_ctx.sp_el0 = newsp.value() as _;
 
             (
                 // A new task whtin this thread group.

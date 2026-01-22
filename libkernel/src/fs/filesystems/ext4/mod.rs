@@ -32,7 +32,7 @@ use ext4_view::{
     AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks, Metadata, ReadDir,
     get_dir_entry_inode_by_name,
 };
-use log::{error, info};
+use log::error;
 
 #[async_trait]
 impl Ext4Read for BlockBuffer {
@@ -41,7 +41,6 @@ impl Ext4Read for BlockBuffer {
         start_byte: u64,
         dst: &mut [u8],
     ) -> core::result::Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        info!("EXT4 read: offset={}, len={}", start_byte, dst.len());
         Ok(self.read_at(start_byte, dst).await?)
     }
 }
@@ -339,11 +338,9 @@ where
     /// Construct a new EXT4 filesystem instance.
     pub async fn new(dev: BlockBuffer, id: u64) -> Result<Arc<Self>> {
         let dev_arc = Arc::new(dev);
-        info!("Loading EXT4 filesystem...");
         let inner =
             Ext4::load_with_writer(Box::new(dev_arc.clone()), Some(Box::new(dev_arc.clone())))
                 .await?;
-        info!("EXT4 filesystem loaded successfully.");
         Ok(Arc::new_cyclic(|weak| Self {
             inner,
             id,

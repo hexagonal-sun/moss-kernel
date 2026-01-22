@@ -5,10 +5,6 @@ use libkernel::{
 };
 
 pub async fn sys_write(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
-    if fd.0 == 1 || fd.0 == 2 {
-        log::info!("sys_write(fd={}, count={})", fd.0, count);
-    }
-
     let file = current_task()
         .fd_table
         .lock_save_irq()
@@ -17,11 +13,7 @@ pub async fn sys_write(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
 
     let (ops, ctx) = &mut *file.lock().await;
 
-    let res = ops.write(ctx, user_buf, count).await;
-    if fd.0 == 1 || fd.0 == 2 {
-        log::info!("sys_write(fd={}) -> {:?}", fd.0, res);
-    }
-    res
+    ops.write(ctx, user_buf, count).await
 }
 
 pub async fn sys_read(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
