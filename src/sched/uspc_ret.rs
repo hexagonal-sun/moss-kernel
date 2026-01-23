@@ -201,7 +201,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             match *task_state {
                                 // Task is runnable or running, put it to sleep.
                                 TaskState::Running | TaskState::Runnable => {
-                                    *task_state = TaskState::Sleeping
+                                    *task_state = TaskState::Sleeping;
                                 }
                                 // If we were woken between the future returning
                                 // `Poll::Pending` and acquiring the lock above,

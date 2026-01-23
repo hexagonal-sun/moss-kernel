@@ -103,7 +103,7 @@ fn do_copy_from_user(
             lateout("x3") work_vtable,
             // Clobbers
             out("lr") _, out("x4") _
-        )
+        );
     }
 
     (
@@ -205,7 +205,7 @@ impl Future for Arm64CopyStrnFromUser {
                         lateout("x3") work_vtable,
                         // Clobbers
                         out("lr") _, out("x4") _
-                    )
+                    );
                 }
 
                 (
@@ -266,7 +266,7 @@ impl Future for Arm64CopyToUser {
                         lateout("x3") work_vtable,
                         // Clobbers
                         out("lr") _, out("x4") _
-                    )
+                    );
                 }
                 (
                     UAccessResult::from(status),

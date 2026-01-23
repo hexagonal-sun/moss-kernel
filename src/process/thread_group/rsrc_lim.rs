@@ -216,7 +216,7 @@ pub async fn sys_prlimit64(
     };
 
     if !old_rlim.is_null() {
-        copy_to_user(old_rlim, old_lim).await?
+        copy_to_user(old_rlim, old_lim).await?;
     }
 
     Ok(0)

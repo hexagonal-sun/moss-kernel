@@ -3,6 +3,8 @@
 #![feature(used_with_arg)]
 #![feature(likely_unlikely)]
 #![feature(box_as_ptr)]
+#![warn(clippy::semicolon_if_nothing_returned)]
+#![warn(clippy::uninlined_format_args)]
 
 use alloc::{
     boxed::Box,
@@ -203,11 +205,11 @@ fn parse_args(args: &str) -> KOptions {
 
                     kopts.automounts.push((PathBuf::from(path), fs.to_string()));
                 }
-                Opt::Long(x) => warn!("Unknown option {}", x),
-                Opt::Short(x) => warn!("Unknown option {}", x),
+                Opt::Long(x) => warn!("Unknown option {x}"),
+                Opt::Short(x) => warn!("Unknown option {x}"),
             },
             Ok(None) => return kopts,
-            Err(e) => error!("Could not parse option: {}, ignoring.", e),
+            Err(e) => error!("Could not parse option: {e}, ignoring."),
         }
     }
 }
@@ -221,5 +223,5 @@ pub fn kmain(args: String, ctx_frame: *mut UserCtx) {
 
     spawn_kernel_work(launch_init(kopts));
 
-    dispatch_userspace_task(ctx_frame)
+    dispatch_userspace_task(ctx_frame);
 }

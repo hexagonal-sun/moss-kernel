@@ -110,7 +110,7 @@ impl PTrace {
             self.state = Some(PTraceState::TracePointHit {
                 reg_set: regs.into(),
                 hit_point: point,
-            })
+            });
         }
 
         should_stop
@@ -202,7 +202,7 @@ impl PTrace {
             self.state = Some(PTraceState::SignalTrap {
                 reg_set: regs.into(),
                 signal,
-            })
+            });
         }
 
         should_stop
@@ -359,13 +359,13 @@ pub async fn sys_ptrace(op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> 
                     PTraceOptions::PTRACE_O_TRACESYSGOOD => ptrace.sysgood = true,
                     PTraceOptions::PTRACE_O_EXITKILL => todo!(),
                     PTraceOptions::PTRACE_O_TRACECLONE => {
-                        ptrace.break_points.insert(TracePoint::Clone)
+                        ptrace.break_points.insert(TracePoint::Clone);
                     }
                     PTraceOptions::PTRACE_O_TRACEEXIT => {
-                        ptrace.break_points.insert(TracePoint::Exit)
+                        ptrace.break_points.insert(TracePoint::Exit);
                     }
                     PTraceOptions::PTRACE_O_TRACEFORK | PTraceOptions::PTRACE_O_TRACEVFORK => {
-                        ptrace.break_points.insert(TracePoint::Fork)
+                        ptrace.break_points.insert(TracePoint::Fork);
                     }
                     PTraceOptions::PTRACE_O_TRACEEXEC => {
                         ptrace.break_points.insert(TracePoint::Exec);

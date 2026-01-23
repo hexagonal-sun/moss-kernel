@@ -71,7 +71,7 @@ pub fn set_active_console(
         let buf_contents = unsafe { (*addr_of_mut!(EARLY_BOOT_BUFFER)).data() };
 
         if let Ok(s) = str::from_utf8(buf_contents) {
-            let _ = console.write_fmt(format_args!("{}", s));
+            let _ = console.write_fmt(format_args!("{s}"));
         }
     }
 

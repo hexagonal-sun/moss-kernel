@@ -37,7 +37,7 @@ pub fn create_idle_task() -> OwnedTask {
                 .cast::<u8>()
                 .as_ptr_mut(),
             code_sz,
-        )
+        );
     };
 
     let mut addr_space = <ArchImpl as VirtualMemory>::ProcessAddressSpace::new().unwrap();

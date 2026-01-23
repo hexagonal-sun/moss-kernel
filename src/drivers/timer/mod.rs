@@ -185,7 +185,7 @@ impl SysTimer {
                 Poll::Pending
             }
         })
-        .await
+        .await;
     }
 
     /// Schedule a preemption event for the current CPU.
@@ -243,7 +243,7 @@ pub async fn sleep(duration: Duration) {
     }
 
     if let Some(timer) = SYS_TIMER.get() {
-        timer.sleep(duration).await
+        timer.sleep(duration).await;
     }
 }
 

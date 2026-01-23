@@ -51,7 +51,7 @@ impl RunQueue {
         let mut new_task = match self.queue.remove(&next_task) {
             Some(t) => t,
             None => {
-                warn!("Task {:?} not found for switch.", next_task);
+                warn!("Task {next_task:?} not found for switch.");
                 return SwitchResult::AlreadyRunning;
             }
         };

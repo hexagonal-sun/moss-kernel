@@ -350,7 +350,7 @@ Threads:\t{tasks}\n",
                     let mut output = String::new();
                     output.push_str(&format!("{} ", task.process.tgid.0)); // pid
                     output.push_str(&format!("({}) ", name.as_str())); // comm
-                    output.push_str(&format!("{} ", state)); // state
+                    output.push_str(&format!("{state} ")); // state
                     output.push_str(&format!("{} ", 0)); // ppid
                     output.push_str(&format!("{} ", 0)); // pgrp
                     output.push_str(&format!("{} ", task.process.sid.lock_save_irq().value())); // session

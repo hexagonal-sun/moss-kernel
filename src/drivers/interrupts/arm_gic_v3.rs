@@ -233,10 +233,7 @@ impl ArmGicV3 {
         rdist.WAKER.set(rdist.WAKER.get() & !(1 << 1));
         while rdist.WAKER.get() & (1 << 2) != 0 {}
 
-        info!(
-            "GICv3: Redistributor for core {} (MPIDR=0x{:x}) is awake.",
-            core_id, mpidr
-        );
+        info!("GICv3: Redistributor for core {core_id} (MPIDR=0x{mpidr:x}) is awake.",);
 
         // 2. Configure PPIs and SGIs for this core SGIs (0-15) are Group 0,
         // PPIs (16-31) are Group 1
@@ -263,7 +260,7 @@ impl ArmGicV3 {
         // 5. Enable interrupt group 1 at the CPU interface
         set_icc_igrpen1_el1(1);
 
-        info!("GICv3: CPU interface for core {} enabled.", core_id);
+        info!("GICv3: CPU interface for core {core_id} enabled.");
         Ok(())
     }
 
@@ -401,7 +398,7 @@ impl InterruptController for ArmGicV3 {
 
     fn enable_core(&mut self, cpu_id: usize) {
         if let Err(e) = self.init_core(cpu_id) {
-            warn!("Failed to enable interrupts for core {}: {}", cpu_id, e);
+            warn!("Failed to enable interrupts for core {cpu_id}: {e}");
             return;
         }
 
@@ -442,7 +439,7 @@ impl InterruptController for ArmGicV3 {
             0x4 => LevelHigh,
             // GICv3 simplified trigger types for SPIs. Level-low and falling-edge are less common.
             _ => {
-                warn!("Unsupported GIC interrupt trigger flag: {}", flags);
+                warn!("Unsupported GIC interrupt trigger flag: {flags}");
                 LevelHigh // Default to a safe value
             }
         };
@@ -488,8 +485,7 @@ pub fn gic_v3_probe(_dm: &mut DriverManager, d: DeviceDescriptor) -> Result<Arc<
             };
 
             info!(
-                "ARM GICv3 found: dist @ {:?}, rdist @ {:?} (stride=0x{:x})",
-                dist_region, rdist_region, rdist_stride
+                "ARM GICv3 found: dist @ {dist_region:?}, rdist @ {rdist_region:?} (stride=0x{rdist_stride:x})",
             );
 
             let mut gic = ArmGicV3::new(dist_mem, rdist_mem, rdist_stride)?;

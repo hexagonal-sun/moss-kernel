@@ -116,7 +116,7 @@ impl ThreadGroup {
 
         // Skip the TGID.
         if v == self.tgid.value() {
-            v = self.next_tid.fetch_add(1, Ordering::Relaxed)
+            v = self.next_tid.fetch_add(1, Ordering::Relaxed);
         }
 
         Tid(v)

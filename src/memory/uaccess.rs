@@ -47,7 +47,7 @@ pub async fn copy_from_user<T: UserCopyable>(src: TUA<T>) -> Result<T> {
             uninit.as_mut_ptr() as *mut _ as *mut _,
             core::mem::size_of::<T>(),
         )
-        .await?
+        .await?;
     };
 
     // SAFETY: If the future completed successfully, then the copy from

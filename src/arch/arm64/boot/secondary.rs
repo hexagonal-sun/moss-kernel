@@ -131,7 +131,7 @@ fn prepare_for_secondary_entry() -> Result<(PA, PA)> {
                 .ok_or(KernelError::Other("Idmap not set"))?,
             start_fn: VA::from_value(arch_init_secondary as *const () as usize),
             exception_ret: VA::from_value(&exception_return as *const _ as usize),
-        })
+        });
     };
 
     Ok((entry_fn, ctx))
@@ -186,7 +186,7 @@ fn cpu_node_iter() -> impl Iterator<Item = fdt_parser::Node<'static>> {
 pub fn boot_secondaries() {
     for cpu_node in cpu_node_iter() {
         if let Err(e) = do_boot_secondary(cpu_node) {
-            log::warn!("Failed to boot secondary: {}", e);
+            log::warn!("Failed to boot secondary: {e}");
         }
     }
 }
@@ -204,7 +204,7 @@ pub fn save_idmap(addr: PA) {
 pub fn secondary_booted() {
     let id = ArchImpl::id();
 
-    info!("CPU {} online.", id);
+    info!("CPU {id} online.");
 
     SECONDARY_BOOT_FLAG.store(true, Ordering::Release);
 }

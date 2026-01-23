@@ -53,7 +53,7 @@ impl FdSet {
     fn set_fd(&mut self, fd: Fd) {
         let fd = fd.as_raw();
 
-        self.set[fd as usize / 64] |= 1 << (fd % 64)
+        self.set[fd as usize / 64] |= 1 << (fd % 64);
     }
 }
 

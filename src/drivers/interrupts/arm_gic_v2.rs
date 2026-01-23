@@ -357,8 +357,7 @@ pub fn gic_v2_probe(_dm: &mut DriverManager, d: DeviceDescriptor) -> Result<Arc<
             };
 
             info!(
-                "ARM Gic V2 initialising: distributor_regs: {:?} cpu_regs: {:?}",
-                distributor_mem, cpu_mem
+                "ARM Gic V2 initialising: distributor_regs: {distributor_mem:?} cpu_regs: {cpu_mem:?}",
             );
 
             let dev = Arc::new_cyclic(|this| {

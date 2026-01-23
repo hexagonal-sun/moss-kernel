@@ -94,13 +94,13 @@ pub async fn sys_rt_sigaction(
     sigsetsize: usize,
 ) -> Result<usize> {
     if sigsetsize != size_of::<SigSet>() {
-        Err(KernelError::InvalidValue)?
+        return Err(KernelError::InvalidValue)?;
     }
 
     let sig: SigId = sig.try_into()?;
 
     if sig == SigId::SIGKILL || sig == SigId::SIGSTOP {
-        Err(KernelError::InvalidValue)?
+        return Err(KernelError::InvalidValue);
     }
 
     let new_act = if !act.is_null() {

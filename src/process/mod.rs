@@ -142,7 +142,7 @@ impl Display for TaskState {
             TaskState::Sleeping => "S",
             TaskState::Finished => "Z",
         };
-        write!(f, "{}", state_str)
+        write!(f, "{state_str}")
     }
 }
 

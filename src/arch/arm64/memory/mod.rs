@@ -42,7 +42,7 @@ unsafe impl GlobalAlloc for SpinlockHeap {
         unsafe {
             self.0
                 .lock_save_irq()
-                .deallocate(NonNull::new_unchecked(ptr), layout)
+                .deallocate(NonNull::new_unchecked(ptr), layout);
         }
     }
 }

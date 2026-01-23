@@ -216,7 +216,7 @@ impl AltSigStack {
     }
 
     pub fn restore_alt_stack(&mut self, old_ptr: UA) {
-        self.ptr = old_ptr
+        self.ptr = old_ptr;
     }
 
     pub fn in_use(&self) -> bool {

@@ -145,7 +145,7 @@ impl Inode for DevFsINode {
     async fn getattr(&self) -> Result<FileAttr> {
         let mut attr = self.attr.lock_save_irq().clone();
         if let InodeKind::CharDevice { device_id } = self.kind {
-            attr.file_type = FileType::CharDevice(device_id)
+            attr.file_type = FileType::CharDevice(device_id);
         }
         Ok(attr)
     }

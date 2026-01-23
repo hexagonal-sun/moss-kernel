@@ -86,7 +86,7 @@ pub unsafe fn run_initcalls() {
             let init_func = &*current;
             // Call each driver's init function
             if let Err(e) = init_func(&mut bus, &mut dm) {
-                error!("A driver failed to initialize: {}", e);
+                error!("A driver failed to initialize: {e}");
             }
 
             current = current.add(1);

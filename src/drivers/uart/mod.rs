@@ -163,7 +163,7 @@ impl<D: UartDriver> InterruptHandler for Uart<D> {
             byte_buf
                 .into_iter()
                 .take(bytes_read)
-                .for_each(|b| handler.push_byte(b))
+                .for_each(|b| handler.push_byte(b));
         }
     }
 }
@@ -215,7 +215,7 @@ impl UartCharDev {
                 }));
 
                 devfs().mknod(
-                    format!("ttyS{}", minor),
+                    format!("ttyS{minor}"),
                     desc,
                     FilePermissions::from_bits_retain(0o600),
                 )?;
