@@ -25,7 +25,7 @@ impl Fd {
 }
 
 impl From<u64> for Fd {
-    // Conveience implemtnation for syscalls.
+    // Convenience implementation for syscalls.
     fn from(value: u64) -> Self {
         Self(value.cast_signed() as _)
     }

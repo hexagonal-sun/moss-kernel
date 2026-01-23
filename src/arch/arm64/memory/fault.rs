@@ -70,7 +70,7 @@ fn handle_uacess_abort(exception: Exception, info: AbortIss, state: &mut Excepti
     match run_mem_fault_handler(exception, info) {
         // We mapped in a page, the uacess handler can proceed.
         Ok(FaultResolution::Resolved) => (),
-        // If the fault coldn't be resolved, signal to the uacess fixup that
+        // If the fault couldn't be resolved, signal to the uacess fixup that
         // the abort failed.
         Ok(FaultResolution::Denied) => {
             state.x[0] = UAccessResult::AbortDenied as _;

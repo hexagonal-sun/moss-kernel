@@ -97,7 +97,7 @@ impl<T: Fat32Operations> Fat32Reader<T> {
             }
         }
 
-        // The bounds checks on `effective_buf` throughout the loops ensure that
+        // The bounds check on `effective_buf` throughout the loops ensure that
         // the final `read_sector` call will be passed a smaller slice,
         // correctly reading only the remaining bytes and handling the tail
         // misalignment automagically. See `self.fs.read_sector`.

@@ -61,7 +61,7 @@ const MESSENGER_IRQ_DESC: InterruptDescriptor = InterruptDescriptor::Ipi(0);
 
 pub fn cpu_messenger_init(num_cpus: usize) {
     let cpu_messenger = get_interrupt_root()
-        .expect("Interrupt root should be avilable")
+        .expect("Interrupt root should be available")
         .claim_interrupt(
             InterruptConfig {
                 descriptor: MESSENGER_IRQ_DESC,

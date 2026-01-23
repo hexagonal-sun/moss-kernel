@@ -84,7 +84,7 @@ pub fn handle_demand_fault(
                 PtePermissions::from(vma.permissions()),
             ) {
                 Ok(_) => {
-                    // We mapped our page, leak it for reclimation by the
+                    // We mapped our page, leak it for reclamation by the
                     // address-space tear-down code.
                     new_page.leak();
 
@@ -93,7 +93,7 @@ pub fn handle_demand_fault(
                 Err(KernelError::MappingError(MapError::AlreadyMapped)) => {
                     // Another CPU mapped the page for us, since we've validated the
                     // VMA is still valid and the same mapping code has been
-                    // executed, it's guarenteed that the correct page will have
+                    // executed, it's guaranteed that the correct page will have
                     // been mapped by the other CPU.
                     //
                     // Do not leak the page, since it's not going to be used.
@@ -124,7 +124,7 @@ pub fn handle_demand_fault(
 }
 
 /// Handle a page fault when a page is present, but the access kind differ from
-/// permissble accessees defined in the PTE, a 'protection' fault.
+/// permissible accesses defined in the PTE, a 'protection' fault.
 pub fn handle_protection_fault(
     vm: &mut ProcVM,
     faulting_addr: VA,
@@ -161,7 +161,7 @@ pub fn handle_protection_fault(
         } else {
             let mut new_page = ClaimedPage::alloc_zeroed()?;
 
-            // Oterwise, copy data from the new page, map it and decrement
+            // Otherwise, copy data from the new page, map it and decrement
             // the refcount on the shared page.
             let src_page = unsafe { ClaimedPage::from_pfn(pg_info.pfn) };
 

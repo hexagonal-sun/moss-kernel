@@ -134,7 +134,7 @@ impl BiosParameterBlock {
 
     pub fn cluster_to_sectors(&self, cluster: Cluster) -> Result<impl Iterator<Item = Sector>> {
         if cluster.0 < 2 {
-            warn!("Cannot conver sentinel cluster number");
+            warn!("Cannot convert sentinel cluster number");
             Err(FsError::InvalidFs.into())
         } else {
             let root_sector = Sector(

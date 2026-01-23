@@ -685,7 +685,7 @@ pub mod tests {
         fixture.assert_free_list_counts(&expected_counts);
     }
 
-    /// Tests the allocation of a multi-page block and verifies head/tail metadata.
+    /// Tests the allocation of a multipage block and verifies head/tail metadata.
     #[test]
     fn alloc_multi_page_block() {
         let fixture = TestFixture::new(&[(0, (1 << (MAX_ORDER + PAGE_SHIFT)) * 2)], &[]);

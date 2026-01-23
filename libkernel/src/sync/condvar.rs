@@ -64,7 +64,7 @@ impl<S, C: CpuOps> CondVar<S, C> {
     /// # Arguments
     /// * `predicate`: A closure that checks the condition in the underlying
     ///   state. It should return `None` to continue waiting, or `Some(T)` to
-    ///   stop waitng and yield T to the caller.
+    ///   stop waiting and yield T to the caller.
     #[must_use = "futures do nothing unless you `.await` or poll them"]
     pub fn wait_until<T, F>(&self, predicate: F) -> impl Future<Output = T> + use<T, S, C, F>
     where

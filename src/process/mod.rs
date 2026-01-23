@@ -200,13 +200,13 @@ impl Task {
         self.tid
     }
 
-    /// Return a new desctiptor that uniquely represents this task in the
+    /// Return a new descriptor that uniquely represents this task in the
     /// system.
     pub fn descriptor(&self) -> TaskDescriptor {
         TaskDescriptor::from_tgid_tid(self.process.tgid, self.tid)
     }
 
-    /// Get a page from the task's address space, in an atomic fasion - i.e.
+    /// Get a page from the task's address space, in an atomic fashion - i.e.
     /// with the process address space locked.
     ///
     /// Handle any faults such that the page will be resident in memory and return

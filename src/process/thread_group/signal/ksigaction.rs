@@ -23,7 +23,7 @@ pub enum KSignalAction {
 impl KSignalAction {
     /// Returns the default action for a given signal.
     ///
-    /// For signals who's default is to be ignored, `None` is returned.
+    /// For signals whose default is to be ignored, `None` is returned.
     pub const fn default_action(signal: SigId) -> Option<Self> {
         match signal {
             SigId::SIGABRT => Some(Self::Core),

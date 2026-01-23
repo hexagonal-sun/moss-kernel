@@ -55,7 +55,7 @@ fn armv8_timer_probe(dm: &mut DriverManager, d: DeviceDescriptor) -> Result<Arc<
         DeviceDescriptor::Fdt(fdt_node, _) => {
             use libkernel::error::ProbeError::*;
 
-            let interrupt_node = fdt_node.interrupt_parent().ok_or(NoParentIntterupt)?.node;
+            let interrupt_node = fdt_node.interrupt_parent().ok_or(NoParentInterrupt)?.node;
 
             let interrupt_manager = dm
                 .find_by_name(interrupt_node.name)

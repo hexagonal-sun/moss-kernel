@@ -49,7 +49,7 @@ pub fn do_exit_group(exit_code: ChildState) {
             // Don't signal ourselves
             if other_thread.tid != task.tid {
                 // TODO: Send an IPI/Signal to halt execution now. For now, just
-                // wait for the scheduler to never schdule any of it's tasks
+                // wait for the scheduler to never schedule any of it's tasks
                 // again.
                 *other_thread.state.lock_save_irq() = TaskState::Finished;
             }

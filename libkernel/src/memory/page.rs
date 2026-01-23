@@ -49,7 +49,7 @@ impl PageFrame {
     }
 }
 
-/// A conveniance wrapper for dealing with single-page allocaitons.
+/// A convenience wrapper for dealing with single-page allocations.
 pub struct ClaimedPage<A: CpuOps, G: PageAllocGetter<A>, T: AddressTranslator<()>>(
     PageAllocation<'static, A>,
     PhantomData<G>,
@@ -82,7 +82,7 @@ impl<A: CpuOps, G: PageAllocGetter<A>, T: AddressTranslator<()>> ClaimedPage<A, 
     /// # Safety
     ///
     /// Ensure that the calling context does indeed own this page. Otherwise,
-    /// the page may be free'd when it's owned by another context.
+    /// the page may be freed when it's owned by another context.
     pub unsafe fn from_pfn(pfn: PageFrame) -> Self {
         Self(
             unsafe {

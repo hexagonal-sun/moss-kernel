@@ -56,14 +56,14 @@ impl VMAPermissions {
     }
 }
 
-/// Describes the kind of access that occured during a page fault.
+/// Describes the kind of access that occurred during a page fault.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum AccessKind {
     /// The CPU attempted to read the faulting address.
     Read,
     /// The CPU attempted to write to the faulting address.
     Write,
-    /// The CPU attempted to execute the instruciton at the faulting address.
+    /// The CPU attempted to execute the instruction at the faulting address.
     Execute,
 }
 
@@ -199,7 +199,7 @@ impl VMArea {
     /// memory permissions.
     ///
     /// Note: If a program header's VA isn't page-aligned this function will
-    /// align it down and addjust the offset and size accordingly.
+    /// align it down and adjust the offset and size accordingly.
     ///
     /// # Arguments
     /// * `f`: A handle to the ELF file's inode.

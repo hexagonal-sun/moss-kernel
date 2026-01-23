@@ -109,7 +109,7 @@ pub struct ThreadGroup {
 unsafe impl Send for ThreadGroup {}
 
 impl ThreadGroup {
-    // Return the next avilable thread id. Will never return a thread who's ID
+    // Return the next available thread id. Will never return a thread whose ID
     // == TGID, since that is defined as the main, root thread.
     pub fn next_tid(&self) -> Tid {
         let mut v = self.next_tid.fetch_add(1, Ordering::Relaxed);

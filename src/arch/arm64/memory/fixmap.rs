@@ -134,7 +134,7 @@ impl Fixmap {
 
         let mut phys_region = PhysMemoryRegion::new(fdt_ptr.to_untyped(), sz);
         let mut va = FIXMAP_BASE;
-        let invaldator = AllEl1TlbInvalidator::new();
+        let invalidator = AllEl1TlbInvalidator::new();
 
         while phys_region.size() > 0 {
             L3Table::from_ptr(TVA::from_ptr_mut(&mut self.l3[0] as *mut _)).set_desc(
@@ -144,7 +144,7 @@ impl Fixmap {
                     MemoryType::Normal,
                     PtePermissions::ro(false),
                 ),
-                &invaldator,
+                &invalidator,
             );
 
             phys_region = phys_region.add_pages(1);

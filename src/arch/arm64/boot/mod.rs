@@ -43,7 +43,7 @@ pub(super) mod secondary;
 
 global_asm!(include_str!("start.s"));
 
-/// Stage 1 Initialize of the system architechture.
+/// Stage 1 Initialize of the system architecture.
 ///
 /// This function is called by the main primary CPU with the other CPUs parked.
 /// All interrupts should be disabled, the ID map setup in TTBR0 and the highmem

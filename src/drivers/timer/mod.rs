@@ -192,7 +192,7 @@ impl SysTimer {
     pub fn schedule_preempt(&self, when: Instant) {
         let mut wake_q = WAKEUP_Q.borrow_mut();
 
-        // Insert the pre-emption event.
+        // Insert the preemption event.
         wake_q.push(WakeupEvent {
             when,
             what: WakeupKind::Preempt,
@@ -205,7 +205,7 @@ impl SysTimer {
     }
 
     /// Arms the hardware timer on the current CPU so that the next scheduled
-    /// `WakeupEvent` (or the fallback pre-emption tick) will fire.
+    /// `WakeupEvent` (or the fallback preemption tick) will fire.
     /// Secondary CPUs should call this right after they have enabled their
     /// interrupt controller so that they start receiving timer interrupts.
     pub fn kick_current_cpu(&self) {
@@ -235,7 +235,7 @@ pub fn now() -> Option<Instant> {
 }
 
 /// Puts the current task to sleep for `duration`. If no timer driver has yet
-/// been loaded, the funtion returns without sleeping.
+/// been loaded, the function returns without sleeping.
 pub async fn sleep(duration: Duration) {
     // A sleep of zero duration returns now.
     if duration.is_zero() {
@@ -255,7 +255,7 @@ pub fn kick_current_cpu() {
     }
 }
 
-/// Arms a pre-emption timer for the running task on this CPU.
+/// Arms a preemption timer for the running task on this CPU.
 /// Called by the scheduler every time it issues a new eligible virtual deadline.
 pub fn schedule_preempt(when: Instant) {
     if let Some(timer) = SYS_TIMER.get() {

@@ -103,7 +103,7 @@ pub fn pl011_probe(dm: &mut DriverManager, d: DeviceDescriptor) -> Result<Arc<dy
 
             let interrupt_node = fdt_node
                 .interrupt_parent()
-                .ok_or(ProbeError::NoParentIntterupt)?
+                .ok_or(ProbeError::NoParentInterrupt)?
                 .node;
 
             let interrupt_manager = dm

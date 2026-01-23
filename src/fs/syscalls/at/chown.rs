@@ -42,7 +42,7 @@ pub async fn sys_fchownat(
         }
         if group != -1 {
             let gid = Gid::new(group as _);
-            // doesnt seem like theres real groups so this is as good as it gets
+            // doesn't seem like there's real groups so this is as good as it gets
             if creds.uid() != attr.uid || creds.gid() != gid {
                 creds.caps().check_capable(CapabilitiesFlags::CAP_CHOWN)?;
             }

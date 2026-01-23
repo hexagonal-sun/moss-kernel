@@ -61,7 +61,7 @@ impl KPipe {
     ///
     /// This function will fill the kbuf as much as possible and return the
     /// number of bytes written. If the buffer is full when called, this
-    /// function will block until space becomes avilable.
+    /// function will block until space becomes available.
     pub async fn copy_from_user(&self, src: UA, count: usize) -> Result<usize> {
         let mut temp_buf = [0u8; USER_COPY_CHUNK_SIZE];
         let chunk_buf = &mut temp_buf[..min(count, USER_COPY_CHUNK_SIZE)];
@@ -75,7 +75,7 @@ impl KPipe {
     ///
     /// This function will drain as much of the buffer as possible and return
     /// the number of bytes written. If the buffer is empty when called, this
-    /// function will block until data becomes avilable.
+    /// function will block until data becomes available.
     pub async fn copy_to_user(&self, dst: UA, count: usize) -> Result<usize> {
         let mut temp_buf = [0u8; USER_COPY_CHUNK_SIZE];
         let chunk_buf = &mut temp_buf[..min(count, USER_COPY_CHUNK_SIZE)];

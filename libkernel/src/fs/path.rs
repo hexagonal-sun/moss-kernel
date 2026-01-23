@@ -144,7 +144,7 @@ impl Path {
     /// ```
     pub fn strip_prefix(&self, base: &Path) -> Option<&Path> {
         if self.inner.starts_with(&base.inner) {
-            // If the prefixes are the same and they have the same length, the
+            // If the prefixes are the same, and they have the same length, the
             // whole string is the prefix.
             if base.inner.len() == self.inner.len() {
                 return Some(Path::new(""));

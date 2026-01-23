@@ -38,7 +38,7 @@ impl<G, CPU: CpuOps> IrqGuard<G, CPU> {
 
 impl<G, CPU: CpuOps> Drop for IrqGuard<G, CPU> {
     fn drop(&mut self) {
-        // Enaure we drop the refcell guard prior to restoring interrupts.
+        // Ensure we drop the refcell guard prior to restoring interrupts.
         unsafe { ManuallyDrop::drop(&mut self.guard) };
 
         CPU::restore_interrupt_state(self.flags);
@@ -132,7 +132,8 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
 
     /// Returns a reference to the underlying datakj for the current CPU.
     ///
-    /// # Panics Panics if the `PerCpu` variable has not been initialized.
+    /// # Panics
+    /// Panics if the `PerCpu` variable has not been initialized.
     fn get_cell(&self) -> &RefCell<T> {
         let id = CPU::id();
         let base_ptr = self.ptr.load(Ordering::Acquire);

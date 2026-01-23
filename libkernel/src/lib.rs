@@ -81,7 +81,7 @@ pub trait UserAddressSpace: Send + Sync {
     /// space are flushed.
     fn activate(&self);
 
-    /// Decativate this address space for the current CPU.
+    /// Deactivate this address space for the current CPU.
     ///
     /// This should be called to leave the CPU without any current process
     /// state. Used on process termination code-paths.

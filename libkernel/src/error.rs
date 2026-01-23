@@ -15,7 +15,7 @@ pub enum ProbeError {
     NoInterrupts,
 
     #[error("No parent interrupt controller in FDT")]
-    NoParentIntterupt,
+    NoParentInterrupt,
 
     #[error("The specified interrupt parent isn't an interrupt controller")]
     NotInterruptController,
@@ -57,7 +57,7 @@ pub enum IoError {
     #[error("The requested I/O operation was out of bounds for the block device")]
     OutOfBounds,
 
-    #[error("Courruption found in the filesystem metadata")]
+    #[error("Corruption found in the filesystem metadata")]
     MetadataCorruption,
 }
 
@@ -114,7 +114,7 @@ pub enum ExecError {
     #[error("Invalid Script Format")]
     InvalidScriptFormat,
 
-    #[error("Invalid Porgram Header Format")]
+    #[error("Invalid Program Header Format")]
     InvalidPHdrFormat,
 }
 
@@ -156,7 +156,7 @@ pub enum KernelError {
     #[error("Not a tty")]
     NotATty,
 
-    #[error("Fault errror during syscall")]
+    #[error("Fault error during syscall")]
     Fault,
 
     #[error("Not an open file descriptor")]

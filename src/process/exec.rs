@@ -120,7 +120,7 @@ async fn exec_elf(inode: Arc<dyn Inode>, argv: Vec<String>, envp: Vec<String>) -
         }
     }
 
-    // Setup a program bias for PIE.
+    // Set up a program bias for PIE.
     let main_bias = if elf.e_type.get(endian) == ET_DYN {
         Some(PROG_BIAS)
     } else {
@@ -136,7 +136,7 @@ async fn exec_elf(inode: Arc<dyn Inode>, argv: Vec<String>, envp: Vec<String>) -
 
     let mut vmas = Vec::new();
 
-    // Process the binary progream headers.
+    // Process the binary program headers.
     if let Some(hdr_addr) = process_prog_headers(hdrs, &mut vmas, main_bias, inode.clone(), endian)
     {
         auxv.push(AT_PHDR);
@@ -177,7 +177,7 @@ async fn exec_elf(inode: Arc<dyn Inode>, argv: Vec<String>, envp: Vec<String>) -
 
     // We don't have to worry about actually calling for a full context switch
     // here. Parts of the old process that are replaced will go out of scope and
-    // be cleaned up (open files, etc); We don't need to preseve any extra
+    // be cleaned up (open files, etc.); We don't need to preserve any extra
     // state. Simply activate the new process's address space.
     vm.mm_mut().address_space_mut().activate();
 

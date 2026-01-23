@@ -64,11 +64,11 @@ pub async fn sys_clone(
 
         let mut user_ctx = *current_task.ctx.user();
 
-        // TODO: Make this arch indepdenant. The child returns '0' on clone.
+        // TODO: Make this arch independent. The child returns '0' on clone.
         user_ctx.x[0] = 0;
 
         if flags.contains(CloneFlags::CLONE_SETTLS) {
-            // TODO: Make this arch indepdenant.
+            // TODO: Make this arch independent.
             user_ctx.tpid_el0 = tls as _;
         }
 
@@ -81,13 +81,13 @@ pub async fn sys_clone(
             user_ctx.sp_el0 = newsp.value() as _;
 
             (
-                // A new task whtin this thread group.
+                // A new task within this thread group.
                 current_task.process.clone(),
                 current_task.process.next_tid(),
             )
         } else {
             let tgid_parent = if flags.contains(CloneFlags::CLONE_PARENT) {
-                // Use the parnent's parent as the new parent.
+                // Use the parent's parent as the new parent.
                 current_task
                     .process
                     .parent

@@ -269,7 +269,7 @@ impl ArmGicV3 {
         // This is a simplified search. A full implementation should parse the
         // GICR's TYPER to find the correct redistributor for a given MPIDR. For
         // systems where cores and redistributors are mapped linearly (like QEMU
-        // virt) this should be fine, but we do an assert just to be ensure.
+        // virt) this should be fine, but we do an assert just to ensure.
         let core_id = (mpidr & 0xFF) + ((mpidr >> 8) & 0xFF) * 4; // Simple linear core ID
         let rdist_offset = core_id as usize * self.rdist_stride;
         let rdist_addr = self.rdist_base.value() + rdist_offset;

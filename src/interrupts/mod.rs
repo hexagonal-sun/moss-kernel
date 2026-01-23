@@ -54,8 +54,8 @@ pub trait InterruptController: Send + Sync {
     fn raise_ipi(&mut self, target_cpu_id: usize);
 
     /// Enable the interrupt controller for this core. This is the entry point
-    /// for secondaries only, the primary CPU should have initalized via the
-    /// creation of the interupt controller object.
+    /// for secondaries only, the primary CPU should have initialized via the
+    /// creation of the interrupt controller object.
     fn enable_core(&mut self, cpu_id: usize);
 
     fn parse_fdt_interrupt_regs(
