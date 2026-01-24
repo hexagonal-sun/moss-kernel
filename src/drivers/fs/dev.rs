@@ -56,11 +56,15 @@ impl DevFs {
             return Err(KernelError::InUse);
         }
 
-        let id = self.next_inode_id.fetch_add(1, Ordering::SeqCst);
+        let id = InodeId::from_fsid_and_inodeid(
+            DEVFS_ID,
+            self.next_inode_id.fetch_add(1, Ordering::SeqCst),
+        );
 
         let new_inode = Arc::new(DevFsINode {
-            id: InodeId::from_fsid_and_inodeid(DEVFS_ID, id),
+            id,
             attr: SpinLock::new(FileAttr {
+                id,
                 file_type: FileType::CharDevice(device_id),
                 mode,
                 ..FileAttr::default()
