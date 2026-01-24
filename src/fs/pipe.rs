@@ -1,4 +1,5 @@
 use crate::{
+    clock::realtime::date,
     kernel::kpipe::KPipe,
     memory::uaccess::copy_to_user,
     process::{
@@ -10,11 +11,25 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
-use core::{future, pin::pin, task::Poll};
+use core::{
+    future,
+    pin::pin,
+    sync::atomic::{AtomicU64, Ordering},
+    task::Poll,
+    time::Duration,
+};
 use libkernel::{
     error::{KernelError, Result},
-    fs::{OpenFlags, SeekFrom},
-    memory::address::{TUA, UA},
+    fs::{
+        FileType, Inode, InodeId, OpenFlags, SeekFrom,
+        attr::{FileAttr, FilePermissions},
+        pathbuf::PathBuf,
+    },
+    memory::{
+        PAGE_SIZE,
+        address::{TUA, UA},
+    },
+    proc::ids::{Gid, Uid},
     sync::condvar::WakeupType,
 };
 //
@@ -22,6 +37,38 @@ use super::{
     fops::FileOps,
     open_file::{FileCtx, OpenFile},
 };
+
+struct PipeInode {
+    id: InodeId,
+    time: Duration,
+    uid: Uid,
+    gid: Gid,
+}
+
+#[async_trait]
+impl Inode for PipeInode {
+    fn id(&self) -> InodeId {
+        self.id
+    }
+
+    async fn getattr(&self) -> Result<FileAttr> {
+        Ok(FileAttr {
+            id: self.id,
+            size: 0,
+            block_size: PAGE_SIZE as _,
+            blocks: 0,
+            atime: self.time,
+            btime: self.time,
+            mtime: self.time,
+            ctime: self.time,
+            file_type: FileType::Fifo,
+            mode: FilePermissions::from_bits_retain(0o0600),
+            nlinks: 1,
+            uid: self.uid,
+            gid: self.gid,
+        })
+    }
+}
 
 #[derive(Clone)]
 struct PipeInner {
@@ -211,11 +258,26 @@ pub async fn sys_pipe2(fds: TUA<[Fd; 2]>, flags: u32) -> Result<usize> {
     let writer = PipeWriter { inner };
 
     let (read_fd, write_fd) = {
+        static INODE_ID: AtomicU64 = AtomicU64::new(0);
+
         let task = current_task();
         let mut fds = task.fd_table.lock_save_irq();
 
-        let read_file = OpenFile::new(Box::new(reader), flags);
-        let write_file = OpenFile::new(Box::new(writer), flags);
+        let inode = {
+            let creds = task.creds.lock_save_irq();
+            Arc::new(PipeInode {
+                id: InodeId::from_fsid_and_inodeid(0xf, INODE_ID.fetch_add(1, Ordering::Relaxed)),
+                time: date(),
+                uid: creds.uid(),
+                gid: creds.gid(),
+            })
+        };
+
+        let mut read_file = OpenFile::new(Box::new(reader), flags);
+        let mut write_file = OpenFile::new(Box::new(writer), flags);
+
+        read_file.update(inode.clone(), PathBuf::new());
+        write_file.update(inode, PathBuf::new());
 
         let read_fd = fds.insert(Arc::new(read_file))?;
         let write_fd = fds.insert(Arc::new(write_file))?;
