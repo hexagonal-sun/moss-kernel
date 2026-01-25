@@ -406,8 +406,9 @@ pub async fn handle_syscall() {
         0x73 => {
             sys_clock_nanosleep(
                 arg1 as _,
-                TUA::from_value(arg2 as _),
+                arg2 as _,
                 TUA::from_value(arg3 as _),
+                TUA::from_value(arg4 as _),
             )
             .await
         }

@@ -28,6 +28,7 @@ pub async fn sys_nanosleep(rqtp: TUA<TimeSpec>, rmtp: TUA<TimeSpec>) -> Result<u
 
 pub async fn sys_clock_nanosleep(
     _clock_id: i32,
+    _flags: u32,
     rqtp: TUA<TimeSpec>,
     rmtp: TUA<TimeSpec>,
 ) -> Result<usize> {
