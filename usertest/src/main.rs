@@ -1,4 +1,5 @@
 use std::{
+    io::{Write, stdout},
     sync::{Arc, Barrier, Mutex},
     thread,
 };
@@ -224,6 +225,7 @@ fn main() {
     let start = std::time::Instant::now();
     for test in inventory::iter::<Test> {
         print!("{} ...", test.test_text);
+        stdout().flush();
         run_test(test.test_fn);
         println!(" OK");
     }
