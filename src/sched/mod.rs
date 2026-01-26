@@ -9,7 +9,7 @@ use crate::{
     process::{TASK_LIST, TaskDescriptor, TaskState},
 };
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
 use current::{CUR_TASK_PTR, current_task};
 use libkernel::{UserAddressSpace, error::Result};
@@ -22,6 +22,41 @@ mod runqueue;
 pub mod sched_task;
 pub mod uspc_ret;
 pub mod waker;
+
+pub static NUM_CONTEXT_SWITCHES: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CpuStat {
+    pub user: usize,
+    pub nice: usize,
+    pub system: usize,
+    pub idle: usize,
+    pub iowait: usize,
+    pub irq: usize,
+    pub softirq: usize,
+    pub steal: usize,
+    pub guest: usize,
+    pub guest_nice: usize,
+}
+
+per_cpu! {
+    pub static CPU_STAT: CpuStat = CpuStat::default;
+}
+
+pub fn get_current_cpu_stat() -> CpuStat {
+    *CPU_STAT.borrow()
+}
+
+pub fn get_other_cpu_stat(cpu_id: CpuId) -> CpuStat {
+    unsafe {
+        let mut value = CPU_STAT.try_borrow_for_cpu(cpu_id.value());
+        while value.is_none() {
+            warn!("Waiting to borrow CPU_STAT for CPU {}", cpu_id.value());
+            value = CPU_STAT.try_borrow_for_cpu(cpu_id.value());
+        }
+        *value.unwrap()
+    }
+}
 
 per_cpu! {
     static SCHED_STATE: SchedState = SchedState::new;
@@ -265,6 +300,9 @@ impl SchedState {
 
         if let Some(current) = self.run_q.current_mut() {
             current.update_accounting(Some(now_inst));
+            // Reset accounting baseline after updating stats to avoid double-counting
+            // the same time interval on the next scheduler tick.
+            current.reset_last_account(now_inst);
             // If the current task is IDLE, we always want to proceed to the
             // scheduler core to see if a real task has arrived.
             if current.is_idle_task() {
@@ -310,6 +348,7 @@ impl SchedState {
 
         // Update all context since the task has switched.
         if let Some(new_current) = self.run_q.current_mut() {
+            NUM_CONTEXT_SWITCHES.fetch_add(1, Ordering::SeqCst);
             ArchImpl::context_switch(new_current.t_shared.clone());
             let now = now().unwrap();
             new_current.reset_last_account(now);

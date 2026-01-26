@@ -18,6 +18,8 @@ use libkernel::{
 };
 use ringbuf::Arc;
 
+pub static NUM_FORKS: AtomicUsize = AtomicUsize::new(0);
+
 bitflags! {
     #[derive(Debug)]
     pub struct CloneFlags: u32 {
@@ -192,6 +194,7 @@ pub async fn sys_clone(
         .insert(tid, Arc::downgrade(&new_task.t_shared));
 
     sched::insert_task_cross_cpu(Box::new(new_task));
+    NUM_FORKS.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
 
     // Honour CLONE_*SETTID semantics for the parent and (shared-VM) child.
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) && !parent_tidptr.is_null() {

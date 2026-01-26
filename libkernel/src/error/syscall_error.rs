@@ -49,6 +49,10 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::TryAgain => EAGAIN,
         KernelError::BrokenPipe => EPIPE,
         KernelError::Fs(FsError::NotFound) => ENOENT,
+        KernelError::Fs(FsError::IsADirectory) => EISDIR,
+        KernelError::Fs(FsError::NotADirectory) => ENOTDIR,
+        KernelError::Fs(FsError::AlreadyExists) => EEXIST,
+        KernelError::Fs(FsError::InvalidInput) => EINVAL, // TODO: Is this right?
         KernelError::NotATty => ENOTTY,
         KernelError::SeekPipe => ESPIPE,
         KernelError::NotSupported => ENOSYS,

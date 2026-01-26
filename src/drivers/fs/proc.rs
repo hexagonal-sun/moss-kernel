@@ -1,6 +1,8 @@
 #![allow(clippy::module_name_repetitions)]
 
+mod meminfo;
 mod root;
+mod stat;
 mod task;
 
 use crate::drivers::{Driver, FilesystemDriver};

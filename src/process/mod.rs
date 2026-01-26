@@ -1,4 +1,5 @@
 use crate::drivers::timer::Instant;
+use crate::sched::CPU_STAT;
 use crate::{
     arch::ArchImpl,
     kernel::cpu_id::CpuId,
@@ -281,6 +282,11 @@ impl Task {
             .last_account
             .load(core::sync::atomic::Ordering::Relaxed);
         let delta = now.saturating_sub(last_account);
+        if self.is_idle_task() {
+            CPU_STAT.borrow_mut().idle += delta;
+        } else {
+            CPU_STAT.borrow_mut().user += delta;
+        }
         self.utime
             .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
         self.process
@@ -297,6 +303,7 @@ impl Task {
             .last_account
             .load(core::sync::atomic::Ordering::Relaxed);
         let delta = now.saturating_sub(last_account);
+        CPU_STAT.borrow_mut().system += delta;
         self.stime
             .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
         self.process

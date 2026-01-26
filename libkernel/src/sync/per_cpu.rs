@@ -130,12 +130,23 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
         }
     }
 
-    /// Returns a reference to the underlying datakj for the current CPU.
+    /// Returns a reference to the underlying data for the current CPU.
     ///
     /// # Panics
     /// Panics if the `PerCpu` variable has not been initialized.
     fn get_cell(&self) -> &RefCell<T> {
-        let id = CPU::id();
+        let cpu_id = CPU::id();
+        unsafe { self.get_cell_for_cpu(cpu_id) }
+    }
+
+    /// Returns a reference to the underlying data for a different CPU.
+    ///
+    /// # Safety
+    /// This is unsafe because accessing another CPU's data without synchronization primitives
+    /// will not end well. When accessing the current CPU's data, this is safe, and provided by [`Self::get_cell`] instead.
+    /// # Panics
+    /// Panics if the `PerCpu` variable has not been initialized.
+    unsafe fn get_cell_for_cpu(&self, cpu_id: usize) -> &RefCell<T> {
         let base_ptr = self.ptr.load(Ordering::Acquire);
 
         if base_ptr.is_null() {
@@ -145,7 +156,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
         // SAFETY: We have checked for null, and `init` guarantees the allocation
         // is valid for `id`. The returned reference is to a `RefCell`, which
         // manages its own internal safety.
-        unsafe { &*base_ptr.add(id) }
+        unsafe { &*base_ptr.add(cpu_id) }
     }
 
     /// Immutably borrows the per-CPU data.
@@ -183,6 +194,21 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
                 CPU::restore_interrupt_state(flags);
                 None
             }
+        }
+    }
+
+    /// Attempts to immutably borrow the per-CPU data for a different CPU.
+    ///
+    /// # Safety
+    /// See [`Self::get_cell_for_cpu`] for safety considerations and also [`RefCell::try_borrow_unguarded`].
+    ///
+    /// # Panics
+    /// Same as [`Self::get_cell_for_cpu`].
+    #[track_caller]
+    pub unsafe fn try_borrow_for_cpu(&self, cpu_id: usize) -> Option<&T> {
+        match unsafe { self.get_cell_for_cpu(cpu_id).try_borrow_unguarded().ok() } {
+            Some(value) => Some(value),
+            None => None,
         }
     }
 

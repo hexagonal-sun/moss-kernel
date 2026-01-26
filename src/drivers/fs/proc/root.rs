@@ -1,4 +1,6 @@
 use crate::drivers::fs::proc::get_inode_id;
+use crate::drivers::fs::proc::meminfo::ProcMeminfoInode;
+use crate::drivers::fs::proc::stat::ProcStatInode;
 use crate::drivers::fs::proc::task::ProcTaskInode;
 use crate::process::{TASK_LIST, TaskDescriptor, Tid};
 use crate::sched::current::current_task;
@@ -44,6 +46,14 @@ impl Inode for ProcRootInode {
         } else if name == "thread-self" {
             let current_task = current_task();
             current_task.descriptor()
+        } else if name == "stat" {
+            return Ok(Arc::new(ProcStatInode::new(
+                InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["stat"])),
+            )));
+        } else if name == "meminfo" {
+            return Ok(Arc::new(ProcMeminfoInode::new(
+                InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["meminfo"])),
+            )));
         } else {
             let pid: u32 = name.parse().map_err(|_| FsError::NotFound)?;
             // Search for the task descriptor.
@@ -104,6 +114,18 @@ impl Inode for ProcRootInode {
                 get_inode_id(&[&current_task.descriptor().tid().value().to_string()]),
             ),
             FileType::Directory,
+            (entries.len() + 1) as u64,
+        ));
+        entries.push(Dirent::new(
+            "stat".to_string(),
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["stat"])),
+            FileType::File,
+            (entries.len() + 1) as u64,
+        ));
+        entries.push(Dirent::new(
+            "meminfo".to_string(),
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["meminfo"])),
+            FileType::File,
             (entries.len() + 1) as u64,
         ));
 
