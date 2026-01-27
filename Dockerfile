@@ -1,4 +1,4 @@
-FROM ubuntu:latest
+FROM ubuntu:latest AS base
 
 # Install dependencies
 RUN apt update
@@ -17,6 +17,7 @@ COPY ./scripts /moss/scripts
 RUN ./scripts/download-arm-toolchain.sh /tmp/arm-toolchain.tar.xz
 RUN mkdir -p /opt/arm-toolchain
 RUN tar -xf /tmp/arm-toolchain.tar.xz -C /opt/arm-toolchain --strip-components=1
+RUN rm /tmp/arm-toolchain.tar.xz
 
 # Copy the current directory contents into the container at /moss
 COPY . /moss
@@ -24,7 +25,12 @@ COPY . /moss
 # Install ARM toolchain
 ENV PATH="/opt/arm-toolchain/bin:${PATH}"
 
-# Install dependencies
+# Build root fs image
+FROM base as image-builder
 RUN ./scripts/build-deps.sh
 RUN ./scripts/create-image.sh
+
+# Build final image
+FROM base as final
+COPY --from=image-builder /moss/moss.img /moss/moss.img
 RUN cargo build --release
