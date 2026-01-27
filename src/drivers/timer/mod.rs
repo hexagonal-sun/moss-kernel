@@ -1,6 +1,6 @@
 use super::Driver;
 use crate::interrupts::{InterruptDescriptor, InterruptHandler};
-use crate::local_per_cpu;
+use crate::per_cpu_private;
 use crate::sync::OnceLock;
 use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
 use core::{
@@ -308,6 +308,6 @@ pub fn schedule_preempt(when: Instant) {
 
 static SYS_TIMER: OnceLock<Arc<SysTimer>> = OnceLock::new();
 
-local_per_cpu! {
+per_cpu_private! {
     static WAKEUP_Q: BinaryHeap<WakeupEvent> = BinaryHeap::new;
 }

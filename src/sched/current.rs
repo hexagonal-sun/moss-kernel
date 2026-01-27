@@ -1,5 +1,5 @@
 use crate::{
-    local_per_cpu,
+    per_cpu_private,
     process::{Task, owned::OwnedTask},
 };
 use alloc::{boxed::Box, sync::Arc};
@@ -10,7 +10,7 @@ use core::{
     ptr,
 };
 
-local_per_cpu! {
+per_cpu_private! {
     pub(super) static CUR_TASK_PTR: CurrentTaskPtr = CurrentTaskPtr::new;
 }
 
