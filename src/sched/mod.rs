@@ -5,10 +5,11 @@ use crate::kernel::cpu_id::CpuId;
 use crate::process::owned::OwnedTask;
 use crate::{
     arch::Arch,
-    per_cpu,
+    local_per_cpu, per_cpu,
     process::{TASK_LIST, TaskDescriptor, TaskState},
 };
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
+use core::fmt::Debug;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
 use current::{CUR_TASK_PTR, current_task};
@@ -25,40 +26,49 @@ pub mod waker;
 
 pub static NUM_CONTEXT_SWITCHES: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CpuStat {
-    pub user: usize,
-    pub nice: usize,
-    pub system: usize,
-    pub idle: usize,
-    pub iowait: usize,
-    pub irq: usize,
-    pub softirq: usize,
-    pub steal: usize,
-    pub guest: usize,
-    pub guest_nice: usize,
+#[derive(Debug, Default)]
+pub struct CpuStat<T>
+where
+    T: Debug + Default,
+{
+    pub user: T,
+    pub nice: T,
+    pub system: T,
+    pub idle: T,
+    pub iowait: T,
+    pub irq: T,
+    pub softirq: T,
+    pub steal: T,
+    pub guest: T,
+    pub guest_nice: T,
 }
 
-per_cpu! {
-    pub static CPU_STAT: CpuStat = CpuStat::default;
-}
-
-pub fn get_current_cpu_stat() -> CpuStat {
-    *CPU_STAT.borrow()
-}
-
-pub fn get_other_cpu_stat(cpu_id: CpuId) -> CpuStat {
-    unsafe {
-        let mut value = CPU_STAT.try_borrow_for_cpu(cpu_id.value());
-        while value.is_none() {
-            warn!("Waiting to borrow CPU_STAT for CPU {}", cpu_id.value());
-            value = CPU_STAT.try_borrow_for_cpu(cpu_id.value());
+impl CpuStat<AtomicUsize> {
+    pub fn to_usize(&self) -> CpuStat<usize> {
+        CpuStat {
+            user: self.user.load(Ordering::Relaxed),
+            nice: self.nice.load(Ordering::Relaxed),
+            system: self.system.load(Ordering::Relaxed),
+            idle: self.idle.load(Ordering::Relaxed),
+            iowait: self.iowait.load(Ordering::Relaxed),
+            irq: self.irq.load(Ordering::Relaxed),
+            softirq: self.softirq.load(Ordering::Relaxed),
+            steal: self.steal.load(Ordering::Relaxed),
+            guest: self.guest.load(Ordering::Relaxed),
+            guest_nice: self.guest_nice.load(Ordering::Relaxed),
         }
-        *value.unwrap()
     }
 }
 
 per_cpu! {
+    pub static CPU_STAT: CpuStat<AtomicUsize> = CpuStat::default;
+}
+
+pub fn get_cpu_stat(cpu_id: CpuId) -> CpuStat<usize> {
+    CPU_STAT.get_by_cpu(cpu_id.value()).to_usize()
+}
+
+local_per_cpu! {
     static SCHED_STATE: SchedState = SchedState::new;
 }
 
@@ -189,7 +199,7 @@ impl SchedState {
             None
         }
 
-        per_cpu! {
+        local_per_cpu! {
             static LAST_UPDATE: Option<Instant> = none;
         }
 
@@ -348,7 +358,7 @@ impl SchedState {
 
         // Update all context since the task has switched.
         if let Some(new_current) = self.run_q.current_mut() {
-            NUM_CONTEXT_SWITCHES.fetch_add(1, Ordering::SeqCst);
+            NUM_CONTEXT_SWITCHES.fetch_add(1, Ordering::Relaxed);
             ArchImpl::context_switch(new_current.t_shared.clone());
             let now = now().unwrap();
             new_current.reset_last_account(now);

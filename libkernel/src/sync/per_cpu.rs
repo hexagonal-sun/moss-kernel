@@ -110,7 +110,7 @@ pub trait PerCpuInitializer {
 pub struct PerCpu<T: Send, CPU: CpuOps> {
     /// A pointer to the heap-allocated array of `RefCell<T>`s, one for each
     /// CPU. It's `AtomicPtr` to ensure safe one-time initialization.
-    ptr: AtomicPtr<RefCell<T>>,
+    ptr: AtomicPtr<T>,
     /// A function pointer to the initializer for type `T`.
     /// This is stored so it can be called during the runtime `init` phase.
     initializer: fn() -> T,
@@ -134,9 +134,9 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     ///
     /// # Panics
     /// Panics if the `PerCpu` variable has not been initialized.
-    fn get_cell(&self) -> &RefCell<T> {
+    pub fn get(&self) -> &T {
         let cpu_id = CPU::id();
-        unsafe { self.get_cell_for_cpu(cpu_id) }
+        unsafe { self.get_for_cpu(cpu_id) }
     }
 
     /// Returns a reference to the underlying data for a different CPU.
@@ -146,7 +146,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     /// will not end well. When accessing the current CPU's data, this is safe, and provided by [`Self::get_cell`] instead.
     /// # Panics
     /// Panics if the `PerCpu` variable has not been initialized.
-    unsafe fn get_cell_for_cpu(&self, cpu_id: usize) -> &RefCell<T> {
+    unsafe fn get_for_cpu(&self, cpu_id: usize) -> &T {
         let base_ptr = self.ptr.load(Ordering::Acquire);
 
         if base_ptr.is_null() {
@@ -154,11 +154,12 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
         }
 
         // SAFETY: We have checked for null, and `init` guarantees the allocation
-        // is valid for `id`. The returned reference is to a `RefCell`, which
-        // manages its own internal safety.
+        // is valid for `id`.
         unsafe { &*base_ptr.add(cpu_id) }
     }
+}
 
+impl<T: Send, CPU: CpuOps> PerCpu<RefCell<T>, CPU> {
     /// Immutably borrows the per-CPU data.
     ///
     /// The borrow lasts until the returned `Ref<T>` is dropped.
@@ -168,7 +169,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     #[track_caller]
     pub fn borrow(&self) -> IrqGuard<Ref<'_, T>, CPU> {
         let flags = CPU::disable_interrupts();
-        IrqGuard::new(self.get_cell().borrow(), flags)
+        IrqGuard::new(self.get().borrow(), flags)
     }
 
     /// Mutably borrows the per-CPU data.
@@ -180,7 +181,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     #[track_caller]
     pub fn borrow_mut(&self) -> IrqGuard<RefMut<'_, T>, CPU> {
         let flags = CPU::disable_interrupts();
-        IrqGuard::new(self.get_cell().borrow_mut(), flags)
+        IrqGuard::new(self.get().borrow_mut(), flags)
     }
 
     /// Attempts to immutably borrow the per-CPU data.
@@ -188,7 +189,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     pub fn try_borrow(&self) -> Option<IrqGuard<Ref<'_, T>, CPU>> {
         let flags = CPU::disable_interrupts();
 
-        match self.get_cell().try_borrow().ok() {
+        match self.get().try_borrow().ok() {
             Some(guard) => Some(IrqGuard::new(guard, flags)),
             None => {
                 CPU::restore_interrupt_state(flags);
@@ -197,26 +198,11 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
         }
     }
 
-    /// Attempts to immutably borrow the per-CPU data for a different CPU.
-    ///
-    /// # Safety
-    /// See [`Self::get_cell_for_cpu`] for safety considerations and also [`RefCell::try_borrow_unguarded`].
-    ///
-    /// # Panics
-    /// Same as [`Self::get_cell_for_cpu`].
-    #[track_caller]
-    pub unsafe fn try_borrow_for_cpu(&self, cpu_id: usize) -> Option<&T> {
-        match unsafe { self.get_cell_for_cpu(cpu_id).try_borrow_unguarded().ok() } {
-            Some(value) => Some(value),
-            None => None,
-        }
-    }
-
     #[track_caller]
     pub fn try_borrow_mut(&self) -> Option<IrqGuard<RefMut<'_, T>, CPU>> {
         let flags = CPU::disable_interrupts();
 
-        match self.get_cell().try_borrow_mut().ok() {
+        match self.get().try_borrow_mut().ok() {
             Some(guard) => Some(IrqGuard::new(guard, flags)),
             None => {
                 CPU::restore_interrupt_state(flags);
@@ -238,12 +224,18 @@ impl<T: Send, CPU: CpuOps> PerCpu<T, CPU> {
     }
 }
 
+impl<T: Send + Sync, CPU: CpuOps> PerCpu<T, CPU> {
+    pub fn get_by_cpu(&self, cpu_id: usize) -> &T {
+        unsafe { self.get_for_cpu(cpu_id) }
+    }
+}
+
 // Implement the type-erased initializer trait.
 impl<T: Send, CPU: CpuOps> PerCpuInitializer for PerCpu<T, CPU> {
     fn init(&self, num_cpus: usize) {
         let mut values = Vec::with_capacity(num_cpus);
         for _ in 0..num_cpus {
-            values.push(RefCell::new((self.initializer)()));
+            values.push((self.initializer)());
         }
 
         let leaked_ptr = Box::leak(values.into_boxed_slice()).as_mut_ptr();

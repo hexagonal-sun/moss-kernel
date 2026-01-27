@@ -194,7 +194,7 @@ pub async fn sys_clone(
         .insert(tid, Arc::downgrade(&new_task.t_shared));
 
     sched::insert_task_cross_cpu(Box::new(new_task));
-    NUM_FORKS.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+    NUM_FORKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // Honour CLONE_*SETTID semantics for the parent and (shared-VM) child.
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) && !parent_tidptr.is_null() {

@@ -15,7 +15,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use core::fmt::Display;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use creds::Credentials;
 use fd_table::FileDescriptorTable;
 use libkernel::{
@@ -278,48 +278,34 @@ impl Task {
     pub fn update_utime(&self, now: Instant) {
         let now = now.user_normalized();
         let now = now.ticks() as usize;
-        let last_account = self
-            .last_account
-            .load(core::sync::atomic::Ordering::Relaxed);
+        let last_account = self.last_account.load(Ordering::Relaxed);
         let delta = now.saturating_sub(last_account);
         if self.is_idle_task() {
-            CPU_STAT.borrow_mut().idle += delta;
+            CPU_STAT.get().idle.fetch_add(delta, Ordering::Relaxed);
         } else {
-            CPU_STAT.borrow_mut().user += delta;
+            CPU_STAT.get().user.fetch_add(delta, Ordering::Relaxed);
         }
-        self.utime
-            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
-        self.process
-            .utime
-            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
-        self.last_account
-            .store(now, core::sync::atomic::Ordering::Relaxed);
+        self.utime.fetch_add(delta, Ordering::Relaxed);
+        self.process.utime.fetch_add(delta, Ordering::Relaxed);
+        self.last_account.store(now, Ordering::Relaxed);
     }
 
     pub fn update_stime(&self, now: Instant) {
         let now = now.user_normalized();
         let now = now.ticks() as usize;
-        let last_account = self
-            .last_account
-            .load(core::sync::atomic::Ordering::Relaxed);
+        let last_account = self.last_account.load(Ordering::Relaxed);
         let delta = now.saturating_sub(last_account);
-        CPU_STAT.borrow_mut().system += delta;
-        self.stime
-            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
-        self.process
-            .stime
-            .fetch_add(delta, core::sync::atomic::Ordering::Relaxed);
-        self.last_account
-            .store(now, core::sync::atomic::Ordering::Relaxed);
+        CPU_STAT.get().system.fetch_add(delta, Ordering::Relaxed);
+        self.stime.fetch_add(delta, Ordering::Relaxed);
+        self.process.stime.fetch_add(delta, Ordering::Relaxed);
+        self.last_account.store(now, Ordering::Relaxed);
     }
 
     pub fn reset_last_account(&self, now: Instant) {
         let now = now.user_normalized();
         let now = now.ticks() as usize;
-        self.last_account
-            .store(now, core::sync::atomic::Ordering::Relaxed);
-        self.last_account
-            .store(now, core::sync::atomic::Ordering::Relaxed);
+        self.last_account.store(now, Ordering::Relaxed);
+        self.last_account.store(now, Ordering::Relaxed);
     }
 }
 

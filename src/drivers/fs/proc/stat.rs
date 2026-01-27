@@ -2,14 +2,13 @@ use crate::arch::{Arch, ArchImpl};
 use crate::drivers::timer::uptime;
 use crate::kernel::cpu_id::CpuId;
 use crate::process::clone::NUM_FORKS;
-use crate::sched::{CpuStat, NUM_CONTEXT_SWITCHES, get_current_cpu_stat, get_other_cpu_stat};
+use crate::sched::{CpuStat, NUM_CONTEXT_SWITCHES, get_cpu_stat};
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::sync::atomic::Ordering;
-use libkernel::CpuOps;
 use libkernel::fs::attr::FileAttr;
 use libkernel::fs::{InodeId, SimpleFile};
 
@@ -45,27 +44,23 @@ impl SimpleFile for ProcStatInode {
 
         let mut cpu_stats = Vec::new();
         for cpu_id in 0..ArchImpl::cpu_count() {
-            if cpu_id == ArchImpl::id() {
-                cpu_stats.push(get_current_cpu_stat());
-            } else {
-                // TODO: Fill in real CPU stats.
-                cpu_stats.push(get_other_cpu_stat(CpuId::from_value(cpu_id)));
-            }
+            cpu_stats.push(get_cpu_stat(CpuId::from_value(cpu_id)));
         }
-        let total: CpuStat = cpu_stats
-            .iter()
-            .fold(CpuStat::default(), |acc, stat| CpuStat {
-                user: acc.user + stat.user,
-                nice: acc.nice + stat.nice,
-                system: acc.system + stat.system,
-                idle: acc.idle + stat.idle,
-                iowait: acc.iowait + stat.iowait,
-                irq: acc.irq + stat.irq,
-                softirq: acc.softirq + stat.softirq,
-                steal: acc.steal + stat.steal,
-                guest: acc.guest + stat.guest,
-                guest_nice: acc.guest_nice + stat.guest_nice,
-            });
+        let total: CpuStat<usize> =
+            cpu_stats
+                .iter()
+                .fold(CpuStat::default(), |acc, stat| CpuStat {
+                    user: acc.user + stat.user,
+                    nice: acc.nice + stat.nice,
+                    system: acc.system + stat.system,
+                    idle: acc.idle + stat.idle,
+                    iowait: acc.iowait + stat.iowait,
+                    irq: acc.irq + stat.irq,
+                    softirq: acc.softirq + stat.softirq,
+                    steal: acc.steal + stat.steal,
+                    guest: acc.guest + stat.guest,
+                    guest_nice: acc.guest_nice + stat.guest_nice,
+                });
         cpu_stats.insert(0, total);
         for (i, stat) in cpu_stats.iter().enumerate() {
             let label = if i == 0 {
