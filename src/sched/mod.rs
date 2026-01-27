@@ -5,7 +5,7 @@ use crate::kernel::cpu_id::CpuId;
 use crate::process::owned::OwnedTask;
 use crate::{
     arch::Arch,
-    local_per_cpu, per_cpu,
+    per_cpu_private, per_cpu_shared,
     process::{TASK_LIST, TaskDescriptor, TaskState},
 };
 use alloc::{boxed::Box, collections::btree_map::BTreeMap, sync::Arc};
@@ -60,7 +60,7 @@ impl CpuStat<AtomicUsize> {
     }
 }
 
-per_cpu! {
+per_cpu_shared! {
     pub static CPU_STAT: CpuStat<AtomicUsize> = CpuStat::default;
 }
 
@@ -68,7 +68,7 @@ pub fn get_cpu_stat(cpu_id: CpuId) -> CpuStat<usize> {
     CPU_STAT.get_by_cpu(cpu_id.value()).to_usize()
 }
 
-local_per_cpu! {
+per_cpu_private! {
     static SCHED_STATE: SchedState = SchedState::new;
 }
 
@@ -199,7 +199,7 @@ impl SchedState {
             None
         }
 
-        local_per_cpu! {
+        per_cpu_private! {
             static LAST_UPDATE: Option<Instant> = none;
         }
 
