@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_initialization_and_basic_access() {
-        let data: PerCpu<_, MockArch> = PerCpu::new(|| 0u32);
+        let data: PerCpu<_, MockArch> = PerCpu::new(|| RefCell::new(0u32));
         data.init(4); // Simulate a 4-core system
 
         // Act as CPU 0
@@ -355,7 +355,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "PerCpu variable accessed before initialization")]
     fn test_panic_on_uninitialized_access() {
-        let data: PerCpu<_, MockArch> = PerCpu::new(|| 0);
+        let data: PerCpu<_, MockArch> = PerCpu::new(|| RefCell::new(0));
         // This should panic because data.init() was not called.
         let _ = data.borrow();
     }
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "already borrowed")]
     fn test_refcell_panic_on_double_mutable_borrow() {
-        let data: PerCpu<_, MockArch> = PerCpu::new(|| String::from("hello"));
+        let data: PerCpu<_, MockArch> = PerCpu::new(|| RefCell::new(String::from("hello")));
         data.init(1);
         MOCK_CPU_ID.with(|id| id.set(0));
 
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "already borrowed")]
     fn test_refcell_panic_on_mutable_while_immutable_borrow() {
-        let data: PerCpu<_, MockArch> = PerCpu::new(|| 0);
+        let data: PerCpu<_, MockArch> = PerCpu::new(|| RefCell::new(0));
         data.init(1);
         MOCK_CPU_ID.with(|id| id.set(0));
 
@@ -400,7 +400,7 @@ mod tests {
         const ITERATIONS_PER_THREAD: usize = 1000;
 
         // The data must be in an Arc to be shared across threads.
-        let per_cpu_data: Arc<PerCpu<_, MockArch>> = Arc::new(PerCpu::new(|| 0));
+        let per_cpu_data: Arc<PerCpu<_, MockArch>> = Arc::new(PerCpu::new(|| RefCell::new(0)));
         per_cpu_data.init(NUM_THREADS);
 
         let mut handles = vec![];
