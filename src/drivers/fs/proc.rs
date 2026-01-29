@@ -1,5 +1,6 @@
 #![allow(clippy::module_name_repetitions)]
 
+mod cmdline;
 mod meminfo;
 mod root;
 mod stat;

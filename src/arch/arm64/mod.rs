@@ -2,6 +2,7 @@ use aarch64_cpu::{
     asm::wfi,
     registers::{DAIF, MPIDR_EL1, ReadWriteable, Readable},
 };
+use alloc::string::String;
 use alloc::sync::Arc;
 use cpu_ops::{local_irq_restore, local_irq_save};
 use exceptions::ExceptionState;
@@ -138,6 +139,10 @@ impl Arch for Aarch64 {
 
         // Fallback: halt the CPU indefinitely.
         Self::halt()
+    }
+
+    fn get_cmdline() -> Option<String> {
+        fdt::get_cmdline()
     }
 
     unsafe fn copy_from_user(

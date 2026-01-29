@@ -16,6 +16,7 @@ use crate::{
         thread_group::signal::{SigId, ksigaction::UserspaceSigAction},
     },
 };
+use alloc::string::String;
 use alloc::sync::Arc;
 use libkernel::{
     CpuOps, VirtualMemory,
@@ -53,6 +54,8 @@ pub trait Arch: CpuOps + VirtualMemory {
 
     /// Restarts the machine. Implementations must never return.
     fn restart() -> !;
+
+    fn get_cmdline() -> Option<String>;
 
     /// Call a user-specified signal handler in the current process.
     fn do_signal(

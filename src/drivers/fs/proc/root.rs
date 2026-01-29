@@ -1,3 +1,4 @@
+use crate::drivers::fs::proc::cmdline::ProcCmdlineInode;
 use crate::drivers::fs::proc::get_inode_id;
 use crate::drivers::fs::proc::meminfo::ProcMeminfoInode;
 use crate::drivers::fs::proc::stat::ProcStatInode;
@@ -53,6 +54,10 @@ impl Inode for ProcRootInode {
         } else if name == "meminfo" {
             return Ok(Arc::new(ProcMeminfoInode::new(
                 InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["meminfo"])),
+            )));
+        } else if name == "cmdline" {
+            return Ok(Arc::new(ProcCmdlineInode::new(
+                InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["cmdline"])),
             )));
         } else {
             let pid: u32 = name.parse().map_err(|_| FsError::NotFound)?;
@@ -125,6 +130,12 @@ impl Inode for ProcRootInode {
         entries.push(Dirent::new(
             "meminfo".to_string(),
             InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["meminfo"])),
+            FileType::File,
+            (entries.len() + 1) as u64,
+        ));
+        entries.push(Dirent::new(
+            "cmdline".to_string(),
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["cmdline"])),
             FileType::File,
             (entries.len() + 1) as u64,
         ));
