@@ -1,6 +1,7 @@
 mkdir /bin
 mkdir /dev
 mkdir /proc
+mkdir /sys
 mkdir /tmp
 symlink /bin/[ /bin/busybox
 symlink /bin/[[ /bin/busybox
