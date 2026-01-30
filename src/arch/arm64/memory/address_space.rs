@@ -16,6 +16,7 @@ use libkernel::{
         pg_tables::{
             L0Table, MapAttributes, MappingContext, PageAllocator, PgTableArray, map_range,
         },
+        pg_tear_down::tear_down_address_space,
         pg_walk::{WalkContext, get_pte, walk_and_modify_region},
     },
     error::{KernelError, MapError, Result},
@@ -27,6 +28,7 @@ use libkernel::{
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
 };
+use log::warn;
 
 pub struct Arm64ProcessAddressSpace {
     l0_table: TPA<PgTableArray<L0Table>>,
@@ -196,5 +198,25 @@ impl UserAddressSpace for Arm64ProcessAddressSpace {
                 pgd
             }
         })
+    }
+}
+
+impl Drop for Arm64ProcessAddressSpace {
+    fn drop(&mut self) {
+        let mut walk_ctx = WalkContext {
+            mapper: &mut PageOffsetPgTableMapper {},
+            invalidator: &AllEl0TlbInvalidator::new(),
+        };
+
+        if tear_down_address_space(self.l0_table, &mut walk_ctx, |addr| unsafe {
+            PAGE_ALLOC
+                .get()
+                .unwrap()
+                .alloc_from_region(addr.to_pfn().as_phys_range());
+        })
+        .is_err()
+        {
+            warn!("Address space tear down failed.  Probable memory leakage!");
+        }
     }
 }
