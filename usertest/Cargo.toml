@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+colored = "3"
 inventory = "0.3"
 libc = "0.2"
 parking_lot = "0.12"

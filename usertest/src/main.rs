@@ -3,6 +3,7 @@ use std::{
     sync::{Arc, Barrier, Mutex},
     thread,
 };
+use colored::Colorize;
 
 mod fs;
 mod futex;
@@ -193,7 +194,13 @@ fn test_mincore() {
 
 register_test!(test_mincore);
 
-fn run_test(test_fn: fn()) {
+fn failing_test() {
+    panic!("This test is supposed to fail");
+}
+
+register_test!(failing_test);
+
+fn run_test(test_fn: fn()) -> Result<(), i32> {
     // Fork a new process to run the test
     unsafe {
         let pid = libc::fork();
@@ -201,14 +208,27 @@ fn run_test(test_fn: fn()) {
             panic!("fork failed");
         } else if pid == 0 {
             // Child process
-            test_fn();
-            libc::_exit(0);
+            let result = std::panic::catch_unwind(|| {
+                test_fn();
+            });
+            let exit_code = if let Err(e) = result {
+                // Get the panic info
+                eprintln!("Test panicked: {:?}", e);
+                let error = std::io::Error::last_os_error();
+                eprintln!("Last OS error: {}", error);
+                1
+            } else {
+                0
+            };
+            libc::_exit(exit_code);
         } else {
             // Parent process
             let mut status = 0;
             libc::waitpid(pid, &mut status, 0);
             if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
-                panic!("Test failed in child process with status {status}");
+                Err(status)
+            } else {
+                Ok(())
             }
         }
     }
@@ -220,8 +240,13 @@ fn main() {
     for test in inventory::iter::<Test> {
         print!("{} ...", test.test_text);
         let _ = stdout().flush();
-        run_test(test.test_fn);
-        println!(" OK");
+        match run_test(test.test_fn) {
+            Ok(()) => println!("{}", " OK".green()),
+            Err(code) => {
+                println!(" {}", "FAILED".red());
+                eprintln!("Test '{}' failed with exit code {}", test.test_text, code);
+            }
+        }
     }
     let end = std::time::Instant::now();
     println!("All tests passed in {} ms", (end - start).as_millis());
