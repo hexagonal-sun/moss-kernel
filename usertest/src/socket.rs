@@ -1,39 +1,36 @@
 use libc::{AF_INET, AF_UNIX, SOCK_DGRAM, SOCK_STREAM};
 use libc::{accept, bind, connect, listen, shutdown, socket};
+use crate::register_test;
 
 pub fn test_tcp_socket_creation() {
-    print!("Testing TCP socket creation ... ");
     unsafe {
         let sockfd = socket(AF_INET, SOCK_STREAM, 0);
         if sockfd < 0 {
             panic!("Failed to create TCP socket");
         }
     }
-    println!("OK");
 }
 
+register_test!(test_tcp_socket_creation);
+
 pub fn test_unix_socket_creation() {
-    print!("Testing UNIX stream socket creation ... ");
     unsafe {
         let sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
         if sockfd < 0 {
             panic!("Failed to create UNIX stream socket");
         }
     }
-    println!("OK");
-
-    print!("Testing UNIX datagram socket creation ... ");
     unsafe {
         let sockfd = socket(AF_UNIX, SOCK_DGRAM, 0);
         if sockfd < 0 {
             panic!("Failed to create UNIX datagram socket");
         }
     }
-    println!("OK");
 }
 
+register_test!(test_unix_socket_creation);
+
 pub fn test_unix_socket_basic_functions() {
-    print!("Testing UNIX socket functions ... ");
     let sockfd = unsafe { socket(AF_UNIX, SOCK_STREAM, 0) };
     if sockfd < 0 {
         panic!("Failed to create UNIX stream socket for function tests");
@@ -67,13 +64,12 @@ pub fn test_unix_socket_basic_functions() {
     if shutdown_result < 0 {
         panic!("Failed to shutdown UNIX socket");
     }
-    println!("OK");
 }
+
+register_test!(test_unix_socket_basic_functions);
 
 pub fn test_unix_socket_fork_msg_passing() {
     use std::ptr;
-
-    print!("Testing UNIX socket fork message passing ... ");
 
     // Create server socket, bind and listen before fork
     let server_fd = unsafe { socket(AF_UNIX, SOCK_STREAM, 0) };
@@ -176,6 +172,7 @@ pub fn test_unix_socket_fork_msg_passing() {
 
         unsafe { libc::close(conn_fd) };
         unsafe { libc::close(server_fd) };
-        println!("OK");
     }
 }
+
+register_test!(test_unix_socket_fork_msg_passing);
