@@ -1,7 +1,7 @@
 use crate::arch::ArchImpl;
 use crate::fs::fops::FileOps;
 use crate::fs::open_file::FileCtx;
-use crate::socket::sops::SocketOps;
+use crate::socket::sops::{RecvFlags, SendFlags, SocketOps};
 use crate::socket::{ShutdownHow, SockAddr, process_packets, sockets};
 use crate::sync::SpinLock;
 use alloc::boxed::Box;
@@ -89,20 +89,44 @@ impl SocketOps for TcpSocket {
         self.refill_backlog_sockets(&mut backlogs)
     }
 
-    async fn read(
+    async fn recv(
         &mut self,
         _ctx: &mut FileCtx,
         _buf: UA,
         _count: usize,
+        _flags: RecvFlags,
     ) -> libkernel::error::Result<usize> {
         todo!()
     }
 
-    async fn write(
+    async fn recvfrom(
         &mut self,
         _ctx: &mut FileCtx,
         _buf: UA,
         _count: usize,
+        _flags: RecvFlags,
+        _addr: Option<SockAddr>,
+    ) -> libkernel::error::Result<(usize, Option<SockAddr>)> {
+        todo!()
+    }
+
+    async fn send(
+        &mut self,
+        _ctx: &mut FileCtx,
+        _buf: UA,
+        _count: usize,
+        _flags: SendFlags,
+    ) -> libkernel::error::Result<usize> {
+        todo!()
+    }
+
+    async fn sendto(
+        &mut self,
+        _ctx: &mut FileCtx,
+        _buf: UA,
+        _count: usize,
+        _flags: SendFlags,
+        _addr: SockAddr,
     ) -> libkernel::error::Result<usize> {
         todo!()
     }

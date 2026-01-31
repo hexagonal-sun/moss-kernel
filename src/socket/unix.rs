@@ -1,5 +1,6 @@
 use crate::fs::open_file::FileCtx;
 use crate::kernel::kpipe::KPipe;
+use crate::socket::sops::{RecvFlags, SendFlags};
 use crate::socket::{SockAddr, SocketOps};
 use crate::sync::OnceLock;
 use crate::sync::SpinLock;
@@ -220,7 +221,13 @@ impl SocketOps for UnixSocket {
         Ok(Box::new(sock))
     }
 
-    async fn read(&mut self, _ctx: &mut FileCtx, buf: UA, count: usize) -> Result<usize> {
+    async fn recv(
+        &mut self,
+        _ctx: &mut FileCtx,
+        buf: UA,
+        count: usize,
+        _flags: RecvFlags,
+    ) -> Result<usize> {
         if count == 0 {
             return Ok(0);
         }
@@ -230,7 +237,26 @@ impl SocketOps for UnixSocket {
         self.inbox.copy_to_user(buf, count).await
     }
 
-    async fn write(&mut self, _ctx: &mut FileCtx, buf: UA, count: usize) -> Result<usize> {
+    async fn recvfrom(
+        &mut self,
+        _ctx: &mut FileCtx,
+        _buf: UA,
+        _count: usize,
+        _flags: RecvFlags,
+        _addr: Option<SockAddr>,
+    ) -> Result<(usize, Option<SockAddr>)> {
+        todo!();
+        // let n = self.recv(ctx, buf, count, flags).await?;
+        // Ok((n, None))
+    }
+
+    async fn send(
+        &mut self,
+        _ctx: &mut FileCtx,
+        buf: UA,
+        count: usize,
+        _flags: SendFlags,
+    ) -> Result<usize> {
         if count == 0 {
             return Ok(0);
         }
@@ -249,6 +275,18 @@ impl SocketOps for UnixSocket {
             return Err(KernelError::InvalidValue);
         };
         peer.copy_from_user(buf, count).await
+    }
+
+    async fn sendto(
+        &mut self,
+        _ctx: &mut FileCtx,
+        _buf: UA,
+        _count: usize,
+        _flags: SendFlags,
+        _addr: SockAddr,
+    ) -> Result<usize> {
+        todo!();
+        // self.send(ctx, buf, count, flags).await
     }
 
     async fn shutdown(&self, how: crate::socket::ShutdownHow) -> Result<()> {

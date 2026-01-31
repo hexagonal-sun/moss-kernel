@@ -91,7 +91,7 @@ use crate::{
     sched::{current::current_task, sys_sched_yield},
     socket::syscalls::{
         accept::sys_accept, bind::sys_bind, connect::sys_connect, listen::sys_listen,
-        shutdown::sys_shutdown, socket::sys_socket,
+        send::sys_sendto, shutdown::sys_shutdown, socket::sys_socket,
     },
 };
 use alloc::boxed::Box;
@@ -520,6 +520,17 @@ pub async fn handle_syscall() {
         0xc9 => sys_listen(arg1.into(), arg2 as _).await,
         0xca => sys_accept(arg1.into()).await,
         0xcb => sys_connect(arg1.into(), UA::from_value(arg2 as _), arg3 as _).await,
+        0xce => {
+            sys_sendto(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+                UA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
         0xd2 => sys_shutdown(arg1.into(), arg2 as _).await,
         0xd6 => sys_brk(VA::from_value(arg1 as _))
             .await
