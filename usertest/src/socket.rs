@@ -1,6 +1,6 @@
+use crate::register_test;
 use libc::{AF_INET, AF_UNIX, SOCK_DGRAM, SOCK_STREAM};
 use libc::{accept, bind, connect, listen, shutdown, socket};
-use crate::register_test;
 
 pub fn test_tcp_socket_creation() {
     unsafe {
