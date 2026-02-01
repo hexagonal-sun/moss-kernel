@@ -70,7 +70,7 @@ pub struct StatX {
     pub stx_btime: StatXTimestamp, // Creation time
     pub stx_ctime: StatXTimestamp, // Change time
     pub stx_mtime: StatXTimestamp, // Modification time
-    pub stx_mnt_id: u64,                    // Mount ID
+    pub stx_mnt_id: u64,           // Mount ID
 
     // Currently not supported on any current filesystems
     pub stx_rdev_major: u32,                // Device major ID

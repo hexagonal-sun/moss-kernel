@@ -1,5 +1,5 @@
-use core::sync::atomic::AtomicBool;
 use crate::{ArchImpl, arch::Arch, sched::current::current_task_shared};
+use core::sync::atomic::AtomicBool;
 use libkernel::{
     error::{KernelError, Result},
     proc::caps::CapabilitiesFlags,
