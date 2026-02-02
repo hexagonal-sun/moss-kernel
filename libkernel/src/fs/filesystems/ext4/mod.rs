@@ -96,6 +96,7 @@ impl From<Metadata> for FileAttr {
             atime: meta.atime,
             ctime: meta.ctime,
             mtime: meta.mtime,
+            nlinks: meta.links_count,
             ..Default::default()
         }
     }
@@ -248,6 +249,7 @@ where
         inner.metadata.mtime = attr.mtime;
         inner.metadata.gid = attr.gid.into();
         inner.metadata.uid = attr.uid.into();
+        inner.metadata.links_count = attr.nlinks;
         let fs = self.fs_ref.upgrade().ok_or(FsError::InvalidFs)?;
         inner.write(&fs.inner).await?;
         Ok(())

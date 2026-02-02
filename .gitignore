@@ -1,6 +1,7 @@
 /target
 /build
 .gdb_history
+.gdbinit
 *.img
 .idea/
 .vscode/
