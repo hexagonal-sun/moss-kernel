@@ -406,7 +406,7 @@ pub mod tests {
     const PAGE_SIZE: usize = 4096;
 
     pub struct TestFixture {
-        allocator: FrameAllocator<MockCpuOps>,
+        pub allocator: FrameAllocator<MockCpuOps>,
         base_ptr: *mut u8,
         layout: Layout,
     }
