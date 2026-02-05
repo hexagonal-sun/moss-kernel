@@ -1,6 +1,8 @@
 use crate::memory::page::PageFrame;
 use intrusive_collections::{LinkedListLink, UnsafeRef, intrusive_adapter};
 
+use super::slab::slab::Slab;
+
 #[derive(Clone, Copy, Debug)]
 pub struct AllocatedInfo {
     /// Current ref count of the allocated block.
@@ -26,6 +28,8 @@ pub enum FrameState {
     AllocatedHead(AllocatedInfo),
     /// The frame is a tail page of an allocated block.
     AllocatedTail(TailInfo),
+    /// The frame is being used by the slab allocator.
+    Slab(Slab),
     /// The frame is part of the kernel's own image.
     Kernel,
 }

@@ -2,7 +2,13 @@ use crate::{
     CpuOps,
     error::{KernelError, Result},
     memory::{
-        PAGE_SHIFT, address::AddressTranslator, allocators::frame::FrameState, page::PageFrame,
+        PAGE_SHIFT,
+        address::AddressTranslator,
+        allocators::{
+            frame::FrameState,
+            slab::{SLAB_FRAME_ALLOC_ORDER, SLAB_SIZE_BYTES},
+        },
+        page::PageFrame,
         region::PhysMemoryRegion,
     },
     sync::spinlock::SpinLockIrq,
@@ -16,6 +22,7 @@ use log::info;
 
 use super::{
     frame::{AllocatedInfo, Frame, FrameAdapter, FrameList, TailInfo},
+    slab::slab::Slab,
     smalloc::Smalloc,
 };
 
@@ -23,13 +30,29 @@ use super::{
 // 2^MAX_ORDER pages.
 const MAX_ORDER: usize = 10;
 
-struct FrameAllocatorInner {
+pub(super) struct FrameAllocatorInner {
     frame_list: FrameList,
     free_pages: usize,
     free_lists: [LinkedList<FrameAdapter>; MAX_ORDER + 1],
 }
 
 impl FrameAllocatorInner {
+    pub(super) fn free_slab(&mut self, frame: UnsafeRef<Frame>) {
+        assert!(matches!(frame.state, FrameState::Slab(_)));
+
+        // SAFETY: The caller should guarntee exclusive ownership of this frame
+        // as it's being passed back to the FA.
+        let frame = unsafe { &mut *UnsafeRef::into_raw(frame) };
+
+        // Restore frame state data for slabs.
+        frame.state = FrameState::AllocatedHead(AllocatedInfo {
+            ref_count: 1,
+            order: SLAB_FRAME_ALLOC_ORDER as _,
+        });
+
+        self.free_frames(PhysMemoryRegion::new(frame.pfn.pa(), SLAB_SIZE_BYTES));
+    }
+
     /// Frees a previously allocated block of frames.
     /// The PFN can point to any page within the allocated block.
     fn free_frames(&mut self, region: PhysMemoryRegion) {
@@ -129,7 +152,7 @@ impl FrameAllocatorInner {
 }
 
 pub struct FrameAllocator<CPU: CpuOps> {
-    inner: SpinLockIrq<FrameAllocatorInner, CPU>,
+    pub(super) inner: SpinLockIrq<FrameAllocatorInner, CPU>,
 }
 
 pub struct PageAllocation<'a, CPU: CpuOps> {
@@ -146,6 +169,25 @@ impl<CPU: CpuOps> PageAllocation<'_, CPU> {
 
     pub fn region(&self) -> &PhysMemoryRegion {
         &self.region
+    }
+
+    /// Leak the allocation as a slab allocation, for it to be picked back up
+    /// again once the slab has been free'd.
+    ///
+    /// Returns an `UnsafeRef` to `Frame` that was converted to a slab for use
+    /// in the slab lists.
+    pub(super) fn into_slab(self, slab_info: Slab) -> *const Frame {
+        let mut inner = self.inner.lock_save_irq();
+
+        let frame = inner.get_frame_mut(self.region.start_address().to_pfn());
+
+        debug_assert!(matches!(frame.state, FrameState::AllocatedHead(_)));
+
+        frame.state = FrameState::Slab(slab_info);
+
+        self.leak();
+
+        frame as _
     }
 }
 
@@ -294,7 +336,7 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
     /// # Safety
     /// It's unsafe because it deals with raw pointers and takes ownership of
     /// the metadata memory. It should only be called once.
-    pub unsafe fn init<T: AddressTranslator<()>>(mut smalloc: Smalloc<T>) -> Self {
+    pub unsafe fn init<T: AddressTranslator<()>>(mut smalloc: Smalloc<T>) -> (Self, FrameList) {
         let highest_addr = smalloc
             .iter_memory()
             .map(|r| r.end_address())
@@ -379,9 +421,12 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
             allocator.free_pages
         );
 
-        FrameAllocator {
-            inner: SpinLockIrq::new(allocator),
-        }
+        (
+            FrameAllocator {
+                inner: SpinLockIrq::new(allocator),
+            },
+            frame_list,
+        )
     }
 }
 
@@ -394,7 +439,9 @@ pub mod tests {
     use super::*;
     use crate::{
         memory::{
-            address::{IdentityTranslator, PA}, allocators::smalloc::RegionList, region::PhysMemoryRegion
+            address::{IdentityTranslator, PA},
+            allocators::smalloc::RegionList,
+            region::PhysMemoryRegion,
         },
         test::MockCpuOps,
     };
@@ -407,9 +454,13 @@ pub mod tests {
 
     pub struct TestFixture {
         pub allocator: FrameAllocator<MockCpuOps>,
+        pub frame_list: FrameList,
         base_ptr: *mut u8,
         layout: Layout,
     }
+
+    unsafe impl Send for TestFixture {}
+    unsafe impl Sync for TestFixture {}
 
     impl TestFixture {
         /// Creates a new test fixture.
@@ -459,10 +510,11 @@ pub mod tests {
                     .unwrap();
             }
 
-            let allocator = unsafe { FrameAllocator::init(smalloc) };
+            let (allocator, frame_list) = unsafe { FrameAllocator::init(smalloc) };
 
             Self {
                 allocator,
+                frame_list,
                 base_ptr,
                 layout,
             }
@@ -550,7 +602,13 @@ pub mod tests {
 
         // The middle pages should be marked as Kernel
         let reserved_pfn = PageFrame::from_pfn(
-            fixture.allocator.inner.lock_save_irq().frame_list.base_page().value()
+            fixture
+                .allocator
+                .inner
+                .lock_save_irq()
+                .frame_list
+                .base_page()
+                .value()
                 + (pages_in_max_block * 2 + 4),
         );
 

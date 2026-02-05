@@ -105,7 +105,7 @@ fn arch_init_stage2(frame: *mut ExceptionState) -> *mut ExceptionState {
         .take()
         .expect("Smalloc should not have been taken yet");
 
-    let page_alloc = unsafe { FrameAllocator::init(smalloc) };
+    let (page_alloc, _) = unsafe { FrameAllocator::init(smalloc) };
 
     if PAGE_ALLOC.set(page_alloc).is_err() {
         panic!("Cannot setup physical memory allocator");
