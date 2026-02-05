@@ -5,7 +5,7 @@ use crate::{
         PAGE_SHIFT, address::AddressTranslator, allocators::frame::FrameState, page::PageFrame,
         region::PhysMemoryRegion,
     },
-    sync::{once_lock::OnceLock, spinlock::SpinLockIrq},
+    sync::spinlock::SpinLockIrq,
 };
 use core::{
     cmp::min,
@@ -386,7 +386,7 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
 }
 
 pub trait PageAllocGetter<C: CpuOps>: Send + Sync + 'static {
-    fn global_page_alloc() -> &'static OnceLock<FrameAllocator<C>, C>;
+    fn global_page_alloc() -> &'static FrameAllocator<C>;
 }
 
 #[cfg(test)]

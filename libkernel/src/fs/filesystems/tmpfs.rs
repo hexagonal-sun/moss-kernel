@@ -829,10 +829,7 @@ mod tests {
     use crate::fs::{FileType, InodeId, attr::FilePermissions};
     use crate::memory::allocators::phys::FrameAllocator;
     use crate::memory::allocators::phys::tests::TestFixture;
-    use crate::memory::{
-        PAGE_SIZE,
-        address::IdentityTranslator,
-    };
+    use crate::memory::{PAGE_SIZE, address::IdentityTranslator};
     use crate::sync::once_lock::OnceLock;
     use crate::test::MockCpuOps;
     use alloc::vec;
@@ -843,8 +840,8 @@ mod tests {
     struct TmpFsPgAllocGetter {}
 
     impl PageAllocGetter<MockCpuOps> for TmpFsPgAllocGetter {
-        fn global_page_alloc() -> &'static OnceLock<FrameAllocator<MockCpuOps>, MockCpuOps> {
-            &PG_ALLOC
+        fn global_page_alloc() -> &'static FrameAllocator<MockCpuOps> {
+            PG_ALLOC.get().expect("Test not initalised")
         }
     }
 

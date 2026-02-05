@@ -5,11 +5,9 @@ use libkernel::memory::allocators::phys::PageAllocGetter;
 pub struct PgAllocGetter {}
 
 impl PageAllocGetter<ArchImpl> for PgAllocGetter {
-    fn global_page_alloc() -> &'static libkernel::sync::once_lock::OnceLock<
-        libkernel::memory::allocators::phys::FrameAllocator<ArchImpl>,
-        ArchImpl,
-    > {
-        &PAGE_ALLOC
+    fn global_page_alloc() -> &'static libkernel::memory::allocators::phys::FrameAllocator<ArchImpl>
+    {
+        PAGE_ALLOC.get().unwrap()
     }
 }
 
