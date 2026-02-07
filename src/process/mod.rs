@@ -39,6 +39,7 @@ pub mod exec;
 pub mod exit;
 pub mod fd_table;
 pub mod owned;
+pub mod pidfd;
 pub mod prctl;
 pub mod ptrace;
 pub mod sleep;

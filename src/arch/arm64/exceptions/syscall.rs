@@ -58,6 +58,7 @@ use crate::{
     },
     process::{
         TaskState,
+        Tid,
         caps::{sys_capget, sys_capset},
         clone::sys_clone,
         creds::{
@@ -71,6 +72,7 @@ use crate::{
             fcntl::sys_fcntl,
             select::{sys_ppoll, sys_pselect6},
         },
+        pidfd::sys_pidfd_open,
         prctl::sys_prctl,
         ptrace::{TracePoint, ptrace_stop, sys_ptrace},
         sleep::{sys_clock_nanosleep, sys_nanosleep},
@@ -637,6 +639,7 @@ pub async fn handle_syscall() {
         }
         0x125 => Err(KernelError::NotSupported),
         0x1ae => Err(KernelError::NotSupported),
+        0x1b2 => sys_pidfd_open(Tid(arg1 as _), arg2 as _).await,
         0x1b4 => sys_close_range(arg1.into(), arg2.into(), arg3 as _).await,
         0x1b7 => {
             sys_faccessat2(
