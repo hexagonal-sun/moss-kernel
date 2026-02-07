@@ -82,7 +82,7 @@ pub async fn sys_fstatfs(fd: Fd, stat: TUA<StatFs>) -> libkernel::error::Result<
         .lock_save_irq()
         .get(fd)
         .ok_or(KernelError::BadFd)?;
-    let statfs = statfs_impl(fd.inode().unwrap()).await?;
+    let statfs = statfs_impl(fd.inode().ok_or(KernelError::InvalidValue)?).await?;
     copy_to_user(stat, statfs).await?;
     Ok(0)
 }
