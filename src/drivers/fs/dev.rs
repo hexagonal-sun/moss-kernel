@@ -99,6 +99,11 @@ impl Filesystem for DevFs {
     fn id(&self) -> u64 {
         DEVFS_ID
     }
+
+    fn magic(&self) -> u64 {
+        // TODO: Is this the right value
+        0x01021994 // TMPFS_MAGIC
+    }
 }
 
 enum InodeKind {

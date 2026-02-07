@@ -168,6 +168,10 @@ impl Filesystem for Fat32Filesystem {
         self.id
     }
 
+    fn magic(&self) -> u64 {
+        0x4D44 // MSDOS magic number
+    }
+
     /// Get the root inode of this filesystem.
     async fn root_inode(&self) -> Result<Arc<dyn Inode>> {
         Ok(Arc::new(Fat32DirNode::new(

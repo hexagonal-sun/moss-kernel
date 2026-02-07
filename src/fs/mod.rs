@@ -197,6 +197,13 @@ impl VFS {
         Ok(())
     }
 
+    pub async fn get_fs(&self, inode: Arc<dyn Inode>) -> Result<Arc<dyn Filesystem>> {
+        self.state
+            .lock_save_irq()
+            .get_fs(inode.id())
+            .ok_or(KernelError::from(FsError::NoDevice))
+    }
+
     /// Resolves a path string to an Inode, starting from a given root for
     /// relative paths.
     pub async fn resolve_path(

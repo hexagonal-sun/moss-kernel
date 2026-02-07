@@ -15,5 +15,6 @@ pub mod seek;
 pub mod setxattr;
 pub mod splice;
 pub mod stat;
+pub mod statfs;
 pub mod sync;
 pub mod trunc;

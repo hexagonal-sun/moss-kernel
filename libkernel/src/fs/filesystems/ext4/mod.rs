@@ -362,6 +362,11 @@ where
         self.id
     }
 
+    fn magic(&self) -> u64 {
+        // TODO: retrieve magic from superblock instead of hardcoding
+        0xef53 // EXT4 magic number
+    }
+
     /// Returns the root inode of the mounted EXT4 filesystem.
     async fn root_inode(&self) -> Result<Arc<dyn Inode>> {
         let root = self.inner.read_root_inode().await?;
