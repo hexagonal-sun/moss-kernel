@@ -202,6 +202,8 @@ pub async fn handle_syscall() {
         0x18 => sys_dup3(arg1.into(), arg2.into(), arg3 as _),
         0x19 => sys_fcntl(arg1.into(), arg2 as _, arg3 as _).await,
         0x1d => sys_ioctl(arg1.into(), arg2 as _, arg3 as _).await,
+        0x20 => Ok(0),
+        0x21 => Err(KernelError::NotSupported),
         0x22 => sys_mkdirat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x23 => sys_unlinkat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x24 => {
