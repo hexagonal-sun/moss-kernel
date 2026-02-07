@@ -1,4 +1,3 @@
-use crate::memory::uaccess::cstr::UserCStr;
 use crate::{
     arch::{Arch, ArchImpl},
     clock::{

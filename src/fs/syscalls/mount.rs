@@ -33,6 +33,7 @@ pub async fn sys_mount(
     let dev_name = match dev_name {
         "proc" => "procfs",
         "devtmpfs" => "devfs",
+        "cgroup2" => "cgroupfs",
         s => s,
     };
     VFS.mount(mount_point, dev_name, None).await?;
