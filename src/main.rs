@@ -46,6 +46,7 @@ mod kernel;
 mod memory;
 mod process;
 mod sched;
+mod socket;
 mod sync;
 
 #[panic_handler]

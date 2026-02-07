@@ -7,6 +7,7 @@ use std::{
 mod fs;
 mod futex;
 mod signals;
+mod socket;
 
 pub struct Test {
     pub test_text: &'static str,
@@ -36,7 +37,6 @@ macro_rules! register_test {
         }
     };
 }
-
 fn test_sync() {
     unsafe {
         libc::sync();
