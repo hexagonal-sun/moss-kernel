@@ -8,6 +8,7 @@ use std::{
 mod fs;
 mod futex;
 mod signals;
+mod epoll;
 
 pub struct Test {
     pub test_text: &'static str,
