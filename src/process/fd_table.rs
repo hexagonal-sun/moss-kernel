@@ -3,6 +3,7 @@ use alloc::{sync::Arc, vec::Vec};
 use libkernel::error::{FsError, Result};
 
 pub mod dup;
+pub mod epoll;
 pub mod fcntl;
 pub mod select;
 

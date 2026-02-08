@@ -137,4 +137,8 @@ pub trait FileOps: Send + Sync {
     ) -> Result<usize> {
         Err(KernelError::InvalidValue)
     }
+
+    fn to_epoll(&self) -> Option<&crate::process::fd_table::epoll::EpollFileOps> {
+        None
+    }
 }

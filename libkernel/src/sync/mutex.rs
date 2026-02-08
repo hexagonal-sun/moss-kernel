@@ -132,6 +132,12 @@ impl<T: ?Sized, CPU: CpuOps> DerefMut for AsyncMutexGuard<'_, T, CPU> {
 unsafe impl<T: ?Sized + Send, CPU: CpuOps> Send for Mutex<T, CPU> {}
 unsafe impl<T: ?Sized + Send, CPU: CpuOps> Sync for Mutex<T, CPU> {}
 
+impl<T: ?Sized + Default, CPU: CpuOps> Default for Mutex<T, CPU> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 impl<CPU: CpuOps> Mutex<(), CPU> {
     /// Acquires the mutex lock without caring about the data.
     pub(crate) fn acquire(&self) -> MutexAcquireFuture<'_, CPU> {
