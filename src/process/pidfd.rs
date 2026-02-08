@@ -1,5 +1,6 @@
 use crate::fs::fops::FileOps;
 use crate::fs::open_file::OpenFile;
+use crate::process::thread_group::Tgid;
 use crate::process::{TaskDescriptor, Tid, find_task_by_descriptor};
 use crate::sched::current::current_task_shared;
 use alloc::boxed::Box;
@@ -9,7 +10,6 @@ use bitflags::bitflags;
 use libkernel::error::{KernelError, Result};
 use libkernel::fs::OpenFlags;
 use libkernel::memory::address::UA;
-use crate::process::thread_group::Tgid;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,7 +53,8 @@ pub async fn sys_pidfd_open(pid: Tid, flags: u32) -> Result<usize> {
     let flags = PidfdFlags::from_bits(flags).ok_or(KernelError::InvalidValue)?;
     if !flags.contains(PidfdFlags::PIDFD_THREAD) {
         // Ensure the pid exists and is a thread group leader.
-        let _ = find_task_by_descriptor(&TaskDescriptor::from_tgid_tid(Tgid(pid.value()), pid)).unwrap();
+        let _ = find_task_by_descriptor(&TaskDescriptor::from_tgid_tid(Tgid(pid.value()), pid))
+            .unwrap();
     }
     let task = current_task_shared();
 
