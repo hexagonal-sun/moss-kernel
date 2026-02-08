@@ -57,8 +57,7 @@ use crate::{
         process_vm::sys_process_vm_readv,
     },
     process::{
-        TaskState,
-        Tid,
+        TaskState, Tid,
         caps::{sys_capget, sys_capset},
         clone::sys_clone,
         creds::{
