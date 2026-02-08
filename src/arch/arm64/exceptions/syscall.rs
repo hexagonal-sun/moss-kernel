@@ -67,6 +67,7 @@ use crate::{
         exit::{sys_exit, sys_exit_group},
         fd_table::{
             dup::{sys_dup, sys_dup3},
+            epoll::{sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait},
             fcntl::sys_fcntl,
             select::{sys_ppoll, sys_pselect6},
         },
@@ -197,6 +198,27 @@ pub async fn handle_syscall() {
         0xf => sys_lremovexattr(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x10 => sys_fremovexattr(arg1.into(), TUA::from_value(arg2 as _)).await,
         0x11 => sys_getcwd(TUA::from_value(arg1 as _), arg2 as _).await,
+        0x14 => sys_epoll_create1(arg1 as _),
+        0x15 => {
+            sys_epoll_ctl(
+                arg1.into(),
+                arg2 as _,
+                arg3.into(),
+                TUA::from_value(arg4 as _),
+            )
+            .await
+        }
+        0x16 => {
+            sys_epoll_pwait(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
         0x17 => sys_dup(arg1.into()),
         0x18 => sys_dup3(arg1.into(), arg2.into(), arg3 as _),
         0x19 => sys_fcntl(arg1.into(), arg2 as _, arg3 as _).await,
