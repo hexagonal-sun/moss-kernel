@@ -8,6 +8,7 @@ use crate::{
     },
 };
 use alloc::sync::Arc;
+use core::num::NonZeroUsize;
 use core::{cmp::min, future, mem::MaybeUninit, task::Poll};
 use ringbuf::{
     SharedRb,
@@ -112,6 +113,10 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         }
 
         res
+    }
+
+    pub fn capacity(&self) -> NonZeroUsize {
+        self.inner.lock_save_irq().buf.capacity()
     }
 }
 

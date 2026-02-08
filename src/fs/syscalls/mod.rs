@@ -3,6 +3,7 @@ pub mod chdir;
 pub mod chmod;
 pub mod chown;
 pub mod close;
+pub mod copy_file_range;
 pub mod getxattr;
 pub mod ioctl;
 pub mod iov;

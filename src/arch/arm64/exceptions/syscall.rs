@@ -29,6 +29,7 @@ use crate::{
             chmod::sys_fchmod,
             chown::sys_fchown,
             close::{sys_close, sys_close_range},
+            copy_file_range::sys_copy_file_range,
             getxattr::{sys_fgetxattr, sys_getxattr, sys_lgetxattr},
             ioctl::sys_ioctl,
             iov::{sys_preadv, sys_preadv2, sys_pwritev, sys_pwritev2, sys_readv, sys_writev},
@@ -580,6 +581,17 @@ pub async fn handle_syscall() {
             .await
         }
         0x116 => sys_getrandom(TUA::from_value(arg1 as _), arg2 as _, arg3 as _).await,
+        0x11d => {
+            sys_copy_file_range(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3.into(),
+                TUA::from_value(arg4 as _),
+                arg5 as _,
+                arg6 as _,
+            )
+            .await
+        }
         0x11e => {
             sys_preadv2(
                 arg1.into(),

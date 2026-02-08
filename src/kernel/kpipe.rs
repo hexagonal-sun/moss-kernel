@@ -7,6 +7,7 @@ use crate::{
         uaccess::{copy_from_user_slice, copy_to_user_slice},
     },
 };
+use core::num::NonZeroUsize;
 use core::{cmp::min, marker::PhantomData, ops::Deref};
 use libkernel::{
     error::Result,
@@ -94,5 +95,9 @@ impl KPipe {
     /// avoidance.
     pub async fn splice_from(&self, source: &KPipe, count: usize) -> usize {
         self.inner.splice_from(&source.inner, count).await
+    }
+
+    pub fn capacity(&self) -> NonZeroUsize {
+        self.inner.capacity()
     }
 }
