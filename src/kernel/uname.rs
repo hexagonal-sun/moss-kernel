@@ -1,8 +1,10 @@
+use crate::kernel::hostname::hostname;
 use crate::{
     arch::{Arch, ArchImpl},
     memory::uaccess::{UserCopyable, copy_to_user},
 };
 use alloc::ffi::CString;
+use core::str::FromStr;
 use core::{ffi::c_char, mem};
 use libkernel::{error::Result, memory::address::TUA};
 
@@ -37,13 +39,16 @@ pub async fn sys_uname(uts_ptr: TUA<OldUtsname>) -> Result<usize> {
     let sysname = c"Moss".to_bytes_with_nul();
     copy_str_to_c_char_arr(&mut uts.sysname, sysname);
 
-    let nodename = c"moss-machine".to_bytes_with_nul();
-    copy_str_to_c_char_arr(&mut uts.nodename, nodename);
+    let nodename = CString::from_str(&hostname().lock_save_irq()).unwrap();
+    copy_str_to_c_char_arr(&mut uts.nodename, nodename.as_c_str().to_bytes_with_nul());
 
     let release = c"4.2.3".to_bytes_with_nul();
     copy_str_to_c_char_arr(&mut uts.release, release);
 
+    #[cfg(feature = "smp")]
     let version = c"#1 Moss SMP Tue Feb 20 12:34:56 UTC 2024".to_bytes_with_nul();
+    #[cfg(not(feature = "smp"))]
+    let version = c"#1 Moss Tue Feb 20 12:34:56 UTC 2024".to_bytes_with_nul();
     copy_str_to_c_char_arr(&mut uts.version, version);
 
     let machine = CString::new(ArchImpl::name()).unwrap();

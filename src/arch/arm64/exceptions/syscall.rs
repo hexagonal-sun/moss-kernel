@@ -42,7 +42,10 @@ use crate::{
             trunc::{sys_ftruncate, sys_truncate},
         },
     },
-    kernel::{power::sys_reboot, rand::sys_getrandom, sysinfo::sys_sysinfo, uname::sys_uname},
+    kernel::{
+        hostname::sys_sethostname, power::sys_reboot, rand::sys_getrandom, sysinfo::sys_sysinfo,
+        uname::sys_uname,
+    },
     memory::{
         brk::sys_brk,
         mincore::sys_mincore,
@@ -488,6 +491,7 @@ pub async fn handle_syscall() {
         0x9c => sys_getsid().await,
         0x9d => sys_setsid().await,
         0xa0 => sys_uname(TUA::from_value(arg1 as _)).await,
+        0xa1 => sys_sethostname(TUA::from_value(arg1 as _), arg2 as _).await,
         0xa3 => Err(KernelError::InvalidValue),
         0xa6 => sys_umask(arg1 as _).map_err(|e| match e {}),
         0xa7 => sys_prctl(arg1 as _, arg2, arg3).await,

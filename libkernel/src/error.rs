@@ -195,6 +195,9 @@ pub enum KernelError {
     #[error("Interrupted system call")]
     Interrupted,
 
+    #[error("Name too long")]
+    NameTooLong,
+
     #[error("{0}")]
     Other(&'static str),
 }
