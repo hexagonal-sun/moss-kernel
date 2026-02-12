@@ -70,6 +70,7 @@ use crate::{
         prctl::sys_prctl,
         ptrace::{TracePoint, ptrace_stop, sys_ptrace},
         sleep::{sys_clock_nanosleep, sys_nanosleep},
+        signalfd::sys_signalfd4,
         thread_group::{
             Pgid,
             pid::{sys_getpgid, sys_getpid, sys_getppid, sys_setpgid},
@@ -338,6 +339,11 @@ pub async fn handle_syscall() {
             )
             .await
         }
+        0x4a => sys_signalfd4(
+            arg1.into(),
+            TUA::from_value(arg2 as _),
+            arg3 as _,
+        ).await,
         0x4e => {
             sys_readlinkat(
                 arg1.into(),

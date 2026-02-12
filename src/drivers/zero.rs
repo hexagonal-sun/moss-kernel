@@ -9,6 +9,7 @@ use crate::{
 };
 use alloc::{boxed::Box, string::ToString, sync::Arc};
 use async_trait::async_trait;
+use core::any::Any;
 use core::{cmp::min, future::Future, pin::Pin};
 use libkernel::{
     driver::CharDevDescriptor,
@@ -25,6 +26,14 @@ struct ZeroFileOps;
 
 #[async_trait]
 impl FileOps for ZeroFileOps {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     async fn read(&mut self, _ctx: &mut FileCtx, buf: UA, count: usize) -> Result<usize> {
         self.readat(buf, count, 0).await
     }

@@ -11,6 +11,7 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
+use core::any::Any;
 use core::{
     future,
     pin::pin,
@@ -115,6 +116,14 @@ impl PipeReader {
 
 #[async_trait]
 impl FileOps for PipeReader {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     async fn read(&mut self, _ctx: &mut FileCtx, u_buf: UA, count: usize) -> Result<usize> {
         self.readat(u_buf, count, 0).await
     }
@@ -194,6 +203,14 @@ impl PipeWriter {
 
 #[async_trait]
 impl FileOps for PipeWriter {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     async fn read(&mut self, _ctx: &mut FileCtx, _buf: UA, _count: usize) -> Result<usize> {
         Err(KernelError::BadFd)
     }

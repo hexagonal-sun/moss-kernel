@@ -8,6 +8,7 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
+use core::any::Any;
 use core::{cmp::min, pin::Pin};
 use libkernel::{
     error::Result,
@@ -29,6 +30,14 @@ impl RegFile {
 
 #[async_trait]
 impl FileOps for RegFile {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     /// Reads data from the current file position into `buf`. The file's cursor
     /// is advanced by the number of bytes read.
     async fn readat(
