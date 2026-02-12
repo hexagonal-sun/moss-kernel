@@ -1,3 +1,4 @@
+use core::any::Any;
 use core::pin::Pin;
 
 use alloc::boxed::Box;
@@ -39,7 +40,10 @@ macro_rules! process_iovec {
 }
 
 #[async_trait]
-pub trait FileOps: Send + Sync {
+pub trait FileOps: Send + Sync + Any {
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
     /// Reads data from the current file position into `buf`.
     /// The file's cursor is advanced by the number of bytes read.
     async fn read(&mut self, ctx: &mut FileCtx, buf: UA, count: usize) -> Result<usize> {
