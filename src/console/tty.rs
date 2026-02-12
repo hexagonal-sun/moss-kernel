@@ -12,6 +12,7 @@ use crate::{
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
 use cooker::TtyInputCooker;
+use core::any::Any;
 use core::{cmp::min, pin::Pin};
 use futures::{
     future::{Either, select},
@@ -86,6 +87,14 @@ impl Tty {
 
 #[async_trait]
 impl FileOps for Tty {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     async fn read(&mut self, _ctx: &mut FileCtx, usr_buf: UA, count: usize) -> Result<usize> {
         self.readat(usr_buf, count, 0).await
     }

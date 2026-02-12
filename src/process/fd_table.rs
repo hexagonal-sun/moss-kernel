@@ -190,6 +190,14 @@ impl FileDescriptorTable {
         }
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (Fd, Arc<OpenFile>)> {
+        self.entries.iter().enumerate().filter_map(|(i, entry)| {
+            entry
+                .as_ref()
+                .map(|entry| (Fd(i as i32), entry.file.clone()))
+        })
+    }
+
     /// Number of file descriptors in use.
     pub fn len(&self) -> usize {
         self.entries.iter().filter(|e| e.is_some()).count()

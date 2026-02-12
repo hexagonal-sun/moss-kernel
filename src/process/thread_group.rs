@@ -1,5 +1,10 @@
 use super::{Task, TaskState, Tid};
-use crate::{memory::uaccess::UserCopyable, sched::waker::create_waker, sync::SpinLock};
+use crate::{
+    memory::uaccess::UserCopyable,
+    process::signalfd::broadcast_to_signalfds,
+    sched::{spawn_kernel_work, waker::create_waker},
+    sync::SpinLock,
+};
 use alloc::{
     collections::btree_map::BTreeMap,
     sync::{Arc, Weak},
@@ -172,6 +177,8 @@ impl ThreadGroup {
                         )
                     {
                         create_waker(task.descriptor()).wake();
+                        // Notify any signalfd instances that are listening in this task.
+                        spawn_kernel_work(broadcast_to_signalfds(task.clone(), signal));
                     }
                 }
             }
@@ -186,6 +193,8 @@ impl ThreadGroup {
                             TaskState::Runnable | TaskState::Running
                         )
                     {
+                        // Notify signalfd listeners on this runnable task.
+                        spawn_kernel_work(broadcast_to_signalfds(task.clone(), signal));
                         // Signal delivered. This task will eventually be
                         // dispatched again by the uspc_ret code and the
                         // signal picked up.
@@ -196,6 +205,8 @@ impl ThreadGroup {
                 // No task will pick up the signal. Wake one up.
                 for task in self.tasks.lock_save_irq().values() {
                     if let Some(task) = task.upgrade() {
+                        // Wake the task and broadcast the signal to any signalfd fds.
+                        spawn_kernel_work(broadcast_to_signalfds(task.clone(), signal));
                         create_waker(task.descriptor()).wake();
                         return;
                     }

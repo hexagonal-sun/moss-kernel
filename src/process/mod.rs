@@ -42,6 +42,7 @@ pub mod owned;
 pub mod pidfd;
 pub mod prctl;
 pub mod ptrace;
+pub mod signalfd;
 pub mod sleep;
 pub mod thread_group;
 pub mod threading;
