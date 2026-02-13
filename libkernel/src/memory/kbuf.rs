@@ -64,7 +64,7 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
             |inner| &mut inner.write_waiters,
             |inner| if inner.buf.is_full() { None } else { Some(()) },
         )
-        .await
+        .await;
     }
 
     /// Pushes a value of type `T` into the buffer. If the buffer is full, this

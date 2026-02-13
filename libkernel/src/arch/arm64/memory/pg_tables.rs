@@ -323,19 +323,19 @@ where
     PM: PageTableMapper,
 {
     if attrs.phys.size() != attrs.virt.size() {
-        Err(MapError::SizeMismatch)?
+        Err(MapError::SizeMismatch)?;
     }
 
     if attrs.phys.size() < PAGE_SIZE {
-        Err(MapError::TooSmall)?
+        Err(MapError::TooSmall)?;
     }
 
     if !attrs.phys.is_page_aligned() {
-        Err(MapError::PhysNotAligned)?
+        Err(MapError::PhysNotAligned)?;
     }
 
     if !attrs.virt.is_page_aligned() {
-        Err(MapError::VirtNotAligned)?
+        Err(MapError::VirtNotAligned)?;
     }
 
     while attrs.virt.size() > 0 {
@@ -442,7 +442,7 @@ where
 
         // Zero out the new table before use.
         ctx.mapper.with_page_table(new_pa, |new_pgtable| {
-            core::ptr::write_bytes(new_pgtable.as_ptr_mut() as *mut _ as *mut u8, 0, PAGE_SIZE)
+            core::ptr::write_bytes(new_pgtable.as_ptr_mut() as *mut _ as *mut u8, 0, PAGE_SIZE);
         })?;
 
         // Set the descriptor at the current level to point to the new table.

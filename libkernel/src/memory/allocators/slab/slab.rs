@@ -51,7 +51,7 @@ impl Slab {
                         u16::MAX
                     } else {
                         (i + 1) as u16
-                    })
+                    });
             }
         }
 

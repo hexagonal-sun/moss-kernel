@@ -65,8 +65,7 @@ impl BiosParameterBlock {
             512 | 1024 | 2048 | 4096 => {} // Good!
             _ => {
                 warn!(
-                    "Bytes per sector {} is not a valid value (must be 512, 1024, 2048, or 4096).",
-                    bytes_per_sector
+                    "Bytes per sector {bytes_per_sector} is not a valid value (must be 512, 1024, 2048, or 4096)."
                 );
                 return Err(FsError::InvalidFs.into());
             }
@@ -75,10 +74,7 @@ impl BiosParameterBlock {
         if !bpb.bytes_per_sector.is_power_of_two() {
             let bytes_per_sector = bpb.bytes_per_sector;
 
-            warn!(
-                "Bytes per sector 0x{:X} not a power of two.",
-                bytes_per_sector
-            );
+            warn!("Bytes per sector 0x{bytes_per_sector:X} not a power of two.",);
             return Err(FsError::InvalidFs.into());
         }
 
@@ -93,7 +89,7 @@ impl BiosParameterBlock {
         if !bpb.root_cluster.is_valid() {
             let root_cluster = bpb.root_cluster;
 
-            warn!("Root cluster {} < 2.", root_cluster);
+            warn!("Root cluster {root_cluster} < 2.");
 
             return Err(FsError::InvalidFs.into());
         }
