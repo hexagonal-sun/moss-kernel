@@ -176,6 +176,10 @@ impl Filesystem for SysFs {
     fn id(&self) -> u64 {
         SYSFS_ID
     }
+
+    fn magic(&self) -> u64 {
+        0x62656572 // sysfs magic number
+    }
 }
 
 static SYSFS_INSTANCE: OnceLock<Arc<SysFs>> = OnceLock::new();

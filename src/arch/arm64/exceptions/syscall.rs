@@ -38,6 +38,7 @@ use crate::{
             setxattr::{sys_fsetxattr, sys_lsetxattr, sys_setxattr},
             splice::sys_sendfile,
             stat::sys_fstat,
+            statfs::{sys_fstatfs, sys_statfs},
             sync::{sys_fdatasync, sys_fsync, sys_sync, sys_syncfs},
             trunc::{sys_ftruncate, sys_truncate},
         },
@@ -227,7 +228,8 @@ pub async fn handle_syscall() {
             )
             .await
         }
-        0x2b | 0x2c => Err(KernelError::NotSupported),
+        0x2b => sys_statfs(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0x2c => sys_fstatfs(arg1.into(), TUA::from_value(arg2 as _)).await,
         0x2d => sys_truncate(TUA::from_value(arg1 as _), arg2 as _).await,
         0x2e => sys_ftruncate(arg1.into(), arg2 as _).await,
         0x30 => sys_faccessat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,

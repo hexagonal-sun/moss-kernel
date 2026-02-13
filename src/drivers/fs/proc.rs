@@ -51,6 +51,10 @@ impl Filesystem for ProcFs {
     fn id(&self) -> u64 {
         PROCFS_ID
     }
+
+    fn magic(&self) -> u64 {
+        0x9fa0 // procfs magic number
+    }
 }
 
 static PROCFS_INSTANCE: OnceLock<Arc<ProcFs>> = OnceLock::new();
