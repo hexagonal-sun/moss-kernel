@@ -127,6 +127,10 @@ impl Filesystem for CgroupFs {
     fn id(&self) -> u64 {
         CGROUPFS_ID
     }
+
+    fn magic(&self) -> u64 {
+        0x63677270 // v2 magic number
+    }
 }
 
 static SYSFS_INSTANCE: OnceLock<Arc<CgroupFs>> = OnceLock::new();

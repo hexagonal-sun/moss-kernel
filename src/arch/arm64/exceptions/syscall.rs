@@ -28,16 +28,19 @@ use crate::{
             chmod::sys_fchmod,
             chown::sys_fchown,
             close::{sys_close, sys_close_range},
+            copy_file_range::sys_copy_file_range,
             getxattr::{sys_fgetxattr, sys_getxattr, sys_lgetxattr},
             ioctl::sys_ioctl,
             iov::{sys_preadv, sys_preadv2, sys_pwritev, sys_pwritev2, sys_readv, sys_writev},
             listxattr::{sys_flistxattr, sys_listxattr, sys_llistxattr},
+            mount::sys_mount,
             removexattr::{sys_fremovexattr, sys_lremovexattr, sys_removexattr},
             rw::{sys_pread64, sys_pwrite64, sys_read, sys_write},
             seek::sys_lseek,
             setxattr::{sys_fsetxattr, sys_lsetxattr, sys_setxattr},
             splice::sys_sendfile,
             stat::sys_fstat,
+            statfs::{sys_fstatfs, sys_statfs},
             sync::{sys_fdatasync, sys_fsync, sys_sync, sys_syncfs},
             trunc::{sys_ftruncate, sys_truncate},
         },
@@ -53,7 +56,7 @@ use crate::{
         process_vm::sys_process_vm_readv,
     },
     process::{
-        TaskState,
+        TaskState, Tid,
         caps::{sys_capget, sys_capset},
         clone::sys_clone,
         creds::{
@@ -64,9 +67,11 @@ use crate::{
         exit::{sys_exit, sys_exit_group},
         fd_table::{
             dup::{sys_dup, sys_dup3},
+            epoll::{sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait},
             fcntl::sys_fcntl,
             select::{sys_ppoll, sys_pselect6},
         },
+        pidfd::sys_pidfd_open,
         prctl::sys_prctl,
         ptrace::{TracePoint, ptrace_stop, sys_ptrace},
         sleep::{sys_clock_nanosleep, sys_nanosleep},
@@ -194,10 +199,33 @@ pub async fn handle_syscall() {
         0xf => sys_lremovexattr(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x10 => sys_fremovexattr(arg1.into(), TUA::from_value(arg2 as _)).await,
         0x11 => sys_getcwd(TUA::from_value(arg1 as _), arg2 as _).await,
+        0x14 => sys_epoll_create1(arg1 as _),
+        0x15 => {
+            sys_epoll_ctl(
+                arg1.into(),
+                arg2 as _,
+                arg3.into(),
+                TUA::from_value(arg4 as _),
+            )
+            .await
+        }
+        0x16 => {
+            sys_epoll_pwait(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
         0x17 => sys_dup(arg1.into()),
         0x18 => sys_dup3(arg1.into(), arg2.into(), arg3 as _),
         0x19 => sys_fcntl(arg1.into(), arg2 as _, arg3 as _).await,
         0x1d => sys_ioctl(arg1.into(), arg2 as _, arg3 as _).await,
+        0x20 => Ok(0),
+        0x21 => Err(KernelError::NotSupported),
         0x22 => sys_mkdirat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x23 => sys_unlinkat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x24 => {
@@ -227,7 +255,18 @@ pub async fn handle_syscall() {
             )
             .await
         }
-        0x2b | 0x2c => Err(KernelError::NotSupported),
+        0x28 => {
+            sys_mount(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+            )
+            .await
+        }
+        0x2b => sys_statfs(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0x2c => sys_fstatfs(arg1.into(), TUA::from_value(arg2 as _)).await,
         0x2d => sys_truncate(TUA::from_value(arg1 as _), arg2 as _).await,
         0x2e => sys_ftruncate(arg1.into(), arg2 as _).await,
         0x30 => sys_faccessat(arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
@@ -417,6 +456,7 @@ pub async fn handle_syscall() {
         }
         0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0x70 => Ok(0), // clock_settime is a no-op
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
         0x73 => {
             sys_clock_nanosleep(
@@ -576,6 +616,17 @@ pub async fn handle_syscall() {
             .await
         }
         0x116 => sys_getrandom(TUA::from_value(arg1 as _), arg2 as _, arg3 as _).await,
+        0x11d => {
+            sys_copy_file_range(
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3.into(),
+                TUA::from_value(arg4 as _),
+                arg5 as _,
+                arg6 as _,
+            )
+            .await
+        }
         0x11e => {
             sys_preadv2(
                 arg1.into(),
@@ -607,6 +658,8 @@ pub async fn handle_syscall() {
             .await
         }
         0x125 => Err(KernelError::NotSupported),
+        0x1ae => Err(KernelError::NotSupported),
+        0x1b2 => sys_pidfd_open(Tid(arg1 as _), arg2 as _).await,
         0x1b4 => sys_close_range(arg1.into(), arg2.into(), arg3 as _).await,
         0x1b7 => {
             sys_faccessat2(

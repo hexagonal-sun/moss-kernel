@@ -65,6 +65,9 @@ pub trait Filesystem: Send + Sync {
     /// Returns the instance ID for this FS.
     fn id(&self) -> u64;
 
+    /// Get magic
+    fn magic(&self) -> u64;
+
     /// Flushes all pending data to the underlying storage device(s).
     ///
     /// The default implementation is a no-op so that read-only filesystems do

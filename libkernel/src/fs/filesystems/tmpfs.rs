@@ -821,6 +821,10 @@ where
     fn id(&self) -> u64 {
         self.id
     }
+
+    fn magic(&self) -> u64 {
+        0x01021994 // Tmpfs magic number
+    }
 }
 
 #[cfg(test)]
