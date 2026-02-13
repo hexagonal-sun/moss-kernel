@@ -3,8 +3,6 @@
 #![feature(used_with_arg)]
 #![feature(likely_unlikely)]
 #![feature(box_as_ptr)]
-#![warn(clippy::semicolon_if_nothing_returned)]
-#![warn(clippy::uninlined_format_args)]
 
 use alloc::{
     boxed::Box,

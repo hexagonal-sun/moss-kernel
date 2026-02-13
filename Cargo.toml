@@ -1,6 +1,10 @@
 [workspace]
 members = ["libkernel", "usertest"]
 
+[workspace.lints.clippy]
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+
 [package]
 name = "moss"
 version = "0.1.0"
@@ -32,3 +36,6 @@ smp = []
 strip = true
 opt-level = "z"
 codegen-units = 1
+
+[lints]
+workspace = true

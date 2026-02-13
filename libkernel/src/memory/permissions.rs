@@ -200,7 +200,7 @@ impl fmt::Display for PtePermissions {
             '-'
         };
 
-        write!(f, "{}{}{} {}", r, w_or_c, x, user)
+        write!(f, "{r}{w_or_c}{x} {user}")
     }
 }
 

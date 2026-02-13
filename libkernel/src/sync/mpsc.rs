@@ -66,7 +66,7 @@ impl<T: Send, C: CpuOps> Drop for Reciever<T, C> {
             state.recv_gone = true;
 
             WakeupType::None
-        })
+        });
     }
 }
 

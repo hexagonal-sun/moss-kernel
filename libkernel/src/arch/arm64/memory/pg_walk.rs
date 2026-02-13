@@ -71,7 +71,7 @@ where
 
                 T::NextLevel::walk(next_desc.cast(), sub_region, ctx, modifier)?;
             } else if desc.is_valid() {
-                Err(MapError::NotL3Mapped)?
+                Err(MapError::NotL3Mapped)?;
             } else {
                 // Permit sparse mappings.
                 continue;

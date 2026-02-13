@@ -96,7 +96,7 @@ impl RecursiveTeardownWalker for L3Table {
                         deallocator(addr);
                     }
                 }
-            })?
+            })?;
         }
 
         Ok(())

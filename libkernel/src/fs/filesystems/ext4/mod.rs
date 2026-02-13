@@ -63,7 +63,7 @@ impl From<ext4_view::Ext4Error> for KernelError {
             ext4_view::Ext4Error::NotADirectory => KernelError::Fs(FsError::NotADirectory),
             ext4_view::Ext4Error::Corrupt(_) => KernelError::Fs(FsError::InvalidFs),
             e => {
-                error!("Unmapped EXT4 error: {:?}", e);
+                error!("Unmapped EXT4 error: {e:?}");
                 KernelError::Other("EXT4 error")
             }
         }
