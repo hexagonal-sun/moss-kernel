@@ -12,9 +12,9 @@ mkdir -p "$mount"
 dd if=/dev/zero of="$img" bs=1M count=128
 mkfs.ext4 -F "$img"
 
-debugfs -w -f  "$base/scripts/symlinks.cmds" "$img"
+debugfs -w -f  "$base/scripts/symlinks.cmds" "$img" </dev/null
 for file in "$base/build/bin"/*; do
-    debugfs -w "$img" -R "write $file /bin/$(basename "$file")"
+    debugfs -w "$img" -R "write $file /bin/$(basename "$file")" </dev/null
 done
 
 popd &>/dev/null || exit 1
