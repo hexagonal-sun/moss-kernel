@@ -3,7 +3,7 @@ FROM ubuntu:latest AS base
 # Install dependencies
 RUN apt update
 RUN apt install -y build-essential curl git wget
-RUN apt install -y qemu-system-aarch64 dosfstools mtools
+RUN apt install -y qemu-system-aarch64 mtools jq
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -27,7 +27,6 @@ ENV PATH="/opt/arm-toolchain/bin:${PATH}"
 
 # Build root fs image
 FROM base as image-builder
-RUN ./scripts/build-deps.sh
 RUN ./scripts/create-image.sh
 
 # Build final image

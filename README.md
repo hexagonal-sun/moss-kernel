@@ -84,24 +84,29 @@ x86) before running on bare metal.
 ## Building and Running
 
 ### Prerequisites
-You will need QEMU for AArch64 emulation, as well as dosfstools and mtools to create the
-virtual file system.
 
+You will need QEMU for AArch64 emulation, as well as wget, e2fsprogs, and jq for image creation.
+We use `just` as a task runner to simplify common commands,
+but you can also run the underlying commands directly if you prefer.
+
+Additionally, you will need a version of
+the [aarch64-none-elf](https://developer.arm.com/Tools%20and%20Software/GNU%20Toolchain) toolchain installed.
+
+To install `aarch64-none-elf` on any OS, download the appropriate release of `aarch64-none-elf` onto your computer,
+unpack it, then export the `bin` directory to PATH (Can be done via running:
+`export PATH="~/Downloads/arm-gnu-toolchain-X.X.relX-x86_64-aarch64-none-elf/bin:$PATH"`, where X is the version number
+you downloaded onto your machine, in your terminal).
+
+#### Debian/Ubuntu
 ```bash
-sudo apt install qemu-system-aarch64 dosfstools mtools
+sudo apt install qemu-system-aarch64 wget jq e2fsprogs just
 ```
 
-Additionally you will need a version of the [aarch64-none-elf](https://developer.arm.com/Tools%20and%20Software/GNU%20Toolchain) toolchain installed.
-
-#### Any x86_64 Linux OS
-To install `aarch64-none-elf` on any OS, download the appropriate release of `aarch64-none-elf` onto your computer, unpack it, then export the `bin` directory to PATH (Can be done via running:
-
-`export PATH="~/Downloads/arm-gnu-toolchain-X.X.relX-x86_64-aarch64-none-elf/bin:$PATH"`, where X is the version number you downloaded onto your machine.
-
-in your terminal.)
-
 #### macOS
-There is experimental support for macOS in the scripts/mac-experimental folder. The scripts in there are not guaranteed to work for all macOS users and has only been tested on an M4 Apple Silicon MacBook Air.
+
+```bash
+brew install qemu wget jq e2fsprogs just
+```
 
 #### NixOS
 
@@ -111,42 +116,58 @@ Run the following command:
 nix shell nixpkgs#pkgsCross.aarch64-embedded.stdenv.cc nixpkgs#pkgsCross.aarch64-embedded.stdenv.cc.bintools
 ```
 
-### Preparing the image
-
-First, run the following script to prepare the binaries for the image:
-```bash
-./scripts/build-deps.sh
-```
-
-This will download and build the necessary dependencies for the kernel and put them
-into the `build` directory.
-
-Once that is done, you can create the image using the following command:
-```bash
-./scripts/create-image.sh
-```
-
-This will create an image file named `moss.img` in the root directory of the
-project, format it as ext4 image and create the necessary files and directories for
-the kernel.
-
 ### Running via QEMU
 
 To build the kernel and launch it in QEMU:
 
 ``` bash
-cargo run --release
+just run
 ```
 
+If you don't have `just` installed, you can run the underlying commands directly:
+
+``` bash
+# First time only (to create the image)
+./scripts/create-image.sh
+# Then, to run the kernel in QEMU
+# By default it will launch into bash, which alpine doesn't have, however `ash` and `sh` are both available.
+cargo run --release -- /bin/ash
+```
+
+The kernel runs off of `moss.img`.
+This image is a minimal alpine rootfs with the addition of a custom `usertest` binary in `/bin/usertest`.
 
 ### Running the Test Suite
 Because `libkernel` is architecturally decoupled, you can run the logic tests on
 your host machine:
 
 ``` bash
-cargo test -p libkernel --target x86_64-unknown-linux-gnu
+just test-unit
 ```
 
+To run the userspace test suite in QEMU:
+
+``` bash
+just test-userspace
+```
+
+or
+
+```bash
+cargo run -r -- /bin/usertest
+```
+
+If you've made changes to the usertests and want to recreate the image, you can run:
+
+``` bash
+just create-image
+```
+
+or
+
+```bash
+./scripts/create-image.sh
+```
 
 ### Roadmap & Status
 
