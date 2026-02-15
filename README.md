@@ -7,18 +7,18 @@
 
 ![Moss Boot Demo](etc/moss_demo.gif)
 
-**moss** is a Unix-like, Linux-compatible kernel written in Rust and Aarch64
+**moss** is a Unix-like, Linux-compatible kernel written in Rust and AArch64
 assembly.
 
 It features an asynchronous kernel core, a modular architecture abstraction
 layer, and binary compatibility with Linux userspace applications. Moss is
-currently capable of running a dynamically linked Arch Linux aarch64 userspace,
+currently capable of running a dynamically linked Arch Linux AArch64 userspace,
 including bash, BusyBox, coreutils, ps, top, and strace.
 
 ## Features
 
 ### Architecture & Memory
-* Full support for aarch64.
+* Full support for AArch64.
 * A well-defined HAL allowing for easy porting to other architectures (e.g.,
   x86_64, RISC-V).
 * Memory Management:
@@ -27,8 +27,8 @@ including bash, BusyBox, coreutils, ps, top, and strace.
     * Safe copy to/from userspace async functions.
     * Kernel and userspace page fault management.
     * Kernel stack-overflow detection.
-    * Shared library mapping and relocation
-    * `/proc/self/maps` support
+    * Shared library mapping and relocation.
+    * `/proc/self/maps` support.
     * Buddy allocator for physical addresses and `smalloc` for boot allocations
       and tracking memory reservations.
     * A full slab allocator for kernel object allocations, featureing a per-CPU
@@ -76,7 +76,7 @@ x86) before running on bare metal.
   waker sets.
 * Sync Primitives: `spinlock`, `mutex`, `condvar`, `per_cpu`.
 * Test Suite: A comprehensive suite of 230+ tests ensuring functionality across
-  architectures (e.g., validating Aarch64 page table parsing logic on an x86
+  architectures (e.g., validating AArch64 page table parsing logic on an x86
   host).
 * Userspace Testing, `usertest`: A dedicated userspace test-suite to validate
   syscall behavior in the kernel at run-time.
@@ -84,7 +84,7 @@ x86) before running on bare metal.
 ## Building and Running
 
 ### Prerequisites
-You will need QEMU for aarch64 emulation, dosfstools and mtools to create the
+You will need QEMU for AArch64 emulation, as well as dosfstools and mtools to create the
 virtual file system.
 
 ```bash
@@ -93,10 +93,10 @@ sudo apt install qemu-system-aarch64 dosfstools mtools
 
 Additionally you will need a version of the [aarch64-none-elf](https://developer.arm.com/Tools%20and%20Software/GNU%20Toolchain) toolchain installed.
 
-#### Any X86-64 Linux OS
-To install aarch64-none-elf on any os, download the correct release of `aarch64-none-elf` onto your computer, unpack it, then export the `bin` folder to path (Can be done via running
+#### Any x86_64 Linux OS
+To install `aarch64-none-elf` on any OS, download the appropriate release of `aarch64-none-elf` onto your computer, unpack it, then export the `bin` directory to PATH (Can be done via running:
 
-`export PATH="~/Downloads/arm-gnu-toolchain-X.X.relX-x86_64-aarch64-none-elf/bin:$PATH"`, X is the version number you downloaded onto your machine.
+`export PATH="~/Downloads/arm-gnu-toolchain-X.X.relX-x86_64-aarch64-none-elf/bin:$PATH"`, where X is the version number you downloaded onto your machine.
 
 in your terminal.)
 
@@ -105,7 +105,7 @@ There is experimental support for macOS in the scripts/mac-experimental folder. 
 
 #### NixOS
 
-Run the following command
+Run the following command:
 
 ```bash
 nix shell nixpkgs#pkgsCross.aarch64-embedded.stdenv.cc nixpkgs#pkgsCross.aarch64-embedded.stdenv.cc.bintools
@@ -159,7 +159,7 @@ moss is under active development. Current focus areas include:
 
 ## Non-Goals (for now)
 
-* Binary compatibility beyond aarch64.
+* Binary compatibility beyond AArch64.
 * Production hardening.
 
 Moss is an experimental kernel focused on exploring asynchronous design and
