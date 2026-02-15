@@ -58,10 +58,15 @@ pub async fn sys_mount(
         return Ok(0);
     }
     let mut buf = [0u8; 1024];
-    let dev_name = UserCStr::from_ptr(dev_name)
-        .copy_from_user(&mut buf)
-        .await
-        .ok();
+    let dev_name = if dev_name.is_null() {
+        None
+    } else {
+        Some(
+            UserCStr::from_ptr(dev_name)
+                .copy_from_user(&mut buf)
+                .await?,
+        )
+    };
     let mut buf = [0u8; 1024];
     let dir_name = UserCStr::from_ptr(dir_name)
         .copy_from_user(&mut buf)
@@ -74,10 +79,11 @@ pub async fn sys_mount(
         )
         .await?;
     let mut buf = [0u8; 1024];
-    let _type = UserCStr::from_ptr(type_)
-        .copy_from_user(&mut buf)
-        .await
-        .ok();
+    let _type = if type_.is_null() {
+        None
+    } else {
+        Some(UserCStr::from_ptr(type_).copy_from_user(&mut buf).await?)
+    };
     if let Some(dev_name) = dev_name {
         let dev_name = match dev_name {
             "proc" => "procfs",
