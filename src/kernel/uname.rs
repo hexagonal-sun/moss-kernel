@@ -18,6 +18,18 @@ pub struct OldUtsname {
     machine: [c_char; 65],
 }
 
+impl Default for OldUtsname {
+    fn default() -> Self {
+        Self {
+            sysname: [0; 65],
+            nodename: [0; 65],
+            release: [0; 65],
+            version: [0; 65],
+            machine: [0; 65],
+        }
+    }
+}
+
 unsafe impl UserCopyable for OldUtsname {}
 
 fn copy_str_to_c_char_arr(dest: &mut [c_char], src: &[u8]) {
@@ -34,7 +46,7 @@ fn copy_str_to_c_char_arr(dest: &mut [c_char], src: &[u8]) {
 }
 
 pub async fn sys_uname(uts_ptr: TUA<OldUtsname>) -> Result<usize> {
-    let mut uts = unsafe { mem::zeroed::<OldUtsname>() };
+    let mut uts = OldUtsname::default();
 
     let sysname = c"Moss".to_bytes_with_nul();
     copy_str_to_c_char_arr(&mut uts.sysname, sysname);
