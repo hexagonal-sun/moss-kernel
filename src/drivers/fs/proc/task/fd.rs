@@ -2,6 +2,7 @@ use crate::drivers::fs::proc::{get_inode_id, procfs};
 use crate::process::fd_table::Fd;
 use crate::process::{TaskDescriptor, find_task_by_descriptor};
 use crate::sched::current::current_task_shared;
+use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::ToString;
@@ -11,6 +12,7 @@ use async_trait::async_trait;
 use libkernel::error::Result;
 use libkernel::error::{FsError, KernelError};
 use libkernel::fs::attr::FileAttr;
+use libkernel::fs::pathbuf::PathBuf;
 use libkernel::fs::{
     DirStream, Dirent, FileType, Filesystem, Inode, InodeId, SimpleDirStream, SimpleFile,
 };
@@ -115,7 +117,11 @@ impl ProcFdFile {
         Self {
             id: inode_id,
             attr: FileAttr {
-                file_type: FileType::File,
+                file_type: if fd_info {
+                    FileType::File
+                } else {
+                    FileType::Symlink
+                },
                 // Define appropriate file attributes for fdinfo file.
                 ..FileAttr::default()
             },
@@ -147,6 +153,28 @@ impl SimpleFile for ProcFdFile {
         let info_string = format!("pos: {}\nflags: {}", ctx.pos, ctx.flags.bits());
         if self.fd_info {
             Ok(info_string.into_bytes())
+        } else {
+            Err(KernelError::NotSupported)
+        }
+    }
+
+    async fn readlink(&self) -> Result<PathBuf> {
+        if !self.fd_info {
+            if let Some(task) = find_task_by_descriptor(&self.desc) {
+                let Some(file) = task.fd_table.lock_save_irq().get(Fd(self.fd)) else {
+                    return Err(FsError::NotFound.into());
+                };
+                if let Some(path) = file.path() {
+                    Ok(path.to_owned())
+                } else {
+                    // TODO: Find file type
+                    todo!(
+                        "Implement readlink for /proc/[pid]/fd/[fd] when fd doesn't refer to a file with an inode"
+                    )
+                }
+            } else {
+                Err(FsError::NotFound.into())
+            }
         } else {
             Err(KernelError::NotSupported)
         }
