@@ -61,8 +61,7 @@ impl<T, CPU: CpuOps> Rwlock<T, CPU> {
 impl<T: ?Sized, CPU: CpuOps> Rwlock<T, CPU> {
     /// Acquires rwlock read.
     ///
-    /// Returns a future that resolves to a lock guard. The returned future must
-    /// be `.await`ed to acquire the read guard. The guard is released when the
+    /// Returns a guard asynchronously. The guard is released when the
     /// returned [`AsyncRwlockReadGuard`] is dropped.
     pub async fn read(&self) -> AsyncRwlockReadGuard<'_, T, CPU> {
         let mut num_readers = self.state.num_readers.lock_save_irq();
@@ -75,11 +74,10 @@ impl<T: ?Sized, CPU: CpuOps> Rwlock<T, CPU> {
 
     /// Acquires rwlock write.
     ///
-    /// Returns a future that resolves to a lock guard. The returned future must
-    /// be `.await`ed to acquire the write guard. The guard is released when the
+    /// Returns a guard asynchronously. The guard is released when the
     /// returned [`AsyncRwlockWriteGuard`] is dropped.
-    pub fn write(&self) -> AsyncRwlockWriteGuard<'_, T, CPU> {
-        self.state.writer_lock.acquire();
+    pub async fn write(&self) -> AsyncRwlockWriteGuard<'_, T, CPU> {
+        self.state.writer_lock.acquire().await;
         AsyncRwlockWriteGuard { rwlock: self }
     }
 }
