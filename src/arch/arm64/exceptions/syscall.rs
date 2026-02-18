@@ -2,6 +2,7 @@ use crate::{
     arch::{Arch, ArchImpl},
     clock::{
         gettime::sys_clock_gettime,
+        settime::sys_clock_settime,
         timeofday::{sys_gettimeofday, sys_settimeofday},
     },
     fs::{
@@ -419,6 +420,7 @@ pub async fn handle_syscall() {
         }
         0x63 => sys_set_robust_list(TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0x70 => sys_clock_settime(arg1 as _, TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(arg1 as _, TUA::from_value(arg2 as _)).await,
         0x73 => {
             sys_clock_nanosleep(
