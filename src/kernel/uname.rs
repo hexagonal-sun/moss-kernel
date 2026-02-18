@@ -10,6 +10,9 @@ use core::str::FromStr;
 use libkernel::{error::Result, memory::address::TUA};
 
 const SYSNAME: &CStr = c"Moss";
+
+/// Systemd uses the release field to determine compatibility.
+/// It's also necessary for libc programs; otherwise they exit with an error Kernel too old.
 const RELEASE: &CStr = c"4.2.3";
 
 ///  POSIX specifies the order when using -a (equivalent to -snrvm):
