@@ -626,3 +626,15 @@ impl VFS {
         fs.sync().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::fs::VFS;
+    use crate::ktest;
+
+    ktest! {
+        async fn test_sync_all() {
+            VFS.sync_all().await.unwrap();
+        }
+    }
+}

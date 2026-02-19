@@ -64,9 +64,9 @@ pub fn panic_noop(_: *mut u8, _: *mut u8) {}
 
 #[macro_export]
 macro_rules! ktest {
-    (fn $name:ident() $body:block) => {
+    ($name:ident, fn $fn_name:ident() $body:block) => {
         #[cfg(test)]
-        fn $name(_: *mut u8) {
+        fn $fn_name(_: *mut u8) {
             $body
         }
 
@@ -78,7 +78,7 @@ macro_rules! ktest {
                 test_fn: || {
                     let result = unsafe {
                         core::intrinsics::catch_unwind(
-                            $name as fn(*mut u8),
+                            $fn_name as fn(*mut u8),
                             core::ptr::null_mut(),
                             crate::testing::panic_noop,
                         )
@@ -92,4 +92,31 @@ macro_rules! ktest {
             };
         }
     };
+    (fn $name:ident() $body:block) => {
+        crate::ktest!($name, fn $name() $body);
+    };
+    (async fn $name:ident() $body:block) => {
+        async fn $name() {
+            $body
+        }
+
+        paste::paste! {
+            crate::ktest! {
+                $name,
+                fn [<__sync_ $name>]() {
+                    let mut fut = alloc::boxed::Box::pin($name());
+                    let desc = crate::process::TaskDescriptor::from_tgid_tid(crate::process::thread_group::Tgid(0), crate::process::Tid(0));
+                    let waker = crate::sched::waker::create_waker(desc);
+                    let mut ctx = core::task::Context::from_waker(&waker);
+                    loop {
+                        match fut.as_mut().poll(&mut ctx) {
+                            core::task::Poll::Ready(()) => break,
+                            _ => {},
+                        }
+                    }
+                }
+            }
+        }
+
+    }
 }

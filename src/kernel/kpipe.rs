@@ -96,3 +96,24 @@ impl KPipe {
         self.inner.splice_from(&source.inner, count).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kernel::kpipe::KPipe;
+    use crate::ktest;
+
+    ktest! {
+        async fn kpipe_basic() {
+            let pipe = KPipe::new().unwrap();
+            pipe.push(1).await;
+            pipe.push(2).await;
+            pipe.push(3).await;
+            let val1 = pipe.pop().await;
+            let val2 = pipe.pop().await;
+            let val3 = pipe.pop().await;
+            assert_eq!(val1, 1);
+            assert_eq!(val2, 2);
+            assert_eq!(val3, 3);
+        }
+    }
+}
