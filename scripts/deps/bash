@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+bash_repo="${bash_repo:-https://git.savannah.gnu.org/git/bash.git}"
+bash_tag="${bash_tag:-bash-5.3}"
+stdlib="${stdlib:-musl}"
+CC="${CC:-aarch64-linux-$stdlib-gcc}"
+
+pushd "build" &>/dev/null || exit 1
+
+if [ ! -d "bash-5.3" ]; then
+    wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 10 https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz
+    tar xzf bash-5.3.tar.gz
+fi
+
+pushd "bash-5.3" &>/dev/null || exit 1
+CFLAGS_FOR_BUILD="-std=c99" ./configure --without-bash-malloc --enable-static-link --host="aarch64-linux-$stdlib"
+make clean
+make
+mv bash ../bin/bash
+popd &>/dev/null || exit 1
+
+popd &>/dev/null || exit 1
