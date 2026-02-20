@@ -1,3 +1,4 @@
+use chrono::Utc;
 use std::path::PathBuf;
 
 fn main() {
@@ -12,4 +13,11 @@ fn main() {
 
     println!("cargo::rerun-if-changed={}", linker_script.display());
     println!("cargo::rustc-link-arg=-T{}", linker_script.display());
+
+    // Set an environment variable with the date and time of the build
+    let timestamp = Utc::now().format("%a %b %d %H:%M:%S UTC %Y");
+    #[cfg(feature = "smp")]
+    println!("cargo:rustc-env=MOSS_VERSION=#1 Moss SMP {timestamp}");
+    #[cfg(not(feature = "smp"))]
+    println!("cargo:rustc-env=MOSS_VERSION=#1 Moss {timestamp}");
 }

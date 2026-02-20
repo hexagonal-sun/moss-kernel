@@ -70,11 +70,8 @@ fn build_utsname() -> OldUtsname {
 
     copy_str_to_c_char_arr(&mut uts.release, RELEASE.to_bytes_with_nul());
 
-    #[cfg(feature = "smp")]
-    let version = c"#1 Moss SMP Tue Feb 20 12:34:56 UTC 2024".to_bytes_with_nul();
-    #[cfg(not(feature = "smp"))]
-    let version = c"#1 Moss Tue Feb 20 12:34:56 UTC 2024".to_bytes_with_nul();
-    copy_str_to_c_char_arr(&mut uts.version, version);
+    let version = CString::from_str(env!("MOSS_VERSION")).unwrap();
+    copy_str_to_c_char_arr(&mut uts.version, version.as_c_str().to_bytes_with_nul());
 
     let machine = CString::new(ArchImpl::name()).unwrap();
     let machine = machine.to_bytes_with_nul();
@@ -101,6 +98,60 @@ mod tests {
             let uts = build_utsname();
             let sysname_cstr = unsafe { CStr::from_ptr(uts.sysname.as_ptr()) };
             assert_eq!(sysname_cstr, SYSNAME);
+        }
+    }
+
+    fn validate_datetime(datetime: &str) {
+        let mut parts = datetime.splitn(6, ' ');
+        let day_of_week = parts.next().expect("Day of week"); // "Tue"
+        let month = parts.next().expect("Month"); // "Feb"
+        let day = parts.next().expect("Day"); // "20"
+        let time = parts.next().expect("Time"); // "12:34:56"
+        let timezone = parts.next().expect("TimeZone"); // "UTC"
+        let year = parts.next().expect("Year"); // "2024"
+
+        assert_eq!(timezone, "UTC");
+        assert!(year.parse::<u16>().is_ok());
+        assert!(year.starts_with("20"));
+        assert!(time.split(':').all(|s| s.len() == 2));
+        assert_eq!(month.len(), 3);
+        assert_eq!(day_of_week.len(), 3);
+        assert!(day.parse::<u8>().is_ok());
+    }
+
+    fn validate_version(version: &str, smp: bool) {
+        let mut parts = if smp {
+            version.splitn(4, ' ')
+        } else {
+            version.splitn(3, ' ')
+        };
+
+        let build_num = parts.next().unwrap(); // "#1"
+        let sysname = parts.next().unwrap(); // "Moss"
+        let smp = parts.next().unwrap(); // "SMP"
+        let datetime = parts.next().unwrap(); // "Tue Feb 20 12:34:56 UTC 2024"
+
+        assert!(
+            build_num.starts_with('#'),
+            "Build number should start with '#'"
+        );
+        assert_eq!(sysname, "Moss");
+        assert_eq!(smp, "SMP");
+
+        validate_datetime(datetime)
+    }
+
+    ktest! {
+        // Test that the version string is of the format "#1 Moss SMP Tue Feb 20 12:34:56 UTC 2024"
+        fn version_format_smp() {
+            let uts = build_utsname();
+            let version_cstr = unsafe { CStr::from_ptr(uts.version.as_ptr()) };
+            let version = version_cstr.to_str().unwrap();
+
+            #[cfg(feature = "smp")]
+            validate_version(version, true);
+            #[cfg(not(feature = "smp"))]
+            validate_version(version, false);
         }
     }
 }
