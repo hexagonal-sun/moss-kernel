@@ -1,6 +1,6 @@
 use alloc::{boxed::Box, collections::BTreeMap, sync::Arc, vec::Vec};
 use core::{future::Future, pin::Pin, task::Poll, time::Duration};
-
+use core::any::Any;
 use crate::{
     drivers::timer::sleep,
     fs::{
@@ -107,6 +107,14 @@ impl EpollFileOps {
 
 #[async_trait]
 impl FileOps for EpollFileOps {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     async fn readat(&mut self, _buf: UA, _count: usize, _offset: u64) -> Result<usize> {
         Err(KernelError::BadFd)
     }

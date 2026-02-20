@@ -5,6 +5,7 @@ use crate::process::{TaskDescriptor, Tid, find_task_by_descriptor};
 use crate::sched::current::current_task_shared;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
+use core::any::Any;
 use async_trait::async_trait;
 use bitflags::bitflags;
 use libkernel::error::{KernelError, Result};
@@ -40,6 +41,14 @@ impl PidFile {
 
 #[async_trait]
 impl FileOps for PidFile {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     async fn readat(&mut self, _buf: UA, _count: usize, _offset: u64) -> Result<usize> {
         Err(KernelError::InvalidValue)
     }
