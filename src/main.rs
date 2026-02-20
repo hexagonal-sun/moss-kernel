@@ -38,6 +38,7 @@ use sched::{
 };
 
 extern crate alloc;
+extern crate moss_macros;
 
 mod arch;
 mod clock;

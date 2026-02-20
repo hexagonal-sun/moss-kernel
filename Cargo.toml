@@ -1,5 +1,5 @@
 [workspace]
-members = ["libkernel", "usertest"]
+members = ["libkernel", "moss-macros", "usertest"]
 
 [workspace.lints.clippy]
 semicolon_if_nothing_returned = "warn"
@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 libkernel = { path = "libkernel" }
+moss-macros = { path = "moss-macros" }
 aarch64-cpu = "11.1.0"
 arm-pl011-uart = { version = "0.4.0", default-features = false }
 tock-registers = "0.10.1"

@@ -63,7 +63,7 @@ pub fn test_runner(tests: &[&Test]) {
 pub fn panic_noop(_: *mut u8, _: *mut u8) {}
 
 #[macro_export]
-macro_rules! ktest {
+macro_rules! ktest_impl {
     ($name:ident, fn $fn_name:ident() $body:block) => {
         #[cfg(test)]
         fn $fn_name(_: *mut u8) {
@@ -93,7 +93,7 @@ macro_rules! ktest {
         }
     };
     (fn $name:ident() $body:block) => {
-        crate::ktest!($name, fn $name() $body);
+        crate::ktest_impl!($name, fn $name() $body);
     };
     (async fn $name:ident() $body:block) => {
         async fn $name() {
@@ -101,7 +101,7 @@ macro_rules! ktest {
         }
 
         paste::paste! {
-            crate::ktest! {
+            crate::ktest_impl! {
                 $name,
                 fn [<__sync_ $name>]() {
                     let mut fut = alloc::boxed::Box::pin($name());
