@@ -24,6 +24,17 @@ pub struct DevFs {
 
 impl DevFs {
     pub fn new() -> Arc<Self> {
+        let shm = DevFsINode {
+            id: InodeId::from_fsid_and_inodeid(DEVFS_ID, 1),
+            attr: SpinLock::new(FileAttr {
+                file_type: FileType::Directory,
+                mode: FilePermissions::from_bits_retain(0o755),
+                ..FileAttr::default()
+            }),
+            kind: InodeKind::Directory(SpinLock::new(BTreeMap::new())),
+        };
+        let mut root_children = BTreeMap::new();
+        root_children.insert("shm".to_string(), Arc::new(shm));
         let root_inode = Arc::new(DevFsINode {
             id: InodeId::from_fsid_and_inodeid(DEVFS_ID, 0),
             attr: SpinLock::new(FileAttr {
@@ -31,12 +42,12 @@ impl DevFs {
                 mode: FilePermissions::from_bits_retain(0o755),
                 ..FileAttr::default()
             }),
-            kind: InodeKind::Directory(SpinLock::new(BTreeMap::new())),
+            kind: InodeKind::Directory(SpinLock::new(root_children)),
         });
 
         Arc::new(Self {
             root: root_inode,
-            next_inode_id: AtomicU64::new(1),
+            next_inode_id: AtomicU64::new(2),
         })
     }
 

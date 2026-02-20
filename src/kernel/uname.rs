@@ -42,7 +42,7 @@ pub async fn sys_uname(uts_ptr: TUA<OldUtsname>) -> Result<usize> {
     let nodename = CString::from_str(&hostname().lock_save_irq()).unwrap();
     copy_str_to_c_char_arr(&mut uts.nodename, nodename.as_c_str().to_bytes_with_nul());
 
-    let release = c"4.2.3".to_bytes_with_nul();
+    let release = c"5.7.1".to_bytes_with_nul();
     copy_str_to_c_char_arr(&mut uts.release, release);
 
     #[cfg(feature = "smp")]

@@ -3,6 +3,7 @@ use alloc::{sync::Arc, vec::Vec};
 use libkernel::error::{FsError, Result};
 
 pub mod dup;
+pub mod epoll;
 pub mod fcntl;
 pub mod select;
 
@@ -187,6 +188,14 @@ impl FileDescriptorTable {
             self.next_fd_hint = next + 1;
             Ok(Fd(next as i32))
         }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Fd, Arc<OpenFile>)> {
+        self.entries.iter().enumerate().filter_map(|(i, entry)| {
+            entry
+                .as_ref()
+                .map(|entry| (Fd(i as i32), entry.file.clone()))
+        })
     }
 
     /// Number of file descriptors in use.

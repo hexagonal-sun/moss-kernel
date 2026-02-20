@@ -2,6 +2,7 @@ use alloc::boxed::Box;
 use alloc::ffi::CString;
 use async_trait::async_trait;
 use core::alloc::Layout;
+use core::any::Any;
 use libkernel::{
     error::{FsError, KernelError, Result},
     fs::{DirStream, Dirent, FileType, Inode},
@@ -60,6 +61,14 @@ impl DirFile {
 
 #[async_trait]
 impl FileOps for DirFile {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
     async fn read(&mut self, _ctx: &mut FileCtx, _buf: UA, _count: usize) -> Result<usize> {
         Err(FsError::IsADirectory.into())
     }
