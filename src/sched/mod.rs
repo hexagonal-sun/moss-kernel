@@ -1,5 +1,6 @@
 use crate::arch::ArchImpl;
 use crate::drivers::timer::{Instant, now};
+#[cfg(feature = "smp")]
 use crate::interrupts::cpu_messenger::{Message, message_cpu};
 use crate::kernel::cpu_id::CpuId;
 use crate::process::owned::OwnedTask;
@@ -129,6 +130,7 @@ pub fn spawn_kernel_work(fut: impl Future<Output = ()> + 'static + Send) {
 /// First 16 bits: CPU ID
 /// Next 24 bits: Weight
 /// Next 24 bits: Number of waiting tasks
+#[cfg(feature = "smp")]
 static LEAST_TASKED_CPU_INFO: AtomicU64 = AtomicU64::new(0);
 const WEIGHT_SHIFT: u32 = 16;
 const WAITING_SHIFT: u32 = WEIGHT_SHIFT + 24;
@@ -138,11 +140,6 @@ fn get_best_cpu() -> CpuId {
     // Get the CPU with the least number of tasks.
     let least_tasked_cpu_info = LEAST_TASKED_CPU_INFO.load(Ordering::Acquire);
     CpuId::from_value((least_tasked_cpu_info & 0xffff) as usize)
-}
-
-#[cfg(not(feature = "smp"))]
-fn get_best_cpu() -> CpuId {
-    CpuId::this()
 }
 
 /// Insert the given task onto a CPU's run queue.
