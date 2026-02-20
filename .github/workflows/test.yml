@@ -18,20 +18,32 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Build dockerfile
-        run: docker build -t moss .
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-aarch64 wget jq e2fsprogs
+      - name: Install arm toolchain
+        run: |
+          ./scripts/download-arm-toolchain.sh /tmp/arm-toolchain.tar.xz
+          mkdir -p /opt/arm-toolchain
+          tar -xf /tmp/arm-toolchain.tar.xz -C /opt/arm-toolchain --strip-components=1
+          rm /tmp/arm-toolchain.tar.xz
+      - name: Update PATH for arm toolchain
+        run: echo "/opt/arm-toolchain/bin:$PATH" >> $GITHUB_PATH
+      - name: Create Image
+        run: ./scripts/create-image.sh
       # If all features are disabled
-      - name: Run tests inside docker container
+      - name: Run tests
         if: ${{ matrix.smp-feature == '' }}
         run: |
-          docker run moss "/bin/bash" -c "cargo run -r --no-default-features -- /bin/usertest" >> usertest.log
-          docker run moss "/bin/bash" -c "cargo test -r --no-default-features" >> unittest.log
+          cargo run -r --no-default-features -- /bin/usertest >> usertest.log
+          cargo test -r --no-default-features >> unittest.log
       # If any feature is enabled
-      - name: Run tests inside docker container
+      - name: Run tests
         if: ${{ matrix.smp-feature == 'smp' }}
         run: |
-          docker run moss "/bin/bash" -c "cargo run -r --no-default-features --features "${{ matrix.smp-feature }}" -- /bin/usertest" >> usertest.log
-          docker run moss "/bin/bash" -c "cargo test -r --no-default-features --features "${{ matrix.smp-feature }}"" >> unittest.log
+          cargo run -r --no-default-features --features "${{ matrix.smp-feature }}" -- /bin/usertest >> usertest.log
+          cargo test -r --no-default-features --features "${{ matrix.smp-feature }}" >> unittest.log
       - name: Display usertest output
         run: cat usertest.log
       - name: Display unit test output
@@ -57,12 +69,20 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-      - name: Build dockerfile
-        run: docker build -t moss .
-      - name: Run container
-        run: docker run -d --name moss-container moss
-      - name: Copy image file
-        run: docker cp moss-container:/moss/moss.img moss.img
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-aarch64 wget jq e2fsprogs
+      - name: Install arm toolchain
+        run: |
+          ./scripts/download-arm-toolchain.sh /tmp/arm-toolchain.tar.xz
+          mkdir -p /opt/arm-toolchain
+          tar -xf /tmp/arm-toolchain.tar.xz -C /opt/arm-toolchain --strip-components=1
+          rm /tmp/arm-toolchain.tar.xz
+      - name: Update PATH for arm toolchain
+        run: echo "/opt/arm-toolchain/bin:$PATH" >> $GITHUB_PATH
+      - name: Create Image
+        run: ./scripts/create-image.sh
       - name: Upload image as artifact
         uses: actions/upload-artifact@v6
         with:
