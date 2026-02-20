@@ -90,15 +90,14 @@ pub async fn sys_uname(uts_ptr: TUA<OldUtsname>) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use crate::kernel::uname::{SYSNAME, build_utsname};
-    use crate::ktest;
     use core::ffi::CStr;
+    use moss_macros::ktest;
 
-    ktest! {
-        fn sysname_correct() {
-            let uts = build_utsname();
-            let sysname_cstr = unsafe { CStr::from_ptr(uts.sysname.as_ptr()) };
-            assert_eq!(sysname_cstr, SYSNAME);
-        }
+    #[ktest]
+    fn sysname_correct() {
+        let uts = build_utsname();
+        let sysname_cstr = unsafe { CStr::from_ptr(uts.sysname.as_ptr()) };
+        assert_eq!(sysname_cstr, SYSNAME);
     }
 
     fn validate_datetime(datetime: &str) {
@@ -144,17 +143,16 @@ mod tests {
         validate_datetime(datetime)
     }
 
-    ktest! {
-        // Test that the version string is of the format "#1 Moss SMP Tue Feb 20 12:34:56 UTC 2024"
-        fn version_format_smp() {
-            let uts = build_utsname();
-            let version_cstr = unsafe { CStr::from_ptr(uts.version.as_ptr()) };
-            let version = version_cstr.to_str().unwrap();
+    // Test that the version string is of the format "#1 Moss SMP Tue Feb 20 12:34:56 UTC 2024"
+    #[ktest]
+    fn version_format_smp() {
+        let uts = build_utsname();
+        let version_cstr = unsafe { CStr::from_ptr(uts.version.as_ptr()) };
+        let version = version_cstr.to_str().unwrap();
 
-            #[cfg(feature = "smp")]
-            validate_version(version, true);
-            #[cfg(not(feature = "smp"))]
-            validate_version(version, false);
-        }
+        #[cfg(feature = "smp")]
+        validate_version(version, true);
+        #[cfg(not(feature = "smp"))]
+        validate_version(version, false);
     }
 }
