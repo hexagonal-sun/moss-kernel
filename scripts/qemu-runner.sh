@@ -2,7 +2,7 @@
 set -e
 
 # First argument: the ELF file to run (required)
-# Second argument: init script to run (optional, defaults to /bin/bash)
+# Second argument: init script to run (optional, defaults to /bin/sh)
 # Parse args:
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <elf-file>"
@@ -12,7 +12,7 @@ fi
 if [ -n "$2" ]; then
     append_args="--init=$2"
 else
-    append_args="--init=/bin/bash --init-arg=-i"
+    append_args="--init=/bin/sh --init-arg=-i"
 fi
 
 
