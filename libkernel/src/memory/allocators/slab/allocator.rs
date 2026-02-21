@@ -93,7 +93,7 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
             // SAFETY: We hold a mutable reference for self, therefore we can be
             // sure that we have exclusive access to all Frames owned by this
             // SlabAllocInner.
-            unsafe { &mut *UnsafeRef::into_raw(x) }
+            unsafe { self.frame_list.get_frame(x.pfn).as_mut_unchecked() }
         }) && let FrameState::Slab(ref mut slab) = frame.state
             && let Some(ptr) = slab.alloc_object()
         {
@@ -101,7 +101,7 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
                 // If the slab is still partial, re-insert back into the partial
                 // list for further allocations.
                 self.partial
-                    .push_front(unsafe { UnsafeRef::from_raw(frame as *mut _) });
+                    .push_front(unsafe { UnsafeRef::from_raw(frame as *const _) });
             }
 
             return Some(ptr);
@@ -109,8 +109,10 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
 
         if let Some(frame) = self.free.pop_front().map(|x| {
             // SAFETY: As above.
-            unsafe { &mut *UnsafeRef::into_raw(x) }
+            unsafe { self.frame_list.get_frame(x.pfn).as_mut_unchecked() }
         }) {
+            self.free_list_sz -= 1;
+
             let (ptr, state) = match frame.state {
                 FrameState::Slab(ref mut slab) => {
                     let ptr = slab.alloc_object().unwrap();
@@ -184,17 +186,19 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
                 frame_list: &FrameList,
                 obj_shift: usize,
             ) -> (*mut Frame, SlabState) {
-                match (unsafe { &mut (*frame) }).state {
-                    FrameState::AllocatedTail(ref tail_info) => {
+                let state = unsafe { &mut (*frame).state };
+                match state {
+                    FrameState::AllocatedTail(tail_info) => {
                         let head_frame = frame_list.get_frame(tail_info.head);
                         do_free_obj(head_frame, ptr, frame_list, obj_shift)
                     }
-                    FrameState::Slab(ref mut slab) => {
+                    FrameState::Slab(slab) => {
                         if slab.obj_shift() != obj_shift {
                             panic!("Slab allocator: Layout mismatch on free");
                         }
                         slab.put_object(ptr);
-                        (frame, slab.state())
+                        let state = slab.state();
+                        (frame, state)
                     }
                     _ => unreachable!("Slab allocation"),
                 }
@@ -204,7 +208,7 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
         };
 
         // SAFETY: As above
-        let frame = unsafe { &mut *frame };
+        let is_linked = unsafe { (*frame).link.is_linked() };
 
         match state {
             SlabState::Free => {
@@ -224,7 +228,7 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
                     self.free_list_sz -= num_freed;
                 }
 
-                if frame.link.is_linked() {
+                if is_linked {
                     // The frame *must* be linked in the partial list if linked.
                     unsafe { self.partial.cursor_mut_from_ptr(frame as _) }.remove();
                 }
@@ -235,8 +239,10 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
                 self.free_list_sz += 1;
             }
             SlabState::Partial => {
-                if !frame.link.is_linked() {
-                    // We must have free'd an object on a previously full slab.
+                if !is_linked {
+                    // We must have free'd an object on a previously full slab
+                    // for it to have not been linked.
+                    //
                     // Insert into the partial list.
                     self.partial
                         .push_front(unsafe { UnsafeRef::from_raw(frame as _) });
