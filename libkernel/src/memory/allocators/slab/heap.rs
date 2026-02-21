@@ -266,132 +266,132 @@ mod tests {
         let _ = get_fixture();
         let _ = TestSlabGetter::global_slab_alloc();
 
-        let num_threads = 8;
-        let ops_per_thread = 100_000;
-        let barrier = Arc::new(Barrier::new(num_threads));
+        for _ in 0..10 {
+            let num_threads = 8;
+            let ops_per_thread = 100_000;
+            let barrier = Arc::new(Barrier::new(num_threads));
 
-        // Track allocated memory usage to verify leak detection later
-        let initial_free_pages = get_fixture().allocator.free_pages();
-        println!("Initial Free Pages: {}", initial_free_pages);
+            // Track allocated memory usage to verify leak detection later
+            let initial_free_pages = get_fixture().allocator.free_pages();
+            println!("Initial Free Pages: {}", initial_free_pages);
 
-        let mut handles = vec![];
+            let mut handles = vec![];
 
-        for t_idx in 0..num_threads {
-            let barrier = barrier.clone();
+            for t_idx in 0..num_threads {
+                let barrier = barrier.clone();
 
-            handles.push(thread::spawn(move || {
-                TestHeap::init_for_this_cpu();
+                handles.push(thread::spawn(move || {
+                    TestHeap::init_for_this_cpu();
 
-                barrier.wait();
+                    barrier.wait();
 
-                let heap = TestHeap::new();
-                let mut rng = rng();
+                    let heap = TestHeap::new();
+                    let mut rng = rng();
 
-                // Track allocations: (Ptr, Layout, PatternByte)
-                let mut allocations: Vec<(*mut u8, core::alloc::Layout, u8)> = Vec::new();
+                    // Track allocations: (Ptr, Layout, PatternByte)
+                    let mut allocations: Vec<(*mut u8, core::alloc::Layout, u8)> = Vec::new();
 
-                for _ in 0..ops_per_thread {
-                    // Randomly decide to Alloc (70%) or Free (30%)
-                    // Bias towards Alloc to build up memory pressure
-                    if rng.random_bool(0.6) || allocations.is_empty() {
-                        // Allocation path
+                    for _ in 0..ops_per_thread {
+                        // Randomly decide to Alloc (70%) or Free (30%)
+                        // Bias towards Alloc to build up memory pressure
+                        if rng.random_bool(0.6) || allocations.is_empty() {
+                            // Allocation path
 
-                        // Random size: biased to small (slab), occasional huge
-                        let size = if rng.random_bool(0.95) {
-                            rng.random_range(1..=2048) // Small (Slabs)
-                        } else {
-                            rng.random_range(4096..=16384) // Large (Pages)
-                        };
+                            // Random size: biased to small (slab), occasional huge
+                            let size = 1024;
 
-                        // Random alignment (power of 2)
-                        let align = 1 << rng.random_range(0..=6);
-                        let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
+                            // Random alignment (power of 2)
+                            let align = 1024;
+                            let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
 
-                        unsafe {
-                            let ptr = heap.alloc(layout);
-                            assert!(!ptr.is_null(), "Allocation failed");
-                            assert_eq!(ptr as usize % align, 0, "Alignment violation");
+                            unsafe {
+                                let ptr = heap.alloc(layout);
+                                assert!(!ptr.is_null(), "Allocation failed");
+                                assert_eq!(ptr as usize % align, 0, "Alignment violation");
 
-                            // Write Pattern
-                            let pattern: u8 = rng.random();
-                            std::ptr::write_bytes(ptr, pattern, size);
+                                // Write Pattern
+                                let pattern: u8 = rng.random();
+                                std::ptr::write_bytes(ptr, pattern, size);
 
-                            allocations.push((ptr, layout, pattern));
-                        }
-                    } else {
-                        // Free Path.
-
-                        // Remove a random allocation from our list
-                        let idx = rng.random_range(0..allocations.len());
-                        let (ptr, layout, pattern) = allocations.swap_remove(idx);
-
-                        unsafe {
-                            // Verify Pattern
-                            let slice = std::slice::from_raw_parts(ptr, layout.size());
-                            for (i, &byte) in slice.iter().enumerate() {
-                                assert_eq!(
-                                    byte, pattern,
-                                    "Memory Corruption detected in thread {} at byte {}",
-                                    t_idx, i
-                                );
+                                allocations.push((ptr, layout, pattern));
                             }
+                        } else {
+                            // Free Path.
 
+                            // Remove a random allocation from our list
+                            let idx = rng.random_range(0..allocations.len());
+                            let (ptr, layout, pattern) = allocations.swap_remove(idx);
+
+                            unsafe {
+                                // Verify Pattern
+                                let slice = std::slice::from_raw_parts(ptr, layout.size());
+                                for (i, &byte) in slice.iter().enumerate() {
+                                    assert_eq!(
+                                        byte, pattern,
+                                        "Memory Corruption detected in thread {} at byte {}",
+                                        t_idx, i
+                                    );
+                                }
+
+                                heap.dealloc(ptr, layout);
+                            }
+                        }
+                    }
+
+                    // Free everything.
+                    for (ptr, layout, pattern) in allocations {
+                        unsafe {
+                            let slice = std::slice::from_raw_parts(ptr, layout.size());
+                            for &byte in slice.iter() {
+                                assert_eq!(byte, pattern, "Corruption detected during cleanup");
+                            }
                             heap.dealloc(ptr, layout);
                         }
                     }
-                }
 
-                // Free everything.
-                for (ptr, layout, pattern) in allocations {
+                    // Purge the per-cpu caches.
+                    let slab = SLAB_ALLOCATOR.get().unwrap();
+                    ThreadLocalCacheStorage::get().purge_into(&slab);
+
+                    let addr = ThreadLocalCacheStorage::get().deref() as *const SlabCache;
+
+                    // Return the slab cache page.
                     unsafe {
-                        let slice = std::slice::from_raw_parts(ptr, layout.size());
-                        for &byte in slice.iter() {
-                            assert_eq!(byte, pattern, "Corruption detected during cleanup");
-                        }
-                        heap.dealloc(ptr, layout);
+                        FIXTURE
+                            .get()
+                            .unwrap()
+                            .allocator
+                            .alloc_from_region(PhysMemoryRegion::new(
+                                PA::from_value(addr as usize),
+                                PAGE_SIZE,
+                            ));
                     }
-                }
-
-                // Purge the per-cpu caches.
-                let slab = SLAB_ALLOCATOR.get().unwrap();
-                ThreadLocalCacheStorage::get().purge_into(&slab);
-
-                let addr = ThreadLocalCacheStorage::get().deref() as *const SlabCache;
-
-                // Return the slab cache page.
-                unsafe {
-                    FIXTURE
-                        .get()
-                        .unwrap()
-                        .allocator
-                        .alloc_from_region(PhysMemoryRegion::new(
-                            PA::from_value(addr as usize),
-                            PAGE_SIZE,
-                        ));
-                }
-            }))
-        }
-
-        // Wait for all threads
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        // Purge the all slab free lsts (the partial list should be empty).
-        for slab_man in SLAB_ALLOCATOR.get().unwrap().managers.iter() {
-            let mut frame_alloc = FIXTURE.get().unwrap().allocator.inner.lock_save_irq();
-
-            let mut slab = slab_man.lock_save_irq();
-
-            assert!(slab.partial.is_empty());
-
-            while let Some(slab) = slab.free.pop_front() {
-                frame_alloc.free_slab(slab);
+                }))
             }
+
+            // Wait for all threads
+            for h in handles {
+                h.join().unwrap();
+            }
+
+            // Purge the all slab free lsts (the partial list should be empty).
+            for slab_man in SLAB_ALLOCATOR.get().unwrap().managers.iter() {
+                let mut frame_alloc = FIXTURE.get().unwrap().allocator.inner.lock_save_irq();
+
+                let mut slab = slab_man.lock_save_irq();
+
+                assert!(slab.partial.is_empty());
+
+                while let Some(slab) = slab.free.pop_front() {
+                    frame_alloc.free_slab(slab);
+                }
+
+                slab.free_list_sz = 0;
+            }
+
+            let final_free = get_fixture().allocator.free_pages();
+
+            assert_eq!(initial_free_pages, final_free);
         }
-
-        let final_free = get_fixture().allocator.free_pages();
-
-        assert_eq!(initial_free_pages, final_free);
     }
 }

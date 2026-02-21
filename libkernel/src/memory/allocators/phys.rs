@@ -40,17 +40,21 @@ impl FrameAllocatorInner {
     pub(super) fn free_slab(&mut self, frame: UnsafeRef<Frame>) {
         assert!(matches!(frame.state, FrameState::Slab(_)));
 
-        // SAFETY: The caller should guarntee exclusive ownership of this frame
-        // as it's being passed back to the FA.
-        let frame = unsafe { &mut *UnsafeRef::into_raw(frame) };
+        let pfn = frame.pfn;
 
-        // Restore frame state data for slabs.
-        frame.state = FrameState::AllocatedHead(AllocatedInfo {
-            ref_count: 1,
-            order: SLAB_FRAME_ALLOC_ORDER as _,
-        });
+        {
+            // SAFETY: The caller should guarntee exclusive ownership of this frame
+            // as it's being passed back to the FA.
+            let frame = self.get_frame_mut(pfn);
 
-        self.free_frames(PhysMemoryRegion::new(frame.pfn.pa(), SLAB_SIZE_BYTES));
+            // Restore frame state data for slabs.
+            frame.state = FrameState::AllocatedHead(AllocatedInfo {
+                ref_count: 1,
+                order: SLAB_FRAME_ALLOC_ORDER as _,
+            });
+        }
+
+        self.free_frames(PhysMemoryRegion::new(pfn.pa(), SLAB_SIZE_BYTES));
     }
 
     /// Frees a previously allocated block of frames.

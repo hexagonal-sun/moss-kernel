@@ -37,7 +37,8 @@ pub enum FrameState {
 #[derive(Debug, Clone)]
 pub struct Frame {
     pub state: FrameState,
-    pub link: LinkedListLink, // only used in free nodes.
+    // used in free nodes list (FA), Free and Partial Lists (SA).
+    pub link: LinkedListLink,
     pub pfn: PageFrame,
 }
 
