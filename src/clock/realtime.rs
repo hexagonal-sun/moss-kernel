@@ -31,16 +31,21 @@ static EPOCH_DURATION: SpinLock<Option<(Duration, Instant)>> = SpinLock::new(Non
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ktest;
+    use moss_macros::ktest;
 
-    ktest! {
-        fn test_date_and_set_date() {
-            let initial_date = date();
-            let new_date = Duration::from_secs(1_000_000);
-            set_date(new_date);
-            let updated_date = date();
-            assert_ne!(initial_date, updated_date, "Date should change after set_date");
-            assert!(updated_date >= new_date, "Updated date should be at least the new date set");
-        }
+    #[ktest]
+    fn test_date_and_set_date() {
+        let initial_date = date();
+        let new_date = Duration::from_secs(1_000_000);
+        set_date(new_date);
+        let updated_date = date();
+        assert_ne!(
+            initial_date, updated_date,
+            "Date should change after set_date"
+        );
+        assert!(
+            updated_date >= new_date,
+            "Updated date should be at least the new date set"
+        );
     }
 }

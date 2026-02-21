@@ -16,5 +16,8 @@ test-unit:
     host_target="$(rustc --version --verbose | awk -F': ' '/^host:/ {print $2; exit}')"
     cargo test --package libkernel --target "$host_target"
 
+test-kunit:
+    cargo test --release
+
 test-userspace:
     cargo run -r -- /bin/usertest
