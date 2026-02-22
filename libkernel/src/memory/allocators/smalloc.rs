@@ -2,7 +2,7 @@
 //! kernel use.
 //!
 //! This allocator manages a fixed number of memory and reservation regions and
-//! supports basic allocation and freeing of physical memory blocks. //!
+//! supports basic allocation and freeing of physical memory blocks.
 //!
 //! ## Key Components
 //! - [`RegionList`]: A growable list of non-overlapping [`PhysMemoryRegion`]s,
@@ -502,6 +502,10 @@ where
 #[cfg(test)]
 mod tests {
     use core::{marker::PhantomData, mem::MaybeUninit};
+    use std::{
+        alloc::Layout,
+        ops::{Deref, DerefMut},
+    };
 
     use rand::{Rng, SeedableRng};
 
@@ -515,17 +519,54 @@ mod tests {
 
     use super::{RegionList, Smalloc};
 
-    fn get_smalloc() -> Smalloc<IdentityTranslator> {
-        let mem_region: &mut [MaybeUninit<PhysMemoryRegion>] =
-            vec![MaybeUninit::uninit(); 16].leak();
-        let res_region: &mut [MaybeUninit<PhysMemoryRegion>] =
-            vec![MaybeUninit::uninit(); 16].leak();
+    struct TestSmalloc {
+        smalloc: Smalloc<IdentityTranslator>,
+        mem_ptr: *mut PhysMemoryRegion,
+        res_ptr: *mut PhysMemoryRegion,
+    }
 
-        Smalloc {
-            memory: RegionList::new(16, mem_region.as_mut_ptr().cast()),
-            res: RegionList::new(16, res_region.as_mut_ptr().cast()),
-            permit_region_realloc: false,
-            _phantom: PhantomData,
+    impl TestSmalloc {
+        fn get_layout() -> Layout {
+            std::alloc::Layout::array::<PhysMemoryRegion>(16).unwrap()
+        }
+    }
+
+    fn get_smalloc() -> TestSmalloc {
+        let layout = TestSmalloc::get_layout();
+        let mem_ptr = unsafe { std::alloc::alloc(layout) } as *mut PhysMemoryRegion;
+        let res_ptr = unsafe { std::alloc::alloc(layout) } as *mut PhysMemoryRegion;
+
+        TestSmalloc {
+            smalloc: Smalloc {
+                memory: RegionList::new(16, mem_ptr),
+                res: RegionList::new(16, res_ptr),
+                permit_region_realloc: false,
+                _phantom: PhantomData,
+            },
+            mem_ptr,
+            res_ptr,
+        }
+    }
+
+    impl DerefMut for TestSmalloc {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.smalloc
+        }
+    }
+
+    impl Deref for TestSmalloc {
+        type Target = Smalloc<IdentityTranslator>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.smalloc
+        }
+    }
+
+    impl Drop for TestSmalloc {
+        fn drop(&mut self) {
+            let layout = Self::get_layout();
+            unsafe { std::alloc::dealloc(self.mem_ptr as _, layout) };
+            unsafe { std::alloc::dealloc(self.res_ptr as _, layout) };
         }
     }
 
@@ -1021,12 +1062,15 @@ mod tests {
     #[test]
     fn memory_region_list_move() {
         let mut smalloc = get_smalloc();
-        let big_buf: &mut [MaybeUninit<PhysMemoryRegion>] = vec![MaybeUninit::uninit(); 128].leak();
+        let len = 128;
+        let layout = std::alloc::Layout::array::<MaybeUninit<PhysMemoryRegion>>(len).unwrap();
+        let big_buf_ptr =
+            unsafe { std::alloc::alloc(layout) } as *mut MaybeUninit<PhysMemoryRegion>;
 
         smalloc
             .add_memory(PhysMemoryRegion::new(
-                PA::from_value(big_buf.as_ptr().expose_provenance()),
-                big_buf.len() * core::mem::size_of::<MaybeUninit<PhysMemoryRegion>>(),
+                PA::from_value(big_buf_ptr.expose_provenance()),
+                len * core::mem::size_of::<MaybeUninit<PhysMemoryRegion>>(),
             ))
             .unwrap();
 
@@ -1034,7 +1078,7 @@ mod tests {
             assert!(
                 smalloc
                     .add_memory(PhysMemoryRegion::new(
-                        PA::from_value(big_buf.as_ptr().expose_provenance() + (i * 0x1000)),
+                        PA::from_value(big_buf_ptr.expose_provenance() + (i * 0x1000)),
                         0x50,
                     ))
                     .is_ok()
@@ -1045,7 +1089,7 @@ mod tests {
         assert!(
             smalloc
                 .add_memory(PhysMemoryRegion::new(
-                    PA::from_value(big_buf.as_ptr().expose_provenance() + (15 * 0x1000)),
+                    PA::from_value(big_buf_ptr.expose_provenance() + (15 * 0x1000)),
                     0x50,
                 ))
                 .is_err()
@@ -1056,7 +1100,7 @@ mod tests {
         assert!(
             smalloc
                 .add_memory(PhysMemoryRegion::new(
-                    PA::from_value(big_buf.as_ptr().expose_provenance() + (15 * 0x1000)),
+                    PA::from_value(big_buf_ptr.expose_provenance() + (15 * 0x1000)),
                     0x50,
                 ))
                 .is_ok()
@@ -1067,6 +1111,8 @@ mod tests {
 
         // We should have 1 reservation, the list itself.
         assert_eq!(smalloc.res.count, 1);
+
+        unsafe { std::alloc::dealloc(big_buf_ptr as _, layout) };
     }
 
     #[test]
