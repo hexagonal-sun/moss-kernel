@@ -179,7 +179,7 @@ mod tests {
         },
         test::MockCpuOps,
     };
-    use rand::{Rng, rng};
+    use rand::{RngExt, rng};
     use std::{
         cell::RefCell,
         ops::{Deref, DerefMut},

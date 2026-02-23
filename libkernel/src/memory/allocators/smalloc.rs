@@ -507,7 +507,7 @@ mod tests {
         ops::{Deref, DerefMut},
     };
 
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     use crate::{
         error::KernelError,

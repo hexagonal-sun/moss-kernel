@@ -4,19 +4,19 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
+async-trait = { workspace = true }
+bitflags = { workspace = true }
 ext4-view = { git = "https://github.com/arihant2math/ext4-view-rs.git", branch = "main" }
-paste = "1.0.15"
+intrusive-collections = { version = "0.10.0", default-features = false }
+log = { workspace = true }
+object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }
+paste = { workspace = true }
+ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
 thiserror = { version = "2.0.12", default-features = false }
 tock-registers = "0.10.1"
-log = "0.4.27"
-async-trait = "0.1.88"
-object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }
-bitflags = "2.9.1"
-ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
-intrusive-collections = { version = "0.9.7", default-features = false }
 
 [dev-dependencies]
-rand = "0.9.1"
+rand = { workspace = true, features = ["default"] }
 tokio = { version = "1.47.1", features = ["full"] }
 
 [lints]
