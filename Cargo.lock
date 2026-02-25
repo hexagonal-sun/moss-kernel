@@ -142,7 +142,7 @@ dependencies = [
 [[package]]
 name = "ext4-view"
 version = "0.9.3"
-source = "git+https://github.com/arihant2math/ext4-view-rs.git?branch=main#4ca848f90b8eae11c38820f7626b0cca1ec24b70"
+source = "git+https://github.com/arihant2math/ext4-view-rs.git?branch=main#20ecd9c422a42d9c855b9d202c8b59cd45c0e69b"
 dependencies = [
  "async-trait",
  "bitflags",

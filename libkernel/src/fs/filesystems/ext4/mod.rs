@@ -61,7 +61,10 @@ impl From<ext4_view::Ext4Error> for KernelError {
         match err {
             ext4_view::Ext4Error::NotFound => KernelError::Fs(FsError::NotFound),
             ext4_view::Ext4Error::NotADirectory => KernelError::Fs(FsError::NotADirectory),
-            ext4_view::Ext4Error::Corrupt(_) => KernelError::Fs(FsError::InvalidFs),
+            ext4_view::Ext4Error::Corrupt(c) => {
+                error!("Corrupt EXT4 filesystem: {c}, likely a bug");
+                KernelError::Fs(FsError::InvalidFs)
+            }
             e => {
                 error!("Unmapped EXT4 error: {e:?}");
                 KernelError::Other("EXT4 error")
@@ -283,8 +286,46 @@ where
         Err(KernelError::NotSupported)
     }
 
-    async fn unlink(&self, _name: &str) -> Result<()> {
-        Err(KernelError::NotSupported)
+    async fn link(&self, name: &str, inode: Arc<dyn Inode>) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if inner.file_type() != ext4_view::FileType::Directory {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        // TODO: This forces the other inode out of sync
+        // Check fs ids match
+        if inode.id().fs_id() != fs.id() {
+            return Err(KernelError::Fs(FsError::CrossDevice));
+        }
+        let mut other_inode = ext4_view::Inode::read(
+            &fs.inner,
+            (inode.id().inode_id() as u32).try_into().unwrap(),
+        )
+        .await?;
+        let file_type = other_inode.file_type();
+        fs.inner
+            .link(&inner, name.to_string(), &mut other_inode)
+            .await?;
+        Ok(())
+    }
+
+    async fn unlink(&self, name: &str) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if inner.file_type() != ext4_view::FileType::Directory {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        let child_inode = get_dir_entry_inode_by_name(
+            &fs.inner,
+            &inner,
+            ext4_view::DirEntryName::try_from(name)
+                .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+        )
+        .await?;
+        fs.inner
+            .unlink(&inner, name.to_string(), child_inode)
+            .await?;
+        Ok(())
     }
 
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
