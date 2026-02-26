@@ -28,10 +28,7 @@ use async_trait::async_trait;
 use core::error::Error;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
-use ext4_view::{
-    AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks,
-    InodeCreationOptions, InodeFlags, InodeMode, Metadata, ReadDir, get_dir_entry_inode_by_name,
-};
+use ext4_view::{AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks, InodeCreationOptions, InodeFlags, InodeMode, Metadata, ReadDir, get_dir_entry_inode_by_name, write_at};
 use log::error;
 
 #[async_trait]
@@ -202,24 +199,7 @@ where
         }
 
         let fs = self.fs_ref.upgrade().unwrap();
-        let mut file = File::open_inode(&fs.inner, inner.clone())?;
-
-        file.seek_to(offset).await?;
-
-        // `ext4_view::File::write_bytes` may write fewer bytes than requested
-        // if the write crosses a block boundary. Loop until we've written
-        // all bytes.
-        let mut total_written = 0;
-        while total_written < buf.len() {
-            let bytes_written = file.write_bytes(&buf[total_written..]).await?;
-            if bytes_written == 0 {
-                break; // Should not happen unless disk is full
-            }
-            total_written += bytes_written;
-        }
-
-        // Update inode metadata in case size changed.
-        *inner = file.into_inode();
+        let total_written = write_at(&fs.inner, &mut inner, buf, offset).await?;
 
         Ok(total_written)
     }
