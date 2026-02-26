@@ -28,7 +28,11 @@ use async_trait::async_trait;
 use core::error::Error;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
-use ext4_view::{AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks, InodeCreationOptions, InodeFlags, InodeMode, Metadata, ReadDir, get_dir_entry_inode_by_name, write_at};
+use ext4_view::{
+    AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks,
+    InodeCreationOptions, InodeFlags, InodeMode, Metadata, ReadDir, get_dir_entry_inode_by_name,
+    write_at,
+};
 use log::error;
 
 #[async_trait]
@@ -264,30 +268,45 @@ where
         permissions: FilePermissions,
     ) -> Result<Arc<dyn Inode>> {
         let fs = self.fs_ref.upgrade().unwrap();
-        if !matches!(file_type, FileType::File) {
+        let mut inner = self.inner.lock().await;
+        let new_inode = if matches!(file_type, FileType::File) {
+            fs.inner
+                .create_inode(InodeCreationOptions {
+                    file_type: ext4_view::FileType::Regular,
+                    mode: InodeMode::S_IFREG | InodeMode::from_bits(permissions.bits()).unwrap(),
+                    uid: 0,
+                    gid: 0,
+                    time: Default::default(),
+                    flags: InodeFlags::empty(),
+                })
+                .await?
+        } else if matches!(file_type, FileType::Directory) {
+            let old_links_count = inner.links_count();
+            inner.set_links_count(old_links_count + 1);
+            let mut inode = fs.inner
+                .create_inode(InodeCreationOptions {
+                    file_type: ext4_view::FileType::Directory,
+                    mode: InodeMode::S_IFDIR | InodeMode::from_bits(permissions.bits()).unwrap(),
+                    uid: 0,
+                    gid: 0,
+                    time: Default::default(),
+                    flags: InodeFlags::empty(),
+                })
+                .await?;
+            ext4_view::init_directory(&fs.inner, &mut inode, inner.index).await?;
+            inode
+        } else {
             return Err(KernelError::NotSupported);
-        }
-        let new_inode = fs
-            .inner
-            .create_inode(InodeCreationOptions {
-                file_type: ext4_view::FileType::Regular,
-                mode: InodeMode::S_IFREG | InodeMode::from_bits(permissions.bits()).unwrap(),
-                uid: 0,
-                gid: 0,
-                time: Default::default(),
-                flags: InodeFlags::empty(),
-            })
-            .await?;
-        let inner = self.inner.lock().await;
+        };
         fs.inner
             .link(&inner, name.to_string(), &mut new_inode.clone())
             .await?;
-        let child_path = self.path.join(name);
+        let new_path = self.path.join(name);
         Ok(Arc::new(Ext4Inode::<CPU> {
             fs_ref: self.fs_ref.clone(),
             id: new_inode.index,
             inner: Mutex::new(new_inode),
-            path: child_path,
+            path: new_path,
         }))
     }
 
