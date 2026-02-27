@@ -62,6 +62,7 @@ impl From<ext4_view::Ext4Error> for KernelError {
         match err {
             ext4_view::Ext4Error::NotFound => KernelError::Fs(FsError::NotFound),
             ext4_view::Ext4Error::NotADirectory => KernelError::Fs(FsError::NotADirectory),
+            ext4_view::Ext4Error::AlreadyExists => KernelError::Fs(FsError::AlreadyExists),
             ext4_view::Ext4Error::Corrupt(c) => {
                 error!("Corrupt EXT4 filesystem: {c}, likely a bug");
                 KernelError::Fs(FsError::InvalidFs)
@@ -376,6 +377,36 @@ where
             .symlink_target(&fs.inner)
             .await
             .map(|p| PathBuf::from(p.to_str().unwrap()))?)
+    }
+
+    async fn rename_from(&self, old_parent: Arc<dyn Inode>, old_name: &str, new_name: &str, no_replace: bool) -> Result<()> {
+        let old_parent_id = old_parent.id();
+        let old_parent_inode = ext4_view::Inode::read(
+            &self.fs_ref.upgrade().unwrap().inner,
+            (old_parent_id.inode_id() as u32).try_into().unwrap(),
+        ).await?;
+        let fs = self.fs_ref.upgrade().unwrap();
+        let inner = self.inner.lock().await;
+        let old_inode = get_dir_entry_inode_by_name(
+            &fs.inner,
+            &old_parent_inode,
+            ext4_view::DirEntryName::try_from(old_name)
+                .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+        ).await?;
+        if no_replace {
+            // Check if new name already exists
+            if let Ok(_) = get_dir_entry_inode_by_name(
+                &fs.inner,
+                &inner,
+                ext4_view::DirEntryName::try_from(new_name)
+                    .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+            ).await {
+                return Err(KernelError::Fs(FsError::AlreadyExists));
+            }
+        }
+        fs.inner.link(&inner, new_name.to_string(), &mut old_inode.clone()).await?;
+        fs.inner.unlink(&old_parent_inode, old_name.to_string(), old_inode).await?;
+        Ok(())
     }
 
     async fn sync(&self) -> Result<()> {
