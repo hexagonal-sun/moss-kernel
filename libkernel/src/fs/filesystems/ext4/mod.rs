@@ -5,6 +5,7 @@
 #![allow(unused_imports)]
 
 use crate::error::FsError;
+use crate::fs::path::Path;
 use crate::fs::pathbuf::PathBuf;
 use crate::fs::{DirStream, Dirent};
 use crate::proc::ids::{Gid, Uid};
@@ -35,7 +36,6 @@ use ext4_view::{
     write_at,
 };
 use log::error;
-use crate::fs::path::Path;
 
 #[async_trait]
 impl Ext4Read for BlockBuffer {
@@ -272,7 +272,7 @@ where
     ) -> Result<Arc<dyn Inode>> {
         let fs = self.fs_ref.upgrade().unwrap();
         let mut inner = self.inner.lock().await;
-        let new_inode = if matches!(file_type, FileType::File) {
+        let mut new_inode = if matches!(file_type, FileType::File) {
             fs.inner
                 .create_inode(InodeCreationOptions {
                     file_type: ext4_view::FileType::Regular,
@@ -286,7 +286,8 @@ where
         } else if matches!(file_type, FileType::Directory) {
             let old_links_count = inner.links_count();
             inner.set_links_count(old_links_count + 1);
-            let mut inode = fs.inner
+            let mut inode = fs
+                .inner
                 .create_inode(InodeCreationOptions {
                     file_type: ext4_view::FileType::Directory,
                     mode: InodeMode::S_IFDIR | InodeMode::from_bits(permissions.bits()).unwrap(),
@@ -302,7 +303,7 @@ where
             return Err(KernelError::NotSupported);
         };
         fs.inner
-            .link(&inner, name.to_string(), &mut new_inode.clone())
+            .link(&inner, name.to_string(), &mut new_inode)
             .await?;
         let new_path = self.path.join(name);
         Ok(Arc::new(Ext4Inode::<CPU> {
@@ -381,20 +382,28 @@ where
             .map(|p| PathBuf::from(p.to_str().unwrap()))?)
     }
 
-    async fn rename_from(&self, old_parent: Arc<dyn Inode>, old_name: &str, new_name: &str, no_replace: bool) -> Result<()> {
+    async fn rename_from(
+        &self,
+        old_parent: Arc<dyn Inode>,
+        old_name: &str,
+        new_name: &str,
+        no_replace: bool,
+    ) -> Result<()> {
         let old_parent_id = old_parent.id();
         let old_parent_inode = ext4_view::Inode::read(
             &self.fs_ref.upgrade().unwrap().inner,
             (old_parent_id.inode_id() as u32).try_into().unwrap(),
-        ).await?;
+        )
+        .await?;
         let fs = self.fs_ref.upgrade().unwrap();
         let inner = self.inner.lock().await;
-        let old_inode = get_dir_entry_inode_by_name(
+        let mut child_inode = get_dir_entry_inode_by_name(
             &fs.inner,
             &old_parent_inode,
             ext4_view::DirEntryName::try_from(old_name)
                 .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
-        ).await?;
+        )
+        .await?;
         if no_replace {
             // Check if new name already exists
             if let Ok(_) = get_dir_entry_inode_by_name(
@@ -402,12 +411,18 @@ where
                 &inner,
                 ext4_view::DirEntryName::try_from(new_name)
                     .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
-            ).await {
+            )
+            .await
+            {
                 return Err(KernelError::Fs(FsError::AlreadyExists));
             }
         }
-        fs.inner.link(&inner, new_name.to_string(), &mut old_inode.clone()).await?;
-        fs.inner.unlink(&old_parent_inode, old_name.to_string(), old_inode).await?;
+        fs.inner
+            .link(&inner, new_name.to_string(), &mut child_inode)
+            .await?;
+        fs.inner
+            .unlink(&old_parent_inode, old_name.to_string(), child_inode)
+            .await?;
         Ok(())
     }
 
@@ -417,7 +432,16 @@ where
             return Err(KernelError::NotSupported);
         }
         let fs = self.fs_ref.upgrade().unwrap();
-        fs.inner.symlink(&inner, name.to_string(), ext4_view::PathBuf::new(target.as_str().as_bytes()), 0, 0, Duration::from_secs(0)).await?;
+        fs.inner
+            .symlink(
+                &inner,
+                name.to_string(),
+                ext4_view::PathBuf::new(target.as_str().as_bytes()),
+                0,
+                0,
+                Duration::from_secs(0),
+            )
+            .await?;
         Ok(())
     }
 
