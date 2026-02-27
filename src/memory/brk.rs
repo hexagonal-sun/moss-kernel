@@ -26,7 +26,7 @@ pub async fn sys_brk(addr: VA) -> Result<usize, Infallible> {
     // The query case `brk(0)` is special and is handled separately from modifications.
     if addr.is_null() {
         let current_brk_val = vm.current_brk().value();
-        return Ok(current_brk_val as usize);
+        return Ok(current_brk_val);
     }
 
     // For non-null addresses, attempt to resize the break.
@@ -39,7 +39,7 @@ pub async fn sys_brk(addr: VA) -> Result<usize, Infallible> {
         // The contract is to return the current, unchanged break address.
         Err(_) => {
             let current_brk_val = vm.current_brk().value();
-            Ok(current_brk_val as usize)
+            Ok(current_brk_val)
         }
     }
 }
