@@ -123,13 +123,10 @@ impl PTrace {
             None => 0,
             Some(PTraceState::Running) => 0,
             // No masking for real signal delivery.
-            Some(PTraceState::SignalTrap { signal, .. }) => {
-                if signal.is_stopping() {
-                    (PTRACE_EVENT_STOP as i32) << 8
-                } else {
-                    0
-                }
+            Some(PTraceState::SignalTrap { signal, .. }) if signal.is_stopping() => {
+                (PTRACE_EVENT_STOP as i32) << 8
             }
+            Some(PTraceState::SignalTrap { .. }) => 0,
             Some(PTraceState::TracePointHit { hit_point, .. }) => match hit_point {
                 TracePoint::SyscallEntry | TracePoint::SyscallExit => {
                     if self.sysgood {
