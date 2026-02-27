@@ -28,12 +28,14 @@ use async_trait::async_trait;
 use core::error::Error;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use core::time::Duration;
 use ext4_view::{
     AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks,
     InodeCreationOptions, InodeFlags, InodeMode, Metadata, ReadDir, get_dir_entry_inode_by_name,
     write_at,
 };
 use log::error;
+use crate::fs::path::Path;
 
 #[async_trait]
 impl Ext4Read for BlockBuffer {
@@ -406,6 +408,16 @@ where
         }
         fs.inner.link(&inner, new_name.to_string(), &mut old_inode.clone()).await?;
         fs.inner.unlink(&old_parent_inode, old_name.to_string(), old_inode).await?;
+        Ok(())
+    }
+
+    async fn symlink(&self, name: &str, target: &Path) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if inner.file_type() != ext4_view::FileType::Directory {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        fs.inner.symlink(&inner, name.to_string(), ext4_view::PathBuf::new(target.as_str().as_bytes()), 0, 0, Duration::from_secs(0)).await?;
         Ok(())
     }
 
