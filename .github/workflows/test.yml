@@ -38,13 +38,13 @@ jobs:
       - name: Run tests
         if: ${{ matrix.smp-feature == '' }}
         run: |
-          cargo run -r --no-default-features -- /bin/usertest >> usertest.log
+          cargo run -r --no-default-features -- --init /bin/usertest >> usertest.log
           cargo test -r --no-default-features >> unittest.log
       # If any feature is enabled
       - name: Run tests
         if: ${{ matrix.smp-feature == 'smp' }}
         run: |
-          cargo run -r --no-default-features --features "${{ matrix.smp-feature }}" -- /bin/usertest >> usertest.log
+          cargo run -r --no-default-features --features "${{ matrix.smp-feature }}" -- --init /bin/usertest >> usertest.log
           cargo test -r --no-default-features --features "${{ matrix.smp-feature }}" >> unittest.log
       - name: Display usertest output
         run: cat usertest.log
