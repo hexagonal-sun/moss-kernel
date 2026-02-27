@@ -42,7 +42,7 @@ pub struct Frame {
     pub pfn: PageFrame,
 }
 
-intrusive_adapter!(pub FrameAdapter = UnsafeRef<Frame>: Frame { link: LinkedListLink });
+intrusive_adapter!(pub FrameAdapter = UnsafeRef<Frame>: Frame { link => LinkedListLink });
 
 impl Frame {
     pub fn new(pfn: PageFrame) -> Self {

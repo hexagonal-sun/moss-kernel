@@ -8,7 +8,7 @@ use crate::{
 use alloc::vec::Vec;
 use libkernel::error::Result;
 use libkernel::memory::address::TUA;
-use rand::{RngCore, SeedableRng, rngs::SmallRng};
+use rand::{Rng, SeedableRng, rngs::SmallRng};
 
 pub async fn sys_getrandom(ubuf: TUA<u8>, size: isize, _flags: u32) -> Result<usize> {
     let buf = {

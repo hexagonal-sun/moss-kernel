@@ -5,6 +5,7 @@
 #![allow(unused_imports)]
 
 use crate::error::FsError;
+use crate::fs::path::Path;
 use crate::fs::pathbuf::PathBuf;
 use crate::fs::{DirStream, Dirent};
 use crate::proc::ids::{Gid, Uid};
@@ -28,9 +29,11 @@ use async_trait::async_trait;
 use core::error::Error;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
+use core::time::Duration;
 use ext4_view::{
-    AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks, Metadata, ReadDir,
-    get_dir_entry_inode_by_name,
+    AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks,
+    InodeCreationOptions, InodeFlags, InodeMode, Metadata, ReadDir, get_dir_entry_inode_by_name,
+    write_at,
 };
 use log::error;
 
@@ -61,7 +64,11 @@ impl From<ext4_view::Ext4Error> for KernelError {
         match err {
             ext4_view::Ext4Error::NotFound => KernelError::Fs(FsError::NotFound),
             ext4_view::Ext4Error::NotADirectory => KernelError::Fs(FsError::NotADirectory),
-            ext4_view::Ext4Error::Corrupt(_) => KernelError::Fs(FsError::InvalidFs),
+            ext4_view::Ext4Error::AlreadyExists => KernelError::Fs(FsError::AlreadyExists),
+            ext4_view::Ext4Error::Corrupt(c) => {
+                error!("Corrupt EXT4 filesystem: {c}, likely a bug");
+                KernelError::Fs(FsError::InvalidFs)
+            }
             e => {
                 error!("Unmapped EXT4 error: {e:?}");
                 KernelError::Other("EXT4 error")
@@ -199,24 +206,7 @@ where
         }
 
         let fs = self.fs_ref.upgrade().unwrap();
-        let mut file = File::open_inode(&fs.inner, inner.clone())?;
-
-        file.seek_to(offset).await?;
-
-        // `ext4_view::File::write_bytes` may write fewer bytes than requested
-        // if the write crosses a block boundary. Loop until we've written
-        // all bytes.
-        let mut total_written = 0;
-        while total_written < buf.len() {
-            let bytes_written = file.write_bytes(&buf[total_written..]).await?;
-            if bytes_written == 0 {
-                break; // Should not happen unless disk is full
-            }
-            total_written += bytes_written;
-        }
-
-        // Update inode metadata in case size changed.
-        *inner = file.into_inode();
+        let total_written = write_at(&fs.inner, &mut inner, buf, offset).await?;
 
         Ok(total_written)
     }
@@ -276,15 +266,94 @@ where
 
     async fn create(
         &self,
-        _name: &str,
-        _file_type: FileType,
-        _permissions: FilePermissions,
+        name: &str,
+        file_type: FileType,
+        permissions: FilePermissions,
     ) -> Result<Arc<dyn Inode>> {
-        Err(KernelError::NotSupported)
+        let fs = self.fs_ref.upgrade().unwrap();
+        let mut inner = self.inner.lock().await;
+        let mut new_inode = if matches!(file_type, FileType::File) {
+            fs.inner
+                .create_inode(InodeCreationOptions {
+                    file_type: ext4_view::FileType::Regular,
+                    mode: InodeMode::S_IFREG | InodeMode::from_bits(permissions.bits()).unwrap(),
+                    uid: 0,
+                    gid: 0,
+                    time: Default::default(),
+                    flags: InodeFlags::empty(),
+                })
+                .await?
+        } else if matches!(file_type, FileType::Directory) {
+            let old_links_count = inner.links_count();
+            inner.set_links_count(old_links_count + 1);
+            let mut inode = fs
+                .inner
+                .create_inode(InodeCreationOptions {
+                    file_type: ext4_view::FileType::Directory,
+                    mode: InodeMode::S_IFDIR | InodeMode::from_bits(permissions.bits()).unwrap(),
+                    uid: 0,
+                    gid: 0,
+                    time: Default::default(),
+                    flags: InodeFlags::empty(),
+                })
+                .await?;
+            ext4_view::init_directory(&fs.inner, &mut inode, inner.index).await?;
+            inode
+        } else {
+            return Err(KernelError::NotSupported);
+        };
+        fs.inner
+            .link(&inner, name.to_string(), &mut new_inode)
+            .await?;
+        let new_path = self.path.join(name);
+        Ok(Arc::new(Ext4Inode::<CPU> {
+            fs_ref: self.fs_ref.clone(),
+            id: new_inode.index,
+            inner: Mutex::new(new_inode),
+            path: new_path,
+        }))
     }
 
-    async fn unlink(&self, _name: &str) -> Result<()> {
-        Err(KernelError::NotSupported)
+    async fn link(&self, name: &str, inode: Arc<dyn Inode>) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if inner.file_type() != ext4_view::FileType::Directory {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        // TODO: This forces the other inode out of sync
+        // Check fs ids match
+        if inode.id().fs_id() != fs.id() {
+            return Err(KernelError::Fs(FsError::CrossDevice));
+        }
+        let mut other_inode = ext4_view::Inode::read(
+            &fs.inner,
+            (inode.id().inode_id() as u32).try_into().unwrap(),
+        )
+        .await?;
+        let file_type = other_inode.file_type();
+        fs.inner
+            .link(&inner, name.to_string(), &mut other_inode)
+            .await?;
+        Ok(())
+    }
+
+    async fn unlink(&self, name: &str) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if inner.file_type() != ext4_view::FileType::Directory {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        let child_inode = get_dir_entry_inode_by_name(
+            &fs.inner,
+            &inner,
+            ext4_view::DirEntryName::try_from(name)
+                .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+        )
+        .await?;
+        fs.inner
+            .unlink(&inner, name.to_string(), child_inode)
+            .await?;
+        Ok(())
     }
 
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
@@ -311,6 +380,115 @@ where
             .symlink_target(&fs.inner)
             .await
             .map(|p| PathBuf::from(p.to_str().unwrap()))?)
+    }
+
+    async fn rename_from(
+        &self,
+        old_parent: Arc<dyn Inode>,
+        old_name: &str,
+        new_name: &str,
+        no_replace: bool,
+    ) -> Result<()> {
+        if old_name == new_name && old_parent.id().inode_id() == self.id().inode_id() {
+            return Ok(());
+        }
+
+        let old_parent_id = old_parent.id();
+        let fs = self.fs_ref.upgrade().unwrap();
+
+        let old_parent_inode = ext4_view::Inode::read(
+            &fs.inner,
+            (old_parent_id.inode_id() as u32).try_into().unwrap(),
+        )
+        .await?;
+
+        let inner = self.inner.lock().await;
+
+        // inode being moved (source)
+        let mut child_inode = get_dir_entry_inode_by_name(
+            &fs.inner,
+            &old_parent_inode,
+            ext4_view::DirEntryName::try_from(old_name)
+                .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+        )
+        .await?;
+
+        // Check if destination exists and handle overwrite constraints.
+        let dst_lookup = get_dir_entry_inode_by_name(
+            &fs.inner,
+            &inner,
+            ext4_view::DirEntryName::try_from(new_name)
+                .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+        )
+        .await;
+
+        if no_replace && dst_lookup.is_ok() {
+            return Err(KernelError::Fs(FsError::AlreadyExists));
+        }
+
+        if let Ok(target_inode) = dst_lookup {
+            let target_kind = target_inode.file_type();
+            let source_kind = child_inode.file_type();
+
+            if target_kind == ext4_view::FileType::Directory {
+                let target_is_empty = fs
+                    .inner
+                    .read_dir(&self.path.join(new_name))
+                    .await?
+                    .all(|e| {
+                        let Ok(entry) = e else {
+                            // If we fail to read the directory, be conservative and treat it as non-empty.
+                            return false;
+                        };
+                        let name = entry.file_name().as_str().unwrap();
+                        name == "." || name == ".."
+                    })
+                    .await;
+
+                if !target_is_empty {
+                    return Err(KernelError::Fs(FsError::DirectoryNotEmpty));
+                }
+                if source_kind != ext4_view::FileType::Directory {
+                    return Err(KernelError::Fs(FsError::IsADirectory));
+                }
+            } else if source_kind == ext4_view::FileType::Directory {
+                // Can't replace non-directory with a directory.
+                return Err(KernelError::Fs(FsError::NotADirectory));
+            }
+
+            // Overwrite: remove destination entry first.
+            fs.inner
+                .unlink(&inner, new_name.to_string(), target_inode)
+                .await?;
+        }
+
+        // Link into destination parent, then unlink from source parent.
+        fs.inner
+            .link(&inner, new_name.to_string(), &mut child_inode)
+            .await?;
+        fs.inner
+            .unlink(&old_parent_inode, old_name.to_string(), child_inode)
+            .await?;
+        Ok(())
+    }
+
+    async fn symlink(&self, name: &str, target: &Path) -> Result<()> {
+        let inner = self.inner.lock().await;
+        if inner.file_type() != ext4_view::FileType::Directory {
+            return Err(KernelError::NotSupported);
+        }
+        let fs = self.fs_ref.upgrade().unwrap();
+        fs.inner
+            .symlink(
+                &inner,
+                name.to_string(),
+                ext4_view::PathBuf::new(target.as_str().as_bytes()),
+                0,
+                0,
+                Duration::from_secs(0),
+            )
+            .await?;
+        Ok(())
     }
 
     async fn sync(&self) -> Result<()> {

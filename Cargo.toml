@@ -1,6 +1,13 @@
 [workspace]
 members = ["libkernel", "moss-macros", "usertest"]
 
+[workspace.dependencies]
+async-trait = "0.1.89"
+bitflags = "2.11"
+log = "0.4"
+paste = "1.0.15"
+rand = { version = "0.10", default-features = false }
+
 [workspace.lints.clippy]
 semicolon_if_nothing_returned = "warn"
 uninlined_format_args = "warn"
@@ -18,20 +25,21 @@ bench = false
 [dependencies]
 libkernel = { path = "libkernel" }
 moss-macros = { path = "moss-macros" }
+
 aarch64-cpu = "11.1.0"
 arm-pl011-uart = { version = "0.4.0", default-features = false }
-tock-registers = "0.10.1"
-log = "0.4.27"
+async-trait = { workspace = true }
+bitflags = { workspace = true }
 fdt-parser = "0.4.16"
-paste = "1.0.15"
-object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }
-async-trait = "0.1.88"
-getargs = { version = "0.5.0", default-features = false }
-ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
-bitflags = "2.9.1"
 futures = { version = "0.3.31", default-features = false, features = ["alloc", "async-await"] }
-rand = { version = "0.9.2", default-features = false, features = ["small_rng"] }
+getargs = { version = "0.5.0", default-features = false }
+log = { workspace = true }
+object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }
+paste = { workspace = true }
+ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
+rand = { workspace = true }
 rustc-hash = { version = "2.1", default-features = false }
+tock-registers = "0.10.1"
 
 [build-dependencies]
 time = { version = "0.3.47", features = ["formatting", "macros"] } # For build timestamping via build.rs
