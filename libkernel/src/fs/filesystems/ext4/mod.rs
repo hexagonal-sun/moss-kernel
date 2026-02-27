@@ -389,14 +389,22 @@ where
         new_name: &str,
         no_replace: bool,
     ) -> Result<()> {
+        if old_name == new_name && old_parent.id().inode_id() == self.id().inode_id() {
+            return Ok(());
+        }
+
         let old_parent_id = old_parent.id();
+        let fs = self.fs_ref.upgrade().unwrap();
+
         let old_parent_inode = ext4_view::Inode::read(
-            &self.fs_ref.upgrade().unwrap().inner,
+            &fs.inner,
             (old_parent_id.inode_id() as u32).try_into().unwrap(),
         )
         .await?;
-        let fs = self.fs_ref.upgrade().unwrap();
+
         let inner = self.inner.lock().await;
+
+        // inode being moved (source)
         let mut child_inode = get_dir_entry_inode_by_name(
             &fs.inner,
             &old_parent_inode,
@@ -404,19 +412,57 @@ where
                 .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
         )
         .await?;
-        if no_replace {
-            // Check if new name already exists
-            if let Ok(_) = get_dir_entry_inode_by_name(
-                &fs.inner,
-                &inner,
-                ext4_view::DirEntryName::try_from(new_name)
-                    .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
-            )
-            .await
-            {
-                return Err(KernelError::Fs(FsError::AlreadyExists));
-            }
+
+        // Check if destination exists and handle overwrite constraints.
+        let dst_lookup = get_dir_entry_inode_by_name(
+            &fs.inner,
+            &inner,
+            ext4_view::DirEntryName::try_from(new_name)
+                .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
+        )
+        .await;
+
+        if no_replace && dst_lookup.is_ok() {
+            return Err(KernelError::Fs(FsError::AlreadyExists));
         }
+
+        if let Ok(target_inode) = dst_lookup {
+            let target_kind = target_inode.file_type();
+            let source_kind = child_inode.file_type();
+
+            if target_kind == ext4_view::FileType::Directory {
+                let target_is_empty = fs
+                    .inner
+                    .read_dir(&self.path.join(new_name))
+                    .await?
+                    .all(|e| {
+                        let Ok(entry) = e else {
+                            // If we fail to read the directory, be conservative and treat it as non-empty.
+                            return false;
+                        };
+                        let name = entry.file_name().as_str().unwrap();
+                        name == "." || name == ".."
+                    })
+                    .await;
+
+                if !target_is_empty {
+                    return Err(KernelError::Fs(FsError::DirectoryNotEmpty));
+                }
+                if source_kind != ext4_view::FileType::Directory {
+                    return Err(KernelError::Fs(FsError::IsADirectory));
+                }
+            } else if source_kind == ext4_view::FileType::Directory {
+                // Can't replace non-directory with a directory.
+                return Err(KernelError::Fs(FsError::NotADirectory));
+            }
+
+            // Overwrite: remove destination entry first.
+            fs.inner
+                .unlink(&inner, new_name.to_string(), target_inode)
+                .await?;
+        }
+
+        // Link into destination parent, then unlink from source parent.
         fs.inner
             .link(&inner, new_name.to_string(), &mut child_inode)
             .await?;
