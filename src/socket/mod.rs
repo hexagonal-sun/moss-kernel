@@ -4,7 +4,7 @@ mod tcp;
 mod unix;
 
 use crate::drivers::timer::now;
-use crate::memory::uaccess::copy_from_user;
+use crate::memory::uaccess::{copy_from_user, copy_from_user_slice};
 use crate::sync::OnceLock;
 use crate::sync::SpinLock;
 use alloc::vec;
@@ -138,10 +138,14 @@ pub async fn parse_sockaddr(uaddr: UA, len: usize) -> Result<SockAddr, KernelErr
             Ok(SockAddr::In(sain))
         }
         AF_UNIX => {
-            if len < size_of::<SockAddrUn>() {
+            let path_len = len - size_of::<u16>() * 2;
+            if path_len > 108 {
                 return Err(KernelError::InvalidValue);
             }
-            let saun: SockAddrUn = try_copy_from_user(uaddr.cast())?;
+            let mut path = [0u8; 108];
+            copy_from_user_slice(uaddr.add_bytes(size_of::<u16>()), &mut path[..path_len]).await?;
+            // print str of path
+            let saun: SockAddrUn = SockAddrUn { family, path };
             Ok(SockAddr::Un(saun))
         }
         _ => Err(KernelError::AddressFamilyNotSupported),

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use core::future::poll_fn;
 use core::task::Poll;
 use core::task::Waker;
-use libkernel::error::{KernelError, Result};
+use libkernel::error::{FsError, KernelError, Result};
 use libkernel::memory::address::UA;
 
 /// Registry mapping Unix socket path bytes to endpoint inbox and listening state
@@ -133,7 +133,7 @@ impl SocketOps for UnixSocket {
                 };
                 let mut reg = endpoints().lock_save_irq();
                 let Some(ep) = reg.get_mut(&path) else {
-                    return Err(KernelError::InvalidValue);
+                    return Err(KernelError::Fs(FsError::NotFound));
                 };
                 if ep.listening {
                     if ep.pending.len() >= ep.backlog_max {
