@@ -137,4 +137,8 @@ pub trait FileOps: Send + Sync {
     ) -> Result<usize> {
         Err(KernelError::InvalidValue)
     }
+
+    fn as_socket(&mut self) -> Option<&mut dyn crate::socket::SocketOps> {
+        None
+    }
 }

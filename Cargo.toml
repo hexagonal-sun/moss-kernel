@@ -39,6 +39,7 @@ paste = { workspace = true }
 ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
 rand = { workspace = true }
 rustc-hash = { version = "2.1", default-features = false }
+smoltcp = { version = "0.12.0", default-features = false, features = ["alloc", "medium-ethernet", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"] }
 tock-registers = "0.10.1"
 
 [build-dependencies]
