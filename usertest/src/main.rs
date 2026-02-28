@@ -201,6 +201,8 @@ fn segfault_child(inner: impl FnOnce()) {
             panic!("fork failed");
         } else if pid == 0 {
             // Child process
+            // Reset rust's SIGSEGV stack overflow signal handler to default
+            libc::signal(libc::SIGSEGV, libc::SIG_DFL);
             inner()
         } else {
             // Parent process
