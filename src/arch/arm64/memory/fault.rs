@@ -10,6 +10,7 @@ use crate::{
         memory::uaccess::UAccessResult,
     },
     memory::fault::{FaultResolution, handle_demand_fault, handle_protection_fault},
+    process::thread_group::signal::SigId,
     sched::{current::current_task, spawn_kernel_work},
 };
 use alloc::boxed::Box;
@@ -119,15 +120,8 @@ pub fn handle_kernel_mem_fault(exception: Exception, info: AbortIss, state: &mut
 pub fn handle_mem_fault(exception: Exception, info: AbortIss) {
     match run_mem_fault_handler(exception, info) {
         Ok(FaultResolution::Resolved) => {}
-        // TODO: Implement proc signals.
         Ok(FaultResolution::Denied) => {
-            let task = current_task();
-            panic!(
-                "SIGSEGV on process {} {:?} PC: {:x}",
-                task.process.tgid,
-                exception,
-                task.ctx.user().elr_el1
-            )
+            current_task().process.deliver_signal(SigId::SIGSEGV);
         }
         // If the page fault involves sleepy kernel work, we can
         // spawn that work on the process, since there is no other
