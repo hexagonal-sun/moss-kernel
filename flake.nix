@@ -17,7 +17,6 @@
         shell = pkgs.mkShell {
           buildInputs = with pkgs; [
             cargo-binutils
-            dosfstools
             e2fsprogs
             just
             pkg-config
