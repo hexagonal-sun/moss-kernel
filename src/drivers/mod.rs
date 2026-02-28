@@ -21,6 +21,7 @@ use crate::{
 };
 
 pub mod chrdev;
+pub mod display;
 pub mod fdt_prober;
 pub mod fs;
 pub mod init;
@@ -28,6 +29,7 @@ pub mod interrupts;
 pub mod probe;
 pub mod timer;
 pub mod uart;
+mod virtio_hal;
 
 #[repr(u64)]
 pub enum ReservedMajors {
@@ -35,6 +37,7 @@ pub enum ReservedMajors {
     Zero = 2,
     Random = 3,
     Console = 5,
+    Fb = 6,
     Uart = 10,
     End = 11,
 }

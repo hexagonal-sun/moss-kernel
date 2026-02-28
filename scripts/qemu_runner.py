@@ -13,6 +13,7 @@ parser.add_argument("--cpu", default="cortex-a72")
 parser.add_argument("--smp", default=4, help="Number of CPU cores to use")
 parser.add_argument("--memory", default="2G")
 parser.add_argument("--debug", action="store_true", help="Enable QEMU debugging")
+parser.add_argument("--display", action="store_true", help="Add a display device to the VM")
 
 
 
@@ -45,6 +46,14 @@ default_args = {
 
 if args.debug:
     default_args["-S"] = None
+
+if args.display:
+    del default_args["-nographic"]
+    default_args["-global"] = "virtio-mmio.force-legacy=false"
+    default_args["-nic"] = "none"
+    # Add uart
+    default_args["-serial"] = "stdio"
+    default_args["-device"] = "virtio-gpu-device"
 
 qemu_command = ["qemu-system-aarch64"]
 

@@ -6,6 +6,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use cpu_ops::{local_irq_restore, local_irq_save};
 use exceptions::ExceptionState;
+use libkernel::memory::address::PA;
 use libkernel::{
     CpuOps, VirtualMemory,
     arch::arm64::memory::pg_tables::{L0Table, PgTableArray},
@@ -171,5 +172,9 @@ impl Arch for Aarch64 {
         len: usize,
     ) -> impl Future<Output = Result<usize>> {
         Arm64CopyStrnFromUser::new(src, dst as *mut _, len)
+    }
+
+    fn translate_kernel_va(addr: VA) -> PA {
+        memory::translate_kernel_va(addr)
     }
 }
