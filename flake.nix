@@ -26,7 +26,6 @@
             qemu
             toolchain
             minicom
-            mtools
             wget
           ];
         };
