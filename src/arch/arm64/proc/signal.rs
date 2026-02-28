@@ -56,6 +56,9 @@ pub async fn do_signal(id: SigId, sa: UserspaceSigAction) -> Result<ExceptionSta
             .align(PAGE_SIZE)
     };
 
+    drop(signal);
+    drop(task);
+
     copy_to_user(addr, frame).await?;
 
     new_state.sp_el0 = addr.value() as _;

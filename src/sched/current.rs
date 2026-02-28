@@ -17,6 +17,7 @@ per_cpu_private! {
 pub(super) struct CurrentTaskPtr {
     pub(super) ptr: Cell<*mut OwnedTask>,
     pub(super) borrowed: Cell<bool>,
+    pub location: Cell<Option<core::panic::Location<'static>>>,
 }
 
 unsafe impl Send for CurrentTaskPtr {}
@@ -51,15 +52,19 @@ impl CurrentTaskPtr {
         Self {
             ptr: Cell::new(ptr::null_mut()),
             borrowed: Cell::new(false),
+            location: Cell::new(None),
         }
     }
 
+    #[track_caller]
     pub fn current(&self) -> CurrentTaskGuard<'static> {
         if self.borrowed.get() {
-            panic!("Double mutable borrow of current task!");
+            let other = self.location.take();
+            panic!("Double mutable borrow of current task! Borrowed from: {other:?}");
         }
 
         self.borrowed.set(true);
+        self.location.set(Some(*core::panic::Location::caller()));
 
         unsafe {
             let ptr = self.ptr.get();
