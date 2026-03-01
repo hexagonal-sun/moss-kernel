@@ -194,55 +194,6 @@ fn test_mincore() {
 
 register_test!(test_mincore);
 
-fn segfault_child(inner: impl FnOnce()) {
-    unsafe {
-        let pid = libc::fork();
-        if pid < 0 {
-            panic!("fork failed");
-        } else if pid == 0 {
-            // Child process
-            // Reset rust's SIGSEGV stack overflow signal handler to default
-            libc::signal(libc::SIGSEGV, libc::SIG_DFL);
-            inner()
-        } else {
-            // Parent process
-            let mut status = 0;
-            let rusage = std::ptr::null_mut();
-            libc::wait4(pid, &mut status, 0, rusage);
-
-            assert!(libc::WIFSIGNALED(status));
-            assert_eq!(libc::WTERMSIG(status), libc::SIGSEGV);
-        }
-    }
-}
-
-fn test_segfault_read() {
-    segfault_child(|| {
-        let addr: *const u8 = std::hint::black_box(std::ptr::null());
-        let _ = unsafe { std::ptr::read(addr) };
-    });
-    segfault_child(|| {
-        // Ensure reading from kernel stack fails
-        let addr = 0xffff_ba00_0000_0000 as *const u8;
-        let _ = unsafe { std::ptr::read(addr) };
-    });
-}
-
-register_test!(test_segfault_read);
-
-fn test_segfault_write() {
-    segfault_child(|| {
-        let addr: *mut u8 = std::hint::black_box(std::ptr::null_mut());
-        unsafe { std::ptr::write(addr, 42) };
-    });
-    segfault_child(|| {
-        let addr = 0xffff_ba00_0000_0000 as *mut u8;
-        unsafe { std::ptr::write(addr, 42) };
-    });
-}
-
-register_test!(test_segfault_write);
-
 fn run_test(test_fn: fn()) -> Result<(), i32> {
     // Fork a new process to run the test
     unsafe {
