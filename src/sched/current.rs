@@ -17,7 +17,7 @@ per_cpu_private! {
 pub(super) struct CurrentTaskPtr {
     pub(super) ptr: Cell<*mut OwnedTask>,
     pub(super) borrowed: Cell<bool>,
-    pub location: Cell<Option<core::panic::Location<'static>>>,
+    location: Cell<Option<core::panic::Location<'static>>>,
 }
 
 unsafe impl Send for CurrentTaskPtr {}
