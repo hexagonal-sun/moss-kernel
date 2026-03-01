@@ -34,6 +34,7 @@ use crate::{
             ioctl::sys_ioctl,
             iov::{sys_preadv, sys_preadv2, sys_pwritev, sys_pwritev2, sys_readv, sys_writev},
             listxattr::{sys_flistxattr, sys_listxattr, sys_llistxattr},
+            mount::sys_mount,
             removexattr::{sys_fremovexattr, sys_lremovexattr, sys_removexattr},
             rw::{sys_pread64, sys_pwrite64, sys_read, sys_write},
             seek::sys_lseek,
@@ -228,6 +229,16 @@ pub async fn handle_syscall() {
                 TUA::from_value(arg2 as _),
                 arg3.into(),
                 TUA::from_value(arg4 as _),
+            )
+            .await
+        }
+        0x28 => {
+            sys_mount(
+                TUA::from_value(arg1 as _),
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+                arg4 as _,
+                TUA::from_value(arg5 as _),
             )
             .await
         }
