@@ -315,6 +315,11 @@ pub fn find_task_by_descriptor(descriptor: &TaskDescriptor) -> Option<Arc<Task>>
         .and_then(|x| x.upgrade())
 }
 
+/// Finds the root task for the given thread group
+pub fn find_process_by_tgid(tgid: Tgid) -> Option<Arc<Task>> {
+    find_task_by_descriptor(&TaskDescriptor::from_tgid_tid(tgid, Tid::from_tgid(tgid)))
+}
+
 pub static TASK_LIST: SpinLock<BTreeMap<TaskDescriptor, Weak<Task>>> =
     SpinLock::new(BTreeMap::new());
 
