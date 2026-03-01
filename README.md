@@ -108,12 +108,9 @@ sudo apt install qemu-system-aarch64 wget jq e2fsprogs just
 brew install qemu wget jq e2fsprogs just
 ```
 
-#### NixOS
-
-Run the following command:
-
+#### Nix/NixOS
 ```bash
-nix shell nixpkgs#pkgsCross.aarch64-embedded.stdenv.cc nixpkgs#pkgsCross.aarch64-embedded.stdenv.cc.bintools
+nix develop
 ```
 
 ### Running via QEMU

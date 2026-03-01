@@ -1,7 +1,7 @@
 use crate::drivers::fs::proc::task::ProcTaskInode;
 use crate::drivers::fs::proc::{get_inode_id, procfs};
 use crate::process::thread_group::Tgid;
-use crate::process::{TaskDescriptor, Tid, find_task_by_descriptor};
+use crate::process::{TaskDescriptor, Tid, find_process_by_tgid, find_task_by_descriptor};
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::sync::Arc;
@@ -57,12 +57,10 @@ impl Inode for ProcTaskDirInode {
     }
 
     async fn readdir(&self, start_offset: u64) -> libkernel::error::Result<Box<dyn DirStream>> {
-        let task = find_task_by_descriptor(&TaskDescriptor::from_tgid_tid(
-            self.tgid,
-            Tid::from_tgid(self.tgid),
-        ))
-        .ok_or(FsError::NotFound)?;
-        let tasks = task.process.tasks.lock_save_irq();
+        let process = &find_process_by_tgid(self.tgid)
+            .ok_or(FsError::NotFound)?
+            .process;
+        let tasks = process.tasks.lock_save_irq();
         let mut entries = Vec::new();
         for (i, (_tid, task)) in tasks.iter().enumerate().skip(start_offset as usize) {
             let Some(task) = task.upgrade() else {
