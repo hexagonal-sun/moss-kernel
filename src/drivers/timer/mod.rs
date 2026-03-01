@@ -182,12 +182,7 @@ impl InterruptHandler for SysTimer {
         }
 
         // Always re-arm: either next task/event, or a periodic/preemption tick.
-        let next_deadline = wake_q.peek().map(|e| e.when).or_else(|| {
-            // fallback: schedule a preemption tick in 50 ms
-            // TODO: Remove when feeling more secure about scheduling
-            let when = self.driver.now() + Duration::from_millis(50);
-            Some(when)
-        });
+        let next_deadline = wake_q.peek().map(|e| e.when);
 
         self.driver.schedule_interrupt(next_deadline);
     }
