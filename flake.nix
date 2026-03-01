@@ -12,14 +12,14 @@
         pkgs = import nixpkgs { inherit system; };
         toolchain = fenix.packages.${system}.fromToolchainFile {
           file = ./rust-toolchain.toml;
-          sha256 = "sha256-SQkt9B1Au5pPWoXg/b190355TVdhBq7xpuWvPaxwM/o=";
+          sha256 = "sha256-ggvRZZFjlAlrZVjqul/f/UpU5CEhDbdKZU0OCR8Uzbc=";
         };
         shell = pkgs.mkShell {
           buildInputs = with pkgs; [
-            cargo-binutils
             dosfstools
             e2fsprogs
             just
+            jq
             pkg-config
             python3
             pkgsCross.aarch64-embedded.stdenv.cc
