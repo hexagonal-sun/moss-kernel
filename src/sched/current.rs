@@ -43,7 +43,9 @@ impl DerefMut for CurrentTaskGuard<'_> {
 
 impl<'a> Drop for CurrentTaskGuard<'a> {
     fn drop(&mut self) {
-        CUR_TASK_PTR.borrow().borrowed.set(false);
+        let current = CUR_TASK_PTR.borrow();
+        current.borrowed.set(false);
+        current.location.set(None);
     }
 }
 

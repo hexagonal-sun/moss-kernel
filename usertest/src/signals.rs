@@ -165,8 +165,6 @@ fn segfault_child(inner: impl FnOnce()) {
             panic!("fork failed");
         } else if pid == 0 {
             // Child process
-            // Reset rust's SIGSEGV stack overflow signal handler to default
-            libc::signal(libc::SIGSEGV, libc::SIG_DFL);
             inner()
         } else {
             // Parent process
@@ -209,6 +207,7 @@ register_test!(test_segfault_write);
 
 fn rust_stack_overflow() {
     segfault_child(|| {
+        #[allow(unconditional_recursion)]
         fn recurse(n: usize) -> usize {
             let m = std::hint::black_box(n) + 1;
             recurse(m)
