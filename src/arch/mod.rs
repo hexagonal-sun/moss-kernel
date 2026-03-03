@@ -21,7 +21,7 @@ use alloc::sync::Arc;
 use libkernel::{
     CpuOps, VirtualMemory,
     error::Result,
-    memory::address::{PA, UA, VA},
+    memory::address::{UA, VA},
 };
 
 pub trait Arch: CpuOps + VirtualMemory {
@@ -195,11 +195,6 @@ pub trait Arch: CpuOps + VirtualMemory {
         dst: *mut u8,
         len: usize,
     ) -> impl Future<Output = Result<usize>>;
-
-    /// Translates a kernel virtual address to a physical address. This is used for
-    /// mapping kernel symbols into the MMIO region for userspace access, and for
-    /// translating kernel addresses to physical addresses for DMA.
-    fn translate_kernel_va(addr: VA) -> PA;
 }
 
 #[cfg(target_arch = "aarch64")]
