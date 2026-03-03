@@ -28,7 +28,7 @@ impl DevFs {
             id: InodeId::from_fsid_and_inodeid(DEVFS_ID, 0),
             attr: SpinLock::new(FileAttr {
                 file_type: FileType::Directory,
-                mode: FilePermissions::from_bits_retain(0o755),
+                permissions: FilePermissions::from_bits_retain(0o755),
                 ..FileAttr::default()
             }),
             kind: InodeKind::Directory(SpinLock::new(BTreeMap::new())),
@@ -44,7 +44,7 @@ impl DevFs {
         &self,
         name: String,
         device_id: CharDevDescriptor,
-        mode: FilePermissions,
+        permissions: FilePermissions,
     ) -> Result<()> {
         let InodeKind::Directory(ref children) = self.root.kind else {
             // This should be impossible as the root is always a directory.
@@ -66,7 +66,7 @@ impl DevFs {
             attr: SpinLock::new(FileAttr {
                 id,
                 file_type: FileType::CharDevice(device_id),
-                mode,
+                permissions,
                 ..FileAttr::default()
             }),
             // This is the crucial part: we store the device handle.

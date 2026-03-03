@@ -507,7 +507,7 @@ impl VFS {
         {
             let creds = task.creds.lock_save_irq();
 
-            if attr.mode.contains(FilePermissions::S_ISVTX)
+            if attr.permissions.contains(FilePermissions::S_ISVTX)
                 && attr.uid != creds.euid()
                 && parent_attr.uid != creds.euid()
             {

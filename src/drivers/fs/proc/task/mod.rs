@@ -31,7 +31,7 @@ impl ProcTaskInode {
             id: inode_id,
             attr: FileAttr {
                 file_type: FileType::Directory,
-                mode: FilePermissions::from_bits_retain(0o555),
+                permissions: FilePermissions::from_bits_retain(0o555),
                 ..FileAttr::default()
             },
             desc,

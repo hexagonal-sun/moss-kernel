@@ -62,7 +62,7 @@ impl Inode for PipeInode {
             mtime: self.time,
             ctime: self.time,
             file_type: FileType::Fifo,
-            mode: FilePermissions::from_bits_retain(0o0600),
+            permissions: FilePermissions::from_bits_retain(0o0600),
             nlinks: 1,
             uid: self.uid,
             gid: self.gid,

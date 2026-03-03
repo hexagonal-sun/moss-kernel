@@ -37,7 +37,7 @@ pub async fn sys_fchmodat(dirfd: Fd, path: TUA<c_char>, mode: u16, flags: i32) -
         return Err(KernelError::NotPermitted);
     }
 
-    attr.mode = mode;
+    attr.permissions = mode;
     node.setattr(attr).await?;
 
     Ok(0)

@@ -96,8 +96,7 @@ impl From<Metadata> for FileAttr {
         FileAttr {
             size: meta.size_in_bytes,
             file_type: meta.file_type.into(),
-            // Infallible, since they are identical
-            mode: FilePermissions::from_bits(meta.mode.bits()).unwrap(),
+            permissions: FilePermissions::from_bits_truncate(meta.mode.bits()),
             uid: Uid::new(meta.uid),
             gid: Gid::new(meta.gid),
             atime: meta.atime,

@@ -146,7 +146,7 @@ pub async fn sys_statx(
 
     if mask.contains(StatXMask::STATX_MODE) {
         stat_x.stx_mask |= StatXMask::STATX_MODE.bits();
-        stat_x.stx_mode |= attr.mode.bits() as u16;
+        stat_x.stx_mode |= attr.mode().bits() as u16;
     }
 
     if mask.contains(StatXMask::STATX_NLINK) {

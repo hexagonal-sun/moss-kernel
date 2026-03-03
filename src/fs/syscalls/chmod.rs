@@ -13,7 +13,7 @@ pub async fn sys_fchmod(fd: Fd, mode: u16) -> Result<usize> {
         .lock_save_irq()
         .get(fd)
         .ok_or(KernelError::BadFd)?;
-    let mode = FilePermissions::from_bits_retain(mode);
+    let permissions = FilePermissions::from_bits_retain(mode);
 
     let inode = file.inode().ok_or(KernelError::BadFd)?;
     let mut attr = inode.getattr().await?;
@@ -22,7 +22,7 @@ pub async fn sys_fchmod(fd: Fd, mode: u16) -> Result<usize> {
         return Err(KernelError::NotPermitted);
     }
 
-    attr.mode = mode;
+    attr.permissions = permissions;
     inode.setattr(attr).await?;
 
     Ok(0)

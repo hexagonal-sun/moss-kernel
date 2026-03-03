@@ -126,14 +126,14 @@ where
     G: PageAllocGetter<C>,
     T: AddressTranslator<()>,
 {
-    fn new(id: InodeId, mode: FilePermissions) -> Result<Self> {
+    fn new(id: InodeId, permissions: FilePermissions) -> Result<Self> {
         Ok(Self {
             id,
             attr: SpinLockIrq::new(FileAttr {
                 file_type: FileType::File,
                 size: 0,
                 nlinks: 1,
-                mode,
+                permissions,
                 ..Default::default()
             }),
             inner: SpinLockIrq::new(TmpFsRegInner {
@@ -666,14 +666,14 @@ where
     G: PageAllocGetter<C>,
     T: AddressTranslator<()>,
 {
-    pub fn new(id: u64, fs: Weak<TmpFs<C, G, T>>, mode: FilePermissions) -> Arc<Self> {
+    pub fn new(id: u64, fs: Weak<TmpFs<C, G, T>>, permissions: FilePermissions) -> Arc<Self> {
         Arc::new_cyclic(|weak_this| Self {
             entries: SpinLockIrq::new(Vec::new()),
             attrs: SpinLockIrq::new(FileAttr {
                 size: 0,
                 file_type: FileType::Directory,
                 block_size: BLOCK_SZ as _,
-                mode,
+                permissions,
                 ..Default::default()
             }),
             id,

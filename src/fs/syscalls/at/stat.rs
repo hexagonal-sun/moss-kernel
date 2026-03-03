@@ -45,7 +45,7 @@ impl From<FileAttr> for Stat {
         Self {
             st_dev: value.id.fs_id(),
             st_ino: value.id.inode_id(),
-            st_mode: value.mode.bits() as u32 | u32::from(value.file_type),
+            st_mode: value.mode().bits() as u32 | u32::from(value.file_type),
             st_nlink: value.nlinks,
             st_uid: value.uid.into(),
             st_gid: value.gid.into(),

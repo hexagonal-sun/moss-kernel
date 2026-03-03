@@ -16,7 +16,7 @@ impl ProcCmdlineInode {
             id,
             attr: FileAttr {
                 file_type: libkernel::fs::FileType::File,
-                mode: libkernel::fs::attr::FilePermissions::from_bits_retain(0o444),
+                permissions: libkernel::fs::attr::FilePermissions::from_bits_retain(0o444),
                 ..FileAttr::default()
             },
         }

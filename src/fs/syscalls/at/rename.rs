@@ -103,14 +103,14 @@ pub async fn sys_renameat2(
 
         let creds = task.creds.lock_save_irq();
 
-        if (old_attr.mode.contains(FilePermissions::S_ISVTX)
+        if (old_attr.permissions.contains(FilePermissions::S_ISVTX)
             && old_attr.uid != creds.euid()
             && old_parent_attr.uid != creds.euid())
             || new_parent_attr.uid != creds.euid()
         {
             creds.caps().check_capable(CapabilitiesFlags::CAP_FOWNER)?;
         } else if let Some(new_attr) = new_attr
-            && new_attr.mode.contains(FilePermissions::S_ISVTX)
+            && new_attr.permissions.contains(FilePermissions::S_ISVTX)
             && new_attr.uid != creds.euid()
         {
             creds.caps().check_capable(CapabilitiesFlags::CAP_FOWNER)?;

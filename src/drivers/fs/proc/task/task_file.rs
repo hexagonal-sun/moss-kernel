@@ -58,7 +58,7 @@ impl ProcTaskFileInode {
                     | TaskFileType::Stat => FileType::File,
                     TaskFileType::Cwd | TaskFileType::Root => FileType::Symlink,
                 },
-                mode: FilePermissions::from_bits_retain(0o444),
+                permissions: FilePermissions::from_bits_retain(0o444),
                 ..FileAttr::default()
             },
             process_stats,

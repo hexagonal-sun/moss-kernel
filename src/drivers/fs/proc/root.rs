@@ -26,7 +26,7 @@ impl ProcRootInode {
             id: InodeId::from_fsid_and_inodeid(PROCFS_ID, 0),
             attr: FileAttr {
                 file_type: FileType::Directory,
-                mode: FilePermissions::from_bits_retain(0o555),
+                permissions: FilePermissions::from_bits_retain(0o555),
                 ..FileAttr::default()
             },
         }
