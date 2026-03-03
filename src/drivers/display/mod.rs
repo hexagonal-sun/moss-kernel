@@ -11,16 +11,14 @@ use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
 use core::pin::Pin;
 use libkernel::driver::CharDevDescriptor;
-use libkernel::error::KernelError;
+use libkernel::error::{FsError, KernelError};
 use libkernel::fs::OpenFlags;
 use libkernel::fs::attr::FilePermissions;
 use libkernel::memory::address::UA;
 
 pub mod virtio;
 
-/// Minimal kernel-facing display abstraction.
-///
-/// This is intentionally small: it provides a framebuffer (RGBA8888) and the
+/// Kernel display abstraction: a framebuffer (RGBA8888) and the
 /// ability to flush updated contents to the device.
 ///
 /// The underlying implementation may be MMIO, VirtIO, etc.
@@ -185,6 +183,9 @@ struct FbDev;
 
 impl OpenableDevice for FbDev {
     fn open(&self, flags: OpenFlags) -> libkernel::error::Result<Arc<OpenFile>> {
+        if system_display().is_none() {
+            Err(FsError::NotFound)?;
+        }
         Ok(Arc::new(OpenFile::new(Box::new(FbFileOps), flags)))
     }
 }

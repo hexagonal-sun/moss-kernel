@@ -1,4 +1,5 @@
 use crate::arch::ArchImpl;
+use crate::memory::PageOffsetTranslator;
 use core::ptr::NonNull;
 use libkernel::VirtualMemory;
 use libkernel::memory::PAGE_SIZE;
@@ -6,7 +7,6 @@ use libkernel::memory::address::{PA, TPA};
 use libkernel::memory::region::PhysMemoryRegion;
 use log::trace;
 use virtio_drivers::{BufferDirection, Hal, PhysAddr};
-use crate::memory::PageOffsetTranslator;
 
 pub(super) struct VirtioHal;
 
@@ -67,7 +67,9 @@ unsafe impl Hal for VirtioHal {
     }
 
     unsafe fn mmio_phys_to_virt(paddr: PhysAddr, _size: usize) -> NonNull<u8> {
-        let vaddr = TPA::from_value(paddr as usize).to_va::<PageOffsetTranslator>().as_ptr_mut();
+        let vaddr = TPA::from_value(paddr as usize)
+            .to_va::<PageOffsetTranslator>()
+            .as_ptr_mut();
         NonNull::new(vaddr).unwrap()
     }
 
