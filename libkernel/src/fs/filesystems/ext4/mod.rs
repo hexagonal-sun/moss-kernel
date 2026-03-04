@@ -30,7 +30,7 @@ use core::error::Error;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use core::time::Duration;
-use ext4_view::{
+use ext4plus::{
     AsyncIterator, AsyncSkip, Ext4, Ext4Read, Ext4Write, File, FollowSymlinks,
     InodeCreationOptions, InodeFlags, InodeMode, Metadata, ReadDir, get_dir_entry_inode_by_name,
     write_at,
@@ -59,13 +59,13 @@ impl Ext4Write for BlockBuffer {
     }
 }
 
-impl From<ext4_view::Ext4Error> for KernelError {
-    fn from(err: ext4_view::Ext4Error) -> Self {
+impl From<ext4plus::Ext4Error> for KernelError {
+    fn from(err: ext4plus::Ext4Error) -> Self {
         match err {
-            ext4_view::Ext4Error::NotFound => KernelError::Fs(FsError::NotFound),
-            ext4_view::Ext4Error::NotADirectory => KernelError::Fs(FsError::NotADirectory),
-            ext4_view::Ext4Error::AlreadyExists => KernelError::Fs(FsError::AlreadyExists),
-            ext4_view::Ext4Error::Corrupt(c) => {
+            ext4plus::Ext4Error::NotFound => KernelError::Fs(FsError::NotFound),
+            ext4plus::Ext4Error::NotADirectory => KernelError::Fs(FsError::NotADirectory),
+            ext4plus::Ext4Error::AlreadyExists => KernelError::Fs(FsError::AlreadyExists),
+            ext4plus::Ext4Error::Corrupt(c) => {
                 error!("Corrupt EXT4 filesystem: {c}, likely a bug");
                 KernelError::Fs(FsError::InvalidFs)
             }
@@ -77,16 +77,16 @@ impl From<ext4_view::Ext4Error> for KernelError {
     }
 }
 
-impl From<ext4_view::FileType> for FileType {
-    fn from(ft: ext4_view::FileType) -> Self {
+impl From<ext4plus::FileType> for FileType {
+    fn from(ft: ext4plus::FileType) -> Self {
         match ft {
-            ext4_view::FileType::BlockDevice => todo!(),
-            ext4_view::FileType::CharacterDevice => todo!(),
-            ext4_view::FileType::Directory => FileType::Directory,
-            ext4_view::FileType::Fifo => FileType::Fifo,
-            ext4_view::FileType::Regular => FileType::File,
-            ext4_view::FileType::Socket => FileType::Socket,
-            ext4_view::FileType::Symlink => FileType::Symlink,
+            ext4plus::FileType::BlockDevice => todo!(),
+            ext4plus::FileType::CharacterDevice => todo!(),
+            ext4plus::FileType::Directory => FileType::Directory,
+            ext4plus::FileType::Fifo => FileType::Fifo,
+            ext4plus::FileType::Regular => FileType::File,
+            ext4plus::FileType::Socket => FileType::Socket,
+            ext4plus::FileType::Symlink => FileType::Symlink,
         }
     }
 }
@@ -146,8 +146,8 @@ impl DirStream for ReadDirWrapper {
 pub struct Ext4Inode<CPU: CpuOps> {
     fs_ref: Weak<Ext4Filesystem<CPU>>,
     id: NonZeroU32,
-    inner: Mutex<ext4_view::Inode, CPU>,
-    path: ext4_view::PathBuf,
+    inner: Mutex<ext4plus::Inode, CPU>,
+    path: ext4plus::PathBuf,
 }
 
 #[async_trait]
@@ -163,7 +163,7 @@ where
     async fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<usize> {
         let inner = self.inner.lock().await;
         // Must be a regular file.
-        if inner.file_type() != ext4_view::FileType::Regular {
+        if inner.file_type() != ext4plus::FileType::Regular {
             return Err(KernelError::NotSupported);
         }
 
@@ -182,7 +182,7 @@ where
 
         file.seek_to(offset).await?;
 
-        // `ext4_view::File::read_bytes` may return fewer bytes than requested
+        // `ext4plus::File::read_bytes` may return fewer bytes than requested
         // if the read crosses a block boundary. Loop until we've filled
         // `to_read` bytes or hit EOF.
         let mut total_read = 0;
@@ -200,7 +200,7 @@ where
     async fn write_at(&self, offset: u64, buf: &[u8]) -> Result<usize> {
         let mut inner = self.inner.lock().await;
         // Must be a regular file.
-        if inner.file_type() != ext4_view::FileType::Regular {
+        if inner.file_type() != ext4plus::FileType::Regular {
             return Err(KernelError::NotSupported);
         }
 
@@ -212,7 +212,7 @@ where
 
     async fn truncate(&self, size: u64) -> Result<()> {
         let inner = self.inner.lock().await;
-        if inner.file_type() != ext4_view::FileType::Regular {
+        if inner.file_type() != ext4plus::FileType::Regular {
             return Err(KernelError::NotSupported);
         }
         let fs = self.fs_ref.upgrade().unwrap();
@@ -250,7 +250,7 @@ where
         let child_inode = get_dir_entry_inode_by_name(
             &fs.inner,
             &inner,
-            ext4_view::DirEntryName::try_from(name)
+            ext4plus::DirEntryName::try_from(name)
                 .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
         )
         .await?;
@@ -274,7 +274,7 @@ where
         let mut new_inode = if matches!(file_type, FileType::File) {
             fs.inner
                 .create_inode(InodeCreationOptions {
-                    file_type: ext4_view::FileType::Regular,
+                    file_type: ext4plus::FileType::Regular,
                     mode: InodeMode::S_IFREG | InodeMode::from_bits(permissions.bits()).unwrap(),
                     uid: 0,
                     gid: 0,
@@ -288,7 +288,7 @@ where
             let mut inode = fs
                 .inner
                 .create_inode(InodeCreationOptions {
-                    file_type: ext4_view::FileType::Directory,
+                    file_type: ext4plus::FileType::Directory,
                     mode: InodeMode::S_IFDIR | InodeMode::from_bits(permissions.bits()).unwrap(),
                     uid: 0,
                     gid: 0,
@@ -296,7 +296,7 @@ where
                     flags: InodeFlags::empty(),
                 })
                 .await?;
-            ext4_view::init_directory(&fs.inner, &mut inode, inner.index).await?;
+            ext4plus::init_directory(&fs.inner, &mut inode, inner.index).await?;
             inode
         } else {
             return Err(KernelError::NotSupported);
@@ -315,7 +315,7 @@ where
 
     async fn link(&self, name: &str, inode: Arc<dyn Inode>) -> Result<()> {
         let inner = self.inner.lock().await;
-        if inner.file_type() != ext4_view::FileType::Directory {
+        if inner.file_type() != ext4plus::FileType::Directory {
             return Err(KernelError::NotSupported);
         }
         let fs = self.fs_ref.upgrade().unwrap();
@@ -324,7 +324,7 @@ where
         if inode.id().fs_id() != fs.id() {
             return Err(KernelError::Fs(FsError::CrossDevice));
         }
-        let mut other_inode = ext4_view::Inode::read(
+        let mut other_inode = ext4plus::Inode::read(
             &fs.inner,
             (inode.id().inode_id() as u32).try_into().unwrap(),
         )
@@ -338,14 +338,14 @@ where
 
     async fn unlink(&self, name: &str) -> Result<()> {
         let inner = self.inner.lock().await;
-        if inner.file_type() != ext4_view::FileType::Directory {
+        if inner.file_type() != ext4plus::FileType::Directory {
             return Err(KernelError::NotSupported);
         }
         let fs = self.fs_ref.upgrade().unwrap();
         let child_inode = get_dir_entry_inode_by_name(
             &fs.inner,
             &inner,
-            ext4_view::DirEntryName::try_from(name)
+            ext4plus::DirEntryName::try_from(name)
                 .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
         )
         .await?;
@@ -357,7 +357,7 @@ where
 
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
         let inner = self.inner.lock().await;
-        if inner.file_type() != ext4_view::FileType::Directory {
+        if inner.file_type() != ext4plus::FileType::Directory {
             return Err(KernelError::NotSupported);
         }
         let fs = self.fs_ref.upgrade().unwrap();
@@ -370,7 +370,7 @@ where
 
     async fn readlink(&self) -> Result<PathBuf> {
         let inner = self.inner.lock().await;
-        if inner.file_type() != ext4_view::FileType::Symlink {
+        if inner.file_type() != ext4plus::FileType::Symlink {
             return Err(KernelError::NotSupported);
         }
         let fs = self.fs_ref.upgrade().unwrap();
@@ -395,7 +395,7 @@ where
         let old_parent_id = old_parent.id();
         let fs = self.fs_ref.upgrade().unwrap();
 
-        let old_parent_inode = ext4_view::Inode::read(
+        let old_parent_inode = ext4plus::Inode::read(
             &fs.inner,
             (old_parent_id.inode_id() as u32).try_into().unwrap(),
         )
@@ -407,7 +407,7 @@ where
         let mut child_inode = get_dir_entry_inode_by_name(
             &fs.inner,
             &old_parent_inode,
-            ext4_view::DirEntryName::try_from(old_name)
+            ext4plus::DirEntryName::try_from(old_name)
                 .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
         )
         .await?;
@@ -416,7 +416,7 @@ where
         let dst_lookup = get_dir_entry_inode_by_name(
             &fs.inner,
             &inner,
-            ext4_view::DirEntryName::try_from(new_name)
+            ext4plus::DirEntryName::try_from(new_name)
                 .map_err(|_| KernelError::Fs(FsError::InvalidInput))?,
         )
         .await;
@@ -429,7 +429,7 @@ where
             let target_kind = target_inode.file_type();
             let source_kind = child_inode.file_type();
 
-            if target_kind == ext4_view::FileType::Directory {
+            if target_kind == ext4plus::FileType::Directory {
                 let target_is_empty = fs
                     .inner
                     .read_dir(&self.path.join(new_name))
@@ -447,10 +447,10 @@ where
                 if !target_is_empty {
                     return Err(KernelError::Fs(FsError::DirectoryNotEmpty));
                 }
-                if source_kind != ext4_view::FileType::Directory {
+                if source_kind != ext4plus::FileType::Directory {
                     return Err(KernelError::Fs(FsError::IsADirectory));
                 }
-            } else if source_kind == ext4_view::FileType::Directory {
+            } else if source_kind == ext4plus::FileType::Directory {
                 // Can't replace non-directory with a directory.
                 return Err(KernelError::Fs(FsError::NotADirectory));
             }
@@ -473,7 +473,7 @@ where
 
     async fn symlink(&self, name: &str, target: &Path) -> Result<()> {
         let inner = self.inner.lock().await;
-        if inner.file_type() != ext4_view::FileType::Directory {
+        if inner.file_type() != ext4plus::FileType::Directory {
             return Err(KernelError::NotSupported);
         }
         let fs = self.fs_ref.upgrade().unwrap();
@@ -481,7 +481,7 @@ where
             .symlink(
                 &inner,
                 name.to_string(),
-                ext4_view::PathBuf::new(target.as_str().as_bytes()),
+                ext4plus::PathBuf::new(target.as_str().as_bytes()),
                 0,
                 0,
                 Duration::from_secs(0),
@@ -551,7 +551,7 @@ where
             fs_ref: self.this.clone(),
             id: root.index,
             inner: Mutex::new(root),
-            path: ext4_view::PathBuf::new("/"),
+            path: ext4plus::PathBuf::new("/"),
         }))
     }
 
