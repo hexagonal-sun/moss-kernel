@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = { workspace = true }
 bitflags = { workspace = true }
-ext4-view = { git = "https://github.com/arihant2math/ext4-view-rs.git", branch = "main" }
+ext4plus = "0.1.0-alpha.1"
 intrusive-collections = { version = "0.10.0", default-features = false }
 log = { workspace = true }
 object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }

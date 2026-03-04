@@ -157,9 +157,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "ext4-view"
-version = "0.9.3"
-source = "git+https://github.com/arihant2math/ext4-view-rs.git?branch=main#cb9a222d37f7b90d3b92068cad8d86d042171471"
+name = "ext4plus"
+version = "0.1.0-alpha.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95ee7286b6226b7e2d6fda0b26cdd5129e68f5d5c25a9af117b0877d804e03bf"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -352,7 +353,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "bitflags",
- "ext4-view",
+ "ext4plus",
  "intrusive-collections",
  "log",
  "object",
