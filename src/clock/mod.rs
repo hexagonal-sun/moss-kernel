@@ -5,8 +5,8 @@ pub mod timeofday;
 pub mod timespec;
 
 pub enum ClockId {
-    Monotonic = 0,
-    Realtime = 1,
+    Realtime = 0,
+    Monotonic = 1,
     ProcessCpuTimeId = 2,
     ThreadCpuTimeId = 3,
     MonotonicRaw = 4,
@@ -23,8 +23,8 @@ impl TryFrom<i32> for ClockId {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(ClockId::Monotonic),
-            1 => Ok(ClockId::Realtime),
+            0 => Ok(ClockId::Realtime),
+            1 => Ok(ClockId::Monotonic),
             2 => Ok(ClockId::ProcessCpuTimeId),
             3 => Ok(ClockId::ThreadCpuTimeId),
             4 => Ok(ClockId::MonotonicRaw),

@@ -28,6 +28,7 @@ moss-macros = { path = "moss-macros" }
 
 aarch64-cpu = "11.1.0"
 arm-pl011-uart = { version = "0.5.0", default-features = false }
+arm_pl031 = { version = "0.2.1", default-features = false }
 async-trait = { workspace = true }
 bitflags = { workspace = true }
 blake2 = { version = "0.10.6", default-features = false }

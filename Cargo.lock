@@ -30,6 +30,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arm_pl031"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13696b1c2b59992f4223e0ae5bb173c81c63039367ca90eee845346ad2a13421"
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -539,6 +545,7 @@ version = "0.1.0"
 dependencies = [
  "aarch64-cpu",
  "arm-pl011-uart",
+ "arm_pl031",
  "async-trait",
  "bitflags 2.11.0",
  "blake2",

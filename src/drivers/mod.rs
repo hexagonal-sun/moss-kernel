@@ -28,6 +28,7 @@ pub mod init;
 pub mod interrupts;
 pub mod probe;
 pub mod rng;
+pub mod rtc;
 pub mod timer;
 pub mod uart;
 mod virtio_hal;

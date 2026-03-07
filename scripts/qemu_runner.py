@@ -38,6 +38,7 @@ default_args = {
     "-cpu": args.cpu,
     "-m": args.memory,
     "-smp": str(args.smp),
+    "-rtc": "base=utc,clock=host",
     "-nographic": None,
     "-s": None,
     "-kernel": bin_executable_location,

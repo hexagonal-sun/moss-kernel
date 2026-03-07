@@ -109,6 +109,13 @@ async fn launch_init(mut opts: KOptions) {
         None
     };
 
+    // Set time to rtc time if possible
+    if let Some(rtc) = drivers::rtc::get_rtc()
+        && let Some(time) = rtc.time()
+    {
+        clock::realtime::set_date(time);
+    }
+
     let root_fs = opts
         .root_fs
         .unwrap_or_else(|| panic!("No root FS driver specified in kernel command line"));

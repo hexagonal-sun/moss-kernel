@@ -25,7 +25,7 @@ pub fn set_date(duration: Duration) {
     }
 }
 
-// Represents a known duration since the epoch at the assoicated instant.
+// Represents a known duration since the epoch at the associated instant.
 static EPOCH_DURATION: SpinLock<Option<(Duration, Instant)>> = SpinLock::new(None);
 
 #[cfg(test)]
