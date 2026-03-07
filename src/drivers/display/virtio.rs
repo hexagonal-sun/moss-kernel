@@ -138,9 +138,6 @@ fn virtio_gpu_probe(_dm: &mut DriverManager, d: DeviceDescriptor) -> Result<Arc<
                 return Err(KernelError::Probe(ProbeError::NoMatch));
             }
 
-            if mapped != VA::from_value(0xffffd00000f92e00) {
-                return Err(KernelError::Probe(ProbeError::Deferred));
-            }
             info!("virtio-gpu found at {mapped:?} (node {})", fdt_node.name);
 
             let disp = Arc::new(VirtioGpuDisplay::new(Some(fdt_node.name), transport)?);
