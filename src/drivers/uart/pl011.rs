@@ -68,7 +68,6 @@ impl UartDriver for PL011 {
     }
 
     fn drain_uart_rx(&mut self, buf: &mut [u8]) -> usize {
-        self.inner.clear_interrupts(Interrupts::RXI);
         let mut bytes_read = 0;
 
         while !self.inner.is_rx_fifo_empty() && bytes_read < buf.len() {
@@ -78,6 +77,11 @@ impl UartDriver for PL011 {
             } else {
                 break;
             }
+        }
+
+        // Ack the RX interrupt after draining.
+        if bytes_read > 0 || self.inner.is_rx_fifo_empty() {
+            self.inner.clear_interrupts(Interrupts::RXI);
         }
 
         bytes_read

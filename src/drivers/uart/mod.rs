@@ -146,24 +146,32 @@ impl<D: UartDriver> InterruptHandler for Uart<D> {
     /// registered TTY input handler.
     fn handle_irq(&self, _desc: crate::interrupts::InterruptDescriptor) {
         const BUF_CAPACITY: usize = 32;
+        // Guard against drivers that always report progress.
+        const MAX_DRAIN_ITERS: usize = 128;
+
         let mut byte_buf = [0u8; BUF_CAPACITY];
 
-        // Drain phase: Lock the driver and call its drain method.
-        let bytes_read = self.driver.lock_save_irq().drain_uart_rx(&mut byte_buf);
+        let handler = self
+            .tty_handler
+            .lock_save_irq()
+            .as_ref()
+            .and_then(|h| h.upgrade());
 
-        // Processing phase: If bytes were read, forward them to the TTY.
-        if bytes_read > 0
-            && let Some(handler) = self
-                .tty_handler
-                .lock_save_irq()
-                .as_ref()
-                .and_then(|h| h.upgrade())
-        {
-            // Push each received byte to the TTY input queue.
-            byte_buf
-                .into_iter()
-                .take(bytes_read)
-                .for_each(|b| handler.push_byte(b));
+        for _ in 0..MAX_DRAIN_ITERS {
+            // Drain phase: Lock the driver and call its drain method.
+            let bytes_read = self.driver.lock_save_irq().drain_uart_rx(&mut byte_buf);
+
+            // Processing phase: If bytes were read, forward them to the TTY.
+            if bytes_read == 0 {
+                break;
+            }
+
+            if let Some(ref handler) = handler {
+                byte_buf
+                    .into_iter()
+                    .take(bytes_read)
+                    .for_each(|b| handler.push_byte(b));
+            }
         }
     }
 }
