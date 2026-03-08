@@ -96,7 +96,7 @@ register_structs! {
 }
 
 struct ArmGicV2InterruptContext {
-    raw_id: usize,
+    raw_iar: u32,
     desc: InterruptDescriptor,
     gic: Arc<SpinLock<ArmGicV2>>,
 }
@@ -110,7 +110,8 @@ impl InterruptContext for ArmGicV2InterruptContext {
 impl Drop for ArmGicV2InterruptContext {
     fn drop(&mut self) {
         let gic = self.gic.lock_save_irq();
-        gic.cpu.EOIR.set(self.raw_id as u32);
+        gic.cpu.EOIR.set(self.raw_iar);
+        gic.cpu.DIR.set(self.raw_iar);
     }
 }
 
@@ -260,16 +261,45 @@ impl InterruptController for ArmGicV2 {
         }
     }
 
-    fn raise_ipi(&mut self, _target_cpu_id: usize) {
-        todo!()
+    fn raise_ipi(&mut self, target_cpu_id: usize) {
+        let cpu_bit = (target_cpu_id & 0x7) as u32;
+        let target_list = 1u32 << cpu_bit;
+
+        let sgi_intid = 0u32;
+        let target_list_filter = 0u32; // use CPUTargetList
+
+        let value = (target_list_filter << 24) | (target_list << 16) | sgi_intid;
+        self.dist.SGIR.set(value);
     }
 
-    fn enable_core(&mut self, _cpu_id: usize) {
-        todo!()
+    fn enable_core(&mut self, cpu_id: usize) {
+        // PMR: allow all priorities.
+        self.cpu.PMR.set(0xFF);
+        // BPR: no priority grouping.
+        self.cpu.BPR.set(0);
+        // Enable signaling from CPU interface.
+        self.cpu.CTLR.set(1);
+
+        // Enable SGIs 0..15 for this core.
+        for i in 0..16 {
+            self.enable_interrupt(InterruptConfig {
+                descriptor: InterruptDescriptor::Ipi(i),
+                trigger: TriggerMode::EdgeRising,
+            });
+        }
+
+        // Enable the per-CPU system timer (PPI 14) so this core starts receiving ticks.
+        self.enable_interrupt(InterruptConfig {
+            descriptor: InterruptDescriptor::Ppi(14),
+            trigger: TriggerMode::EdgeRising,
+        });
+
+        info!("GICv2: CPU interface enabled for core {cpu_id}");
     }
 
     fn read_active_interrupt(&mut self) -> Option<Box<dyn InterruptContext>> {
-        let int_id = self.cpu.IAR.get() as usize;
+        let iar = self.cpu.IAR.get();
+        let int_id = (iar & 0x3ff) as usize; // Interrupt ID is in [9:0]
 
         let descriptor = match int_id {
             0..=15 => InterruptDescriptor::Ipi(int_id),
@@ -281,7 +311,7 @@ impl InterruptController for ArmGicV2 {
         let gic = self.this.upgrade()?;
 
         let context = ArmGicV2InterruptContext {
-            raw_id: int_id,
+            raw_iar: iar,
             desc: descriptor,
             gic,
         };
