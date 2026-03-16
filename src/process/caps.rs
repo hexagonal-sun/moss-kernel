@@ -60,7 +60,7 @@ pub async fn sys_capget(hdrp: TUA<CapUserHeader>, datap: TUA<CapUserData>) -> Re
             .iter()
             .find(|task| task.0.tgid.value() == header.pid as u32)
             .and_then(|task| task.1.upgrade())
-            .map(|x| x.t_shared.clone())
+            .map(|x| (*x).clone())
             .ok_or(KernelError::NoProcess)?
     };
     match header.version {
@@ -96,7 +96,7 @@ pub async fn sys_capset(hdrp: TUA<CapUserHeader>, datap: TUA<CapUserData>) -> Re
             .iter()
             .find(|task| task.0.tgid.value() == header.pid as u32)
             .and_then(|task| task.1.upgrade())
-            .map(|x| x.t_shared.clone())
+            .map(|x| (*x).clone())
             .ok_or(KernelError::NoProcess)?
     };
 

@@ -101,8 +101,8 @@ impl RunQueue {
         let mut deferred_drops: Vec<RunnableTask> = Vec::new();
 
         if let Some(mut cur_task) = self.running_task.take() {
-            prev_task = Arc::as_ptr(&cur_task.task);
-            let state = cur_task.task.state.load(Ordering::Acquire);
+            prev_task = Arc::as_ptr(&cur_task.work);
+            let state = cur_task.work.state.load(Ordering::Acquire);
             match state {
                 TaskState::Running | TaskState::Woken => {
                     if cur_task.tick(now) {
@@ -116,7 +116,7 @@ impl RunQueue {
                 TaskState::PendingSleep | TaskState::PendingStop => {
                     // Task wants to deactivate. Drop the RunnableTask now to
                     // restore sched_data.
-                    let work = cur_task.task.clone();
+                    let work = cur_task.work.clone();
                     cur_task.sched_data.last_cpu = ArchImpl::id();
                     self.total_weight = self.total_weight.saturating_sub(cur_task.weight() as u64);
                     drop(cur_task);
@@ -138,17 +138,17 @@ impl RunQueue {
         {
             next_task.about_to_execute(now);
 
-            if Arc::as_ptr(&next_task.task) != prev_task {
+            if Arc::as_ptr(&next_task.work) != prev_task {
                 // If we scheduled a different task than before, context switch.
                 NUM_CONTEXT_SWITCHES.fetch_add(1, Ordering::Relaxed);
 
                 next_task.switch_context();
 
-                next_task.task.reset_last_account(now);
+                next_task.work.reset_last_account(now);
 
                 CUR_TASK_PTR
                     .borrow_mut()
-                    .set_current(Box::as_ptr(&next_task.task.task) as *mut _);
+                    .set_current(Box::as_ptr(&next_task.work.task) as *mut _);
             }
 
             self.running_task = Some(next_task);
@@ -158,7 +158,7 @@ impl RunQueue {
 
             CUR_TASK_PTR
                 .borrow_mut()
-                .set_current(Box::as_ptr(&self.idle.task.task) as *mut _);
+                .set_current(Box::as_ptr(&self.idle.work.task) as *mut _);
         }
 
         deferred_drops
@@ -192,7 +192,7 @@ impl RunQueue {
         }
 
         while let Some(ByDeadline(best)) = self.eligible.pop() {
-            if best.task.state.load(Ordering::Acquire).is_finished() {
+            if best.work.state.load(Ordering::Acquire).is_finished() {
                 self.total_weight = self.total_weight.saturating_sub(best.weight() as u64);
                 deferred_drops.push(best);
                 continue;
@@ -211,8 +211,9 @@ impl RunQueue {
         None
     }
 
-    fn enqueue(&mut self, task: RunnableTask) {
-        task.task.state.mark_runnable();
+    fn enqueue(&mut self, mut task: RunnableTask) {
+        task.refresh_priority();
+        task.work.state.mark_runnable();
 
         if self.v_clock.is_task_eligible(&task) {
             self.eligible.push(ByDeadline(task));
