@@ -1,14 +1,14 @@
 use libkernel::error::{KernelError, Result};
 
-use crate::{fs::VFS, process::fd_table::Fd, sched::current::current_task_shared};
+use crate::{fs::VFS, process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
 
-pub async fn sys_sync() -> Result<usize> {
+pub async fn sys_sync(_ctx: &ProcessCtx) -> Result<usize> {
     VFS.sync_all().await?;
     Ok(0)
 }
 
-pub async fn sys_syncfs(fd: Fd) -> Result<usize> {
-    let task = current_task_shared();
+pub async fn sys_syncfs(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
+    let task = ctx.shared().clone();
 
     let inode = task
         .fd_table
@@ -22,8 +22,8 @@ pub async fn sys_syncfs(fd: Fd) -> Result<usize> {
     Ok(0)
 }
 
-pub async fn sys_fsync(fd: Fd) -> Result<usize> {
-    let task = current_task_shared();
+pub async fn sys_fsync(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
+    let task = ctx.shared().clone();
 
     let inode = task
         .fd_table
@@ -37,8 +37,8 @@ pub async fn sys_fsync(fd: Fd) -> Result<usize> {
     Ok(0)
 }
 
-pub async fn sys_fdatasync(fd: Fd) -> Result<usize> {
-    let task = current_task_shared();
+pub async fn sys_fdatasync(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
+    let task = ctx.shared().clone();
 
     let inode = task
         .fd_table

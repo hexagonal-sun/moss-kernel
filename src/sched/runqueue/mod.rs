@@ -1,5 +1,5 @@
 use super::{
-    CUR_TASK_PTR, NUM_CONTEXT_SWITCHES,
+    NUM_CONTEXT_SWITCHES,
     sched_task::{RunnableTask, Work, state::TaskState},
 };
 use crate::{
@@ -145,20 +145,12 @@ impl RunQueue {
                 next_task.switch_context();
 
                 next_task.work.reset_last_account(now);
-
-                CUR_TASK_PTR
-                    .borrow_mut()
-                    .set_current(Box::as_ptr(&next_task.work.task) as *mut _);
             }
 
             self.running_task = Some(next_task);
         } else {
             // No next task.  Go idle.
             self.idle.switch_context();
-
-            CUR_TASK_PTR
-                .borrow_mut()
-                .set_current(Box::as_ptr(&self.idle.work.task) as *mut _);
         }
 
         deferred_drops

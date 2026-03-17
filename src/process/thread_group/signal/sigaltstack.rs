@@ -1,6 +1,6 @@
 use crate::{
     memory::uaccess::{UserCopyable, copy_from_user, copy_to_user},
-    sched::current::current_task,
+    sched::syscall_ctx::ProcessCtx,
 };
 use bitflags::bitflags;
 use libkernel::{
@@ -73,6 +73,7 @@ impl From<Option<AltSigStack>> for UserSigAltStack {
 }
 
 pub async fn sys_sigaltstack(
+    ctx: &ProcessCtx,
     ss: TUA<UserSigAltStack>,
     old_ss: TUA<UserSigAltStack>,
 ) -> Result<usize> {
@@ -83,7 +84,7 @@ pub async fn sys_sigaltstack(
     };
 
     let old_ss_value = {
-        let task = current_task();
+        let task = ctx.shared();
         let mut signals = task.process.signals.lock_save_irq();
 
         let old_ss_value = signals.alt_stack.clone();

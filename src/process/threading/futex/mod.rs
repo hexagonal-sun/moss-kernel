@@ -2,6 +2,7 @@ use crate::clock::realtime::date;
 use crate::clock::timespec::TimeSpec;
 use crate::drivers::timer::sleep;
 use crate::process::thread_group::signal::{InterruptResult, Interruptable};
+use crate::sched::syscall_ctx::ProcessCtx;
 use crate::sync::{OnceLock, SpinLock};
 use alloc::boxed::Box;
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
@@ -91,6 +92,7 @@ async fn do_futex_wait(
 }
 
 pub async fn sys_futex(
+    ctx: &ProcessCtx,
     uaddr: TUA<u32>,
     op: i32,
     val: u32,
@@ -102,9 +104,9 @@ pub async fn sys_futex(
     let cmd = op & !FUTEX_PRIVATE_FLAG;
 
     let key = if op & FUTEX_PRIVATE_FLAG != 0 {
-        FutexKey::new_private(uaddr)
+        FutexKey::new_private(ctx, uaddr)
     } else {
-        FutexKey::new_shared(uaddr)?
+        FutexKey::new_shared(ctx, uaddr)?
     };
 
     match cmd {

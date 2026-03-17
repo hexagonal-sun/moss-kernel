@@ -2,7 +2,7 @@ use crate::fs::VFS;
 use crate::memory::uaccess::copy_to_user_slice;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::process::fd_table::Fd;
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::sync::Arc;
 use core::ffi::c_char;
 use libkernel::error::{KernelError, Result};
@@ -21,6 +21,7 @@ async fn getxattr(node: Arc<dyn Inode>, name: &str, ua: UA, size: usize) -> Resu
 }
 
 pub async fn sys_getxattr(
+    ctx: &ProcessCtx,
     path: TUA<c_char>,
     name: TUA<c_char>,
     value: UA,
@@ -29,7 +30,7 @@ pub async fn sys_getxattr(
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
     let mut buf = [0; 1024];
@@ -43,6 +44,7 @@ pub async fn sys_getxattr(
 }
 
 pub async fn sys_lgetxattr(
+    ctx: &ProcessCtx,
     path: TUA<c_char>,
     name: TUA<c_char>,
     value: UA,
@@ -51,7 +53,7 @@ pub async fn sys_lgetxattr(
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS
         .resolve_path_nofollow(path, VFS.root_inode(), &task)
@@ -66,9 +68,15 @@ pub async fn sys_lgetxattr(
     .await
 }
 
-pub async fn sys_fgetxattr(fd: Fd, name: TUA<c_char>, value: UA, size: usize) -> Result<usize> {
+pub async fn sys_fgetxattr(
+    ctx: &ProcessCtx,
+    fd: Fd,
+    name: TUA<c_char>,
+    value: UA,
+    size: usize,
+) -> Result<usize> {
     let node = {
-        let task = current_task_shared();
+        let task = ctx.shared().clone();
         let file = task
             .fd_table
             .lock_save_irq()

@@ -9,10 +9,11 @@ use crate::{
     },
     memory::uaccess::cstr::UserCStr,
     process::fd_table::Fd,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 
 pub async fn sys_symlinkat(
+    ctx: &ProcessCtx,
     old_name: TUA<c_char>,
     new_dirfd: Fd,
     new_name: TUA<c_char>,
@@ -20,7 +21,7 @@ pub async fn sys_symlinkat(
     let mut buf = [0; 1024];
     let mut buf2 = [0; 1024];
 
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
     let source = Path::new(
         UserCStr::from_ptr(old_name)
             .copy_from_user(&mut buf)
@@ -31,7 +32,7 @@ pub async fn sys_symlinkat(
             .copy_from_user(&mut buf2)
             .await?,
     );
-    let start_node = resolve_at_start_node(new_dirfd, target, AtFlags::empty()).await?;
+    let start_node = resolve_at_start_node(ctx, new_dirfd, target, AtFlags::empty()).await?;
 
     VFS.symlink(source, target, start_node, &task).await?;
 

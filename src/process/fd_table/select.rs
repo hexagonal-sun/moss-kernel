@@ -12,7 +12,7 @@ use crate::{
         UserCopyable, copy_from_user, copy_obj_array_from_user, copy_objs_to_user, copy_to_user,
     },
     process::thread_group::signal::SigSet,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 
 use super::Fd;
@@ -61,6 +61,7 @@ unsafe impl UserCopyable for FdSet {}
 
 // TODO: writefds, exceptfds, timeout.
 pub async fn sys_pselect6(
+    ctx: &ProcessCtx,
     max: i32,
     readfds: TUA<FdSet>,
     _writefds: TUA<FdSet>,
@@ -68,7 +69,7 @@ pub async fn sys_pselect6(
     timeout: TUA<TimeSpec>,
     _mask: TUA<SigSet>,
 ) -> Result<usize> {
-    let task = current_task_shared();
+    let task = ctx.shared();
 
     let mut read_fd_set = copy_from_user(readfds).await?;
 
@@ -162,13 +163,14 @@ pub struct PollFd {
 unsafe impl UserCopyable for PollFd {}
 
 pub async fn sys_ppoll(
+    ctx: &ProcessCtx,
     ufds: TUA<PollFd>,
     nfds: u32,
     timeout: TUA<TimeSpec>,
     _sigmask: TUA<SigSet>,
     _sigset_len: usize,
 ) -> Result<usize> {
-    let task = current_task_shared();
+    let task = ctx.shared();
 
     let mut poll_fds = copy_obj_array_from_user(ufds, nfds as _).await?;
 

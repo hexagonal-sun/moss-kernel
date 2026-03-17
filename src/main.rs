@@ -34,7 +34,7 @@ use libkernel::{
 use log::{error, warn};
 use process::ctx::UserCtx;
 use sched::{
-    current::current_task_shared, sched_init, spawn_kernel_work, uspc_ret::dispatch_userspace_task,
+    sched_init, spawn_kernel_work, syscall_ctx::ProcessCtx, uspc_ret::dispatch_userspace_task,
 };
 
 extern crate alloc;
@@ -76,7 +76,7 @@ fn on_panic(info: &PanicInfo) -> ! {
     ArchImpl::power_off();
 }
 
-async fn launch_init(mut opts: KOptions) {
+async fn launch_init(mut ctx: ProcessCtx, mut opts: KOptions) {
     let init = opts
         .init
         .unwrap_or_else(|| panic!("No init specified in kernel command line"));
@@ -141,7 +141,7 @@ async fn launch_init(mut opts: KOptions) {
         .await
         .expect("Unable to find init");
 
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     // Ensure that the exec() call applies to init.
     assert!(task.process.tgid.is_init());
@@ -186,7 +186,7 @@ async fn launch_init(mut opts: KOptions) {
 
     init_args.append(&mut opts.init_args);
 
-    process::exec::kernel_exec(init.as_path(), inode, init_args, vec![])
+    process::exec::kernel_exec(&mut ctx, init.as_path(), inode, init_args, vec![])
         .await
         .expect("Could not launch init process");
 }
@@ -238,7 +238,14 @@ pub fn kmain(args: String, ctx_frame: *mut UserCtx) {
 
     let kopts = parse_args(&args);
 
-    spawn_kernel_work(launch_init(kopts));
+    {
+        // SAFETY: kmain is called prior to init being launched. Thefore, we
+        // will be the only access to `ctx` at this point.
+        let mut ctx = unsafe { ProcessCtx::from_current() };
+        let ctx2 = unsafe { ctx.clone() };
+
+        spawn_kernel_work(&mut ctx, launch_init(ctx2, kopts));
+    }
 
     dispatch_userspace_task(ctx_frame);
 }

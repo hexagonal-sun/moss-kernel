@@ -29,6 +29,7 @@ use libkernel::{
     },
 };
 use ptrace::PTrace;
+use thread_group::signal::{AtomicSigSet, SigId};
 use thread_group::{Tgid, ThreadGroup};
 
 pub mod caps;
@@ -156,6 +157,8 @@ pub struct Task {
     pub creds: SpinLock<Credentials>,
     pub fd_table: Arc<SpinLock<FileDescriptorTable>>,
     pub ptrace: SpinLock<PTrace>,
+    pub sig_mask: AtomicSigSet,
+    pub pending_signals: AtomicSigSet,
     pub utime: AtomicUsize,
     pub stime: AtomicUsize,
     pub last_account: AtomicUsize,
@@ -172,6 +175,35 @@ impl Task {
 
     pub fn tid(&self) -> Tid {
         self.tid
+    }
+
+    /// Raise a signal on this specific task (thread-directed).
+    pub fn raise_task_signal(&self, signal: SigId) {
+        self.pending_signals.insert(signal.into());
+    }
+
+    /// Check for a pending signal on this task or its process, respecting the
+    /// signal mask.
+    pub fn peek_signal(&self) -> Option<SigId> {
+        let mask = self.sig_mask.load();
+        self.pending_signals.peek_signal(mask).or_else(|| {
+            self.process
+                .pending_signals
+                .lock_save_irq()
+                .peek_signal(mask)
+        })
+    }
+
+    /// Take a pending signal from this task or its process, respecting the
+    /// signal mask.
+    pub fn take_signal(&self) -> Option<SigId> {
+        let mask = self.sig_mask.load();
+        self.pending_signals.take_signal(mask).or_else(|| {
+            self.process
+                .pending_signals
+                .lock_save_irq()
+                .take_signal(mask)
+        })
     }
 
     /// Return a new descriptor that uniquely represents this task in the

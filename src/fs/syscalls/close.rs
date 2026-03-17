@@ -1,10 +1,11 @@
-use crate::{process::fd_table::Fd, sched::current::current_task};
+use crate::{process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
 use alloc::sync::Arc;
 use bitflags::bitflags;
 use libkernel::error::{KernelError, Result};
 
-async fn close(fd: Fd) -> Result<()> {
-    let file = current_task()
+async fn close(ctx: &ProcessCtx, fd: Fd) -> Result<()> {
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .remove(fd)
@@ -17,8 +18,8 @@ async fn close(fd: Fd) -> Result<()> {
     Ok(())
 }
 
-pub async fn sys_close(fd: Fd) -> Result<usize> {
-    close(fd).await?;
+pub async fn sys_close(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
+    close(ctx, fd).await?;
     Ok(0)
 }
 
@@ -29,7 +30,7 @@ bitflags! {
     }
 }
 
-pub async fn sys_close_range(first: Fd, last: Fd, flags: i32) -> Result<usize> {
+pub async fn sys_close_range(ctx: &ProcessCtx, first: Fd, last: Fd, flags: i32) -> Result<usize> {
     let flags = CloseRangeFlags::from_bits_truncate(flags);
     if flags.contains(CloseRangeFlags::CLOSE_RANGE_UNSHARE) {
         todo!("Implement CLOSE_RANGE_UNSHARE");
@@ -39,7 +40,7 @@ pub async fn sys_close_range(first: Fd, last: Fd, flags: i32) -> Result<usize> {
     }
 
     for i in first.as_raw()..=last.as_raw() {
-        close(Fd(i)).await?;
+        close(ctx, Fd(i)).await?;
     }
     Ok(0)
 }

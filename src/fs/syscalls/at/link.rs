@@ -14,10 +14,11 @@ use crate::{
     },
     memory::uaccess::cstr::UserCStr,
     process::fd_table::Fd,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 
 pub async fn sys_linkat(
+    ctx: &ProcessCtx,
     old_dirfd: Fd,
     old_path: TUA<c_char>,
     new_dirfd: Fd,
@@ -27,7 +28,7 @@ pub async fn sys_linkat(
     let mut buf = [0; 1024];
     let mut buf2 = [0; 1024];
 
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
     let mut flags = AtFlags::from_bits_retain(flags);
 
     // following symlinks is implied for any other syscall.
@@ -57,8 +58,8 @@ pub async fn sys_linkat(
             .copy_from_user(&mut buf2)
             .await?,
     );
-    let old_start_node = resolve_at_start_node(old_dirfd, old_path, flags).await?;
-    let new_start_node = resolve_at_start_node(new_dirfd, new_path, flags).await?;
+    let old_start_node = resolve_at_start_node(ctx, old_dirfd, old_path, flags).await?;
+    let new_start_node = resolve_at_start_node(ctx, new_dirfd, new_path, flags).await?;
 
     let target_inode =
         resolve_path_flags(old_dirfd, old_path, old_start_node.clone(), &task, flags).await?;

@@ -3,7 +3,7 @@ use crate::{
         UserCopyable, copy_from_user, copy_obj_array_from_user, copy_objs_to_user, copy_to_user,
     },
     process::TASK_LIST,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 use libkernel::{
     error::{KernelError, Result},
@@ -49,11 +49,15 @@ impl CapUserData {
 unsafe impl UserCopyable for CapUserHeader {}
 unsafe impl UserCopyable for CapUserData {}
 
-pub async fn sys_capget(hdrp: TUA<CapUserHeader>, datap: TUA<CapUserData>) -> Result<usize> {
+pub async fn sys_capget(
+    ctx: &ProcessCtx,
+    hdrp: TUA<CapUserHeader>,
+    datap: TUA<CapUserData>,
+) -> Result<usize> {
     let mut header = copy_from_user(hdrp).await?;
 
     let task = if header.pid == 0 {
-        current_task_shared()
+        ctx.shared().clone()
     } else {
         TASK_LIST
             .lock_save_irq()
@@ -83,12 +87,16 @@ pub async fn sys_capget(hdrp: TUA<CapUserHeader>, datap: TUA<CapUserData>) -> Re
     Ok(0)
 }
 
-pub async fn sys_capset(hdrp: TUA<CapUserHeader>, datap: TUA<CapUserData>) -> Result<usize> {
+pub async fn sys_capset(
+    ctx: &ProcessCtx,
+    hdrp: TUA<CapUserHeader>,
+    datap: TUA<CapUserData>,
+) -> Result<usize> {
     let mut header = copy_from_user(hdrp).await?;
 
-    let caller_caps = current_task_shared().creds.lock_save_irq().caps();
+    let caller_caps = ctx.shared().creds.lock_save_irq().caps();
     let task = if header.pid == 0 {
-        current_task_shared()
+        ctx.shared().clone()
     } else {
         caller_caps.check_capable(CapabilitiesFlags::CAP_SETPCAP)?;
         TASK_LIST

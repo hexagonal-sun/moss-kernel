@@ -1,7 +1,7 @@
 use crate::drivers::fs::proc::{get_inode_id, procfs};
 use crate::process::fd_table::Fd;
 use crate::process::{TaskDescriptor, find_task_by_descriptor};
-use crate::sched::current::current_task_shared;
+use crate::sched::current_work;
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::format;
@@ -55,7 +55,7 @@ impl Inode for ProcFdInode {
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         let fd: i32 = name.parse().map_err(|_| FsError::NotFound)?;
-        let task = current_task_shared();
+        let task = current_work();
         let fd_table = task.fd_table.lock_save_irq();
         if fd_table.get(Fd(fd)).is_none() {
             return Err(FsError::NotFound.into());

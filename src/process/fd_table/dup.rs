@@ -1,4 +1,4 @@
-use crate::sched::current::current_task;
+use crate::sched::syscall_ctx::ProcessCtx;
 use libkernel::{
     error::{KernelError, Result},
     fs::OpenFlags,
@@ -6,8 +6,8 @@ use libkernel::{
 
 use super::{Fd, FdFlags, FileDescriptorEntry};
 
-pub fn dup_fd(fd: Fd, min_fd: Option<Fd>) -> Result<Fd> {
-    let task = current_task();
+pub fn dup_fd(ctx: &ProcessCtx, fd: Fd, min_fd: Option<Fd>) -> Result<Fd> {
+    let task = ctx.shared();
     let mut files = task.fd_table.lock_save_irq();
 
     let file = files.get(fd).ok_or(KernelError::BadFd)?;
@@ -20,13 +20,13 @@ pub fn dup_fd(fd: Fd, min_fd: Option<Fd>) -> Result<Fd> {
     Ok(new_fd)
 }
 
-pub fn sys_dup(fd: Fd) -> Result<usize> {
-    let new_fd = dup_fd(fd, None)?;
+pub fn sys_dup(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
+    let new_fd = dup_fd(ctx, fd, None)?;
 
     Ok(new_fd.as_raw() as _)
 }
 
-pub fn sys_dup3(oldfd: Fd, newfd: Fd, flags: u32) -> Result<usize> {
+pub fn sys_dup3(ctx: &ProcessCtx, oldfd: Fd, newfd: Fd, flags: u32) -> Result<usize> {
     if oldfd == newfd {
         return Err(KernelError::InvalidValue);
     }
@@ -38,7 +38,7 @@ pub fn sys_dup3(oldfd: Fd, newfd: Fd, flags: u32) -> Result<usize> {
         return Err(KernelError::InvalidValue);
     }
 
-    let task = current_task();
+    let task = ctx.shared();
     let mut files = task.fd_table.lock_save_irq();
 
     let old_file = files.get(oldfd).ok_or(KernelError::BadFd)?;

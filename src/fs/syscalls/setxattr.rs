@@ -2,7 +2,7 @@ use crate::fs::VFS;
 use crate::memory::uaccess::copy_from_user_slice;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::process::fd_table::Fd;
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::sync::Arc;
 use alloc::vec;
 use bitflags::bitflags;
@@ -51,6 +51,7 @@ async fn setxattr(
 }
 
 pub async fn sys_setxattr(
+    ctx: &ProcessCtx,
     path: TUA<c_char>,
     name: TUA<c_char>,
     value: UA,
@@ -60,7 +61,7 @@ pub async fn sys_setxattr(
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
     let mut buf = [0; 1024];
@@ -75,6 +76,7 @@ pub async fn sys_setxattr(
 }
 
 pub async fn sys_lsetxattr(
+    ctx: &ProcessCtx,
     path: TUA<c_char>,
     name: TUA<c_char>,
     value: UA,
@@ -84,7 +86,7 @@ pub async fn sys_lsetxattr(
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS
         .resolve_path_nofollow(path, VFS.root_inode(), &task)
@@ -101,6 +103,7 @@ pub async fn sys_lsetxattr(
 }
 
 pub async fn sys_fsetxattr(
+    ctx: &ProcessCtx,
     fd: Fd,
     name: TUA<c_char>,
     value: UA,
@@ -108,7 +111,7 @@ pub async fn sys_fsetxattr(
     flags: i32,
 ) -> Result<usize> {
     let node = {
-        let task = current_task_shared();
+        let task = ctx.shared().clone();
         let file = task
             .fd_table
             .lock_save_irq()

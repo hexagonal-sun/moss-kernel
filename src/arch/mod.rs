@@ -15,6 +15,7 @@ use crate::{
         owned::OwnedTask,
         thread_group::signal::{SigId, ksigaction::UserspaceSigAction},
     },
+    sched::syscall_ctx::ProcessCtx,
 };
 use alloc::string::String;
 use alloc::sync::Arc;
@@ -59,12 +60,15 @@ pub trait Arch: CpuOps + VirtualMemory {
 
     /// Call a user-specified signal handler in the current process.
     fn do_signal(
+        ctx: ProcessCtx,
         sig: SigId,
         action: UserspaceSigAction,
     ) -> impl Future<Output = Result<<Self as Arch>::UserContext>>;
 
     /// Return from a userspace signal handler.
-    fn do_signal_return() -> impl Future<Output = Result<<Self as Arch>::UserContext>>;
+    fn do_signal_return(
+        ctx: ProcessCtx,
+    ) -> impl Future<Output = Result<<Self as Arch>::UserContext>>;
 
     /// Copies a block of memory from userspace to the kernel.
     ///

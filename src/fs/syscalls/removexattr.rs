@@ -1,7 +1,7 @@
 use crate::fs::VFS;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::process::fd_table::Fd;
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::sync::Arc;
 use core::ffi::c_char;
 use libkernel::error::{KernelError, Result};
@@ -14,11 +14,15 @@ async fn removexattr(node: Arc<dyn Inode>, name: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn sys_removexattr(path: TUA<c_char>, name: TUA<c_char>) -> Result<usize> {
+pub async fn sys_removexattr(
+    ctx: &ProcessCtx,
+    path: TUA<c_char>,
+    name: TUA<c_char>,
+) -> Result<usize> {
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
     let mut buf = [0; 1024];
@@ -30,11 +34,15 @@ pub async fn sys_removexattr(path: TUA<c_char>, name: TUA<c_char>) -> Result<usi
     Ok(0)
 }
 
-pub async fn sys_lremovexattr(path: TUA<c_char>, name: TUA<c_char>) -> Result<usize> {
+pub async fn sys_lremovexattr(
+    ctx: &ProcessCtx,
+    path: TUA<c_char>,
+    name: TUA<c_char>,
+) -> Result<usize> {
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS
         .resolve_path_nofollow(path, VFS.root_inode(), &task)
@@ -48,9 +56,9 @@ pub async fn sys_lremovexattr(path: TUA<c_char>, name: TUA<c_char>) -> Result<us
     Ok(0)
 }
 
-pub async fn sys_fremovexattr(fd: Fd, name: TUA<c_char>) -> Result<usize> {
+pub async fn sys_fremovexattr(ctx: &ProcessCtx, fd: Fd, name: TUA<c_char>) -> Result<usize> {
     let node = {
-        let task = current_task_shared();
+        let task = ctx.shared().clone();
         let file = task
             .fd_table
             .lock_save_irq()

@@ -4,7 +4,7 @@ use crate::{
     fs::syscalls::iov::IoVec,
     memory::uaccess::{copy_from_user, copy_to_user},
     process::{TASK_LIST, thread_group::signal::SigId},
-    sched::current::{current_task, current_task_shared},
+    sched::syscall_ctx::ProcessCtx,
 };
 use alloc::sync::Arc;
 use bitflags::Flags;
@@ -255,8 +255,8 @@ impl TryFrom<i32> for PtraceOperation {
     }
 }
 
-pub async fn ptrace_stop(point: TracePoint) -> bool {
-    let task_sh = current_task_shared();
+pub async fn ptrace_stop(ctx: &ProcessCtx, point: TracePoint) -> bool {
+    let task_sh = ctx.shared();
     let mut notified = false;
 
     poll_fn(|cx| {
@@ -266,7 +266,7 @@ pub async fn ptrace_stop(point: TracePoint) -> bool {
             // First poll: hit the trace point, set waker, then notify.
             // The waker must be set *before* notification so the tracer
             // can always find it when it does PTRACE_SYSCALL/CONT.
-            if !ptrace.hit_trace_point(point, current_task().ctx.user()) {
+            if !ptrace.hit_trace_point(point, ctx.task().ctx.user()) {
                 return Poll::Ready(false);
             }
 
@@ -287,11 +287,11 @@ pub async fn ptrace_stop(point: TracePoint) -> bool {
     .await
 }
 
-pub async fn sys_ptrace(op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> {
+pub async fn sys_ptrace(ctx: &ProcessCtx, op: i32, pid: u64, addr: UA, data: UA) -> Result<usize> {
     let op = PtraceOperation::try_from(op)?;
 
     if op == PtraceOperation::TraceMe {
-        let current_task = current_task_shared();
+        let current_task = ctx.shared();
         let mut ptrace = current_task.ptrace.lock_save_irq();
 
         ptrace.state = Some(PTraceState::Running);

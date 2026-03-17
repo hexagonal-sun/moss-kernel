@@ -4,7 +4,7 @@ use super::{
 };
 use crate::clock::timespec::TimeSpec;
 use crate::memory::uaccess::{UserCopyable, copy_to_user};
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use crate::sync::CondVar;
 use alloc::collections::btree_map::BTreeMap;
 use bitflags::Flags;
@@ -212,6 +212,7 @@ fn find_waitable(
 }
 
 pub async fn sys_wait4(
+    ctx: &ProcessCtx,
     pid: PidT,
     stat_addr: TUA<i32>,
     flags: u32,
@@ -246,7 +247,7 @@ pub async fn sys_wait4(
         return Err(KernelError::NotSupported);
     }
 
-    let task = current_task_shared();
+    let task = ctx.shared();
 
     let child_proc_count = task.process.children.lock_save_irq().iter().count();
 
@@ -321,6 +322,7 @@ pub enum IdType {
 }
 
 pub async fn sys_waitid(
+    ctx: &ProcessCtx,
     idtype: i32,
     id: PidT,
     infop: TUA<SigInfo>,
@@ -365,7 +367,7 @@ pub async fn sys_waitid(
         IdType::P_PGID => -id.abs(), // negative means select by PGID in helpers
     };
 
-    let task = current_task_shared();
+    let task = ctx.shared();
     let child_proc_count = task.process.children.lock_save_irq().iter().count();
 
     // Try immediate check if no children or WNOHANG

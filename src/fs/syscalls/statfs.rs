@@ -2,7 +2,7 @@ use crate::fs::VFS;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::memory::uaccess::{UserCopyable, copy_to_user};
 use crate::process::fd_table::Fd;
-use crate::sched::current::{current_task, current_task_shared};
+use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::sync::Arc;
 use core::ffi::c_char;
 use libkernel::error::KernelError;
@@ -65,19 +65,28 @@ async fn statfs_impl(inode: Arc<dyn Inode>) -> libkernel::error::Result<StatFs> 
     })
 }
 
-pub async fn sys_statfs(path: TUA<c_char>, stat: TUA<StatFs>) -> libkernel::error::Result<usize> {
+pub async fn sys_statfs(
+    ctx: &ProcessCtx,
+    path: TUA<c_char>,
+    stat: TUA<StatFs>,
+) -> libkernel::error::Result<usize> {
     let mut buf = [0; 1024];
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let inode = VFS
-        .resolve_path(path, VFS.root_inode(), &current_task_shared())
+        .resolve_path(path, VFS.root_inode(), &ctx.shared().clone())
         .await?;
     let statfs = statfs_impl(inode).await?;
     copy_to_user(stat, statfs).await?;
     Ok(0)
 }
 
-pub async fn sys_fstatfs(fd: Fd, stat: TUA<StatFs>) -> libkernel::error::Result<usize> {
-    let fd = current_task()
+pub async fn sys_fstatfs(
+    ctx: &ProcessCtx,
+    fd: Fd,
+    stat: TUA<StatFs>,
+) -> libkernel::error::Result<usize> {
+    let fd = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)

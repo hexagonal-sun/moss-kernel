@@ -1,10 +1,7 @@
 use core::ffi::c_char;
 
 use crate::{
-    fs::VFS,
-    memory::uaccess::cstr::UserCStr,
-    process::fd_table::Fd,
-    sched::current::{current_task, current_task_shared},
+    fs::VFS, memory::uaccess::cstr::UserCStr, process::fd_table::Fd, sched::syscall_ctx::ProcessCtx,
 };
 use libkernel::{
     error::{KernelError, Result},
@@ -12,10 +9,10 @@ use libkernel::{
     memory::address::TUA,
 };
 
-pub async fn sys_truncate(path: TUA<c_char>, new_size: usize) -> Result<usize> {
+pub async fn sys_truncate(ctx: &ProcessCtx, path: TUA<c_char>, new_size: usize) -> Result<usize> {
     let mut buf = [0; 1024];
 
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
 
     let root = task.root.lock_save_irq().0.clone();
@@ -34,8 +31,9 @@ pub async fn sys_truncate(path: TUA<c_char>, new_size: usize) -> Result<usize> {
     ops.truncate(ctx, new_size).await.map(|_| 0)
 }
 
-pub async fn sys_ftruncate(fd: Fd, new_size: usize) -> Result<usize> {
-    let fd = current_task()
+pub async fn sys_ftruncate(ctx: &ProcessCtx, fd: Fd, new_size: usize) -> Result<usize> {
+    let fd = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)

@@ -2,10 +2,12 @@ use crate::memory::uaccess::{copy_from_user, copy_to_user, copy_to_user_slice};
 use crate::net::sops::RecvFlags;
 use crate::net::{SocketLen, parse_sockaddr};
 use crate::process::fd_table::Fd;
+use crate::sched::syscall_ctx::ProcessCtx;
 use libkernel::error::KernelError;
 use libkernel::memory::address::{TUA, UA};
 
 pub async fn sys_recvfrom(
+    ctx: &ProcessCtx,
     fd: Fd,
     buf: UA,
     len: usize,
@@ -13,7 +15,8 @@ pub async fn sys_recvfrom(
     addr: UA,
     addrlen: TUA<SocketLen>,
 ) -> libkernel::error::Result<usize> {
-    let file = crate::sched::current::current_task()
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)

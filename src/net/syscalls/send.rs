@@ -1,6 +1,7 @@
 use crate::net::sops::SendFlags;
 use crate::net::{SocketLen, parse_sockaddr};
 use crate::process::fd_table::Fd;
+use crate::sched::syscall_ctx::ProcessCtx;
 use libkernel::error::Result;
 use libkernel::memory::address::UA;
 
@@ -25,6 +26,7 @@ use libkernel::memory::address::UA;
 const MSG_NOSIGNAL: i32 = 0x4000;
 
 pub async fn sys_sendto(
+    ctx: &ProcessCtx,
     fd: Fd,
     buf: UA,
     len: usize,
@@ -32,7 +34,8 @@ pub async fn sys_sendto(
     addr: UA,
     addrlen: SocketLen,
 ) -> Result<usize> {
-    let file = crate::sched::current::current_task()
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)

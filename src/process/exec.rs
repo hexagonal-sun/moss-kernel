@@ -1,7 +1,7 @@
 use crate::ArchImpl;
 use crate::process::Comm;
 use crate::process::ptrace::{TracePoint, ptrace_stop};
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use crate::{
     arch::Arch,
     fs::VFS,
@@ -10,7 +10,6 @@ use crate::{
         uaccess::{copy_from_user, cstr::UserCStr},
     },
     process::{ctx::Context, thread_group::signal::SignalActionState},
-    sched::current::current_task,
 };
 use alloc::borrow::ToOwned;
 use alloc::{string::String, vec};
@@ -85,6 +84,7 @@ fn process_prog_headers<E: Endian>(
 }
 
 async fn exec_elf(
+    ctx: &mut ProcessCtx,
     inode: Arc<dyn Inode>,
     path: &Path,
     argv: Vec<String>,
@@ -164,7 +164,7 @@ async fn exec_elf(
         auxv.push(LINKER_BIAS as _);
 
         // Returns the entry address of the interp program.
-        process_interp(path, &mut vmas).await?
+        process_interp(ctx, path, &mut vmas).await?
     } else {
         // Otherwise, it's just the binary itself.
         main_entry
@@ -184,7 +184,7 @@ async fn exec_elf(
     let stack_ptr = setup_user_stack(&mut mem_map, &argv, &envp, auxv)?;
 
     // We are now committed to the exec.  Inform ptrace.
-    ptrace_stop(TracePoint::Exec).await;
+    ptrace_stop(ctx, TracePoint::Exec).await;
 
     let user_ctx = ArchImpl::new_user_context(entry_addr, stack_ptr);
     let mut vm = ProcessVM::from_map(mem_map);
@@ -198,7 +198,7 @@ async fn exec_elf(
     let new_comm = argv.first().map(|s| Comm::new(s.as_str()));
 
     {
-        let mut current_task = current_task();
+        let current_task = ctx.task_mut();
 
         if let Some(new_comm) = new_comm {
             *current_task.comm.lock_save_irq() = new_comm;
@@ -210,15 +210,16 @@ async fn exec_elf(
     }
 
     // Close all the CLOEXEC FDs.
-    let mut fd_table = current_task().fd_table.lock_save_irq().clone();
+    let mut fd_table = ctx.shared().fd_table.lock_save_irq().clone();
     fd_table.close_cloexec_entries().await;
-    *current_task().fd_table.lock_save_irq() = fd_table;
-    *current_task().process.executable.lock_save_irq() = Some(path.to_owned());
+    *ctx.shared().fd_table.lock_save_irq() = fd_table;
+    *ctx.shared().process.executable.lock_save_irq() = Some(path.to_owned());
 
     Ok(())
 }
 
 async fn exec_script(
+    ctx: &mut ProcessCtx,
     path: &Path,
     inode: Arc<dyn Inode>,
     argv: Vec<String>,
@@ -247,16 +248,17 @@ async fn exec_script(
     new_argv.extend(argv.into_iter().skip(1)); // Skip original argv[0]
     // Resolve interpreter inode
     let interp_path = Path::new(interp_path);
-    let task = current_task_shared();
+    let task = ctx.shared();
     let interp_inode = VFS
-        .resolve_path(interp_path, VFS.root_inode(), &task)
+        .resolve_path(interp_path, VFS.root_inode(), task)
         .await?;
     // Execute interpreter
-    exec_elf(interp_inode, interp_path, new_argv, envp).await?;
+    exec_elf(ctx, interp_inode, interp_path, new_argv, envp).await?;
     Ok(())
 }
 
 pub async fn kernel_exec(
+    ctx: &mut ProcessCtx,
     path: &Path,
     inode: Arc<dyn Inode>,
     argv: Vec<String>,
@@ -265,9 +267,9 @@ pub async fn kernel_exec(
     let mut buf = [0u8; 4];
     inode.read_at(0, &mut buf).await?;
     if buf == [0x7F, b'E', b'L', b'F'] {
-        exec_elf(inode, path, argv, envp).await
+        exec_elf(ctx, inode, path, argv, envp).await
     } else if buf.starts_with(b"#!") {
-        exec_script(path, inode, argv, envp).await
+        exec_script(ctx, path, inode, argv, envp).await
     } else {
         Err(ExecError::InvalidElfFormat.into())
     }
@@ -386,11 +388,15 @@ fn setup_user_stack(
 
 // Dynamic linker path: map PT_INTERP interpreter and return start address of
 // the interpreter program.
-async fn process_interp(interp_path: String, vmas: &mut Vec<VMArea>) -> Result<VA> {
+async fn process_interp(
+    ctx: &ProcessCtx,
+    interp_path: String,
+    vmas: &mut Vec<VMArea>,
+) -> Result<VA> {
     // Resolve interpreter path from root; this assumes interp_path is absolute.
-    let task = current_task_shared();
+    let task = ctx.shared();
     let path = Path::new(&interp_path);
-    let interp_inode = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
+    let interp_inode = VFS.resolve_path(path, VFS.root_inode(), task).await?;
 
     // Parse interpreter ELF header
     let mut hdr_buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
@@ -425,11 +431,12 @@ async fn process_interp(interp_path: String, vmas: &mut Vec<VMArea>) -> Result<V
 }
 
 pub async fn sys_execve(
+    ctx: &mut ProcessCtx,
     path: TUA<c_char>,
     mut usr_argv: TUA<TUA<c_char>>,
     mut usr_env: TUA<TUA<c_char>>,
 ) -> Result<usize> {
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
     let mut buf = [0; 1024];
     let mut argv = Vec::new();
     let mut envp = Vec::new();
@@ -461,7 +468,7 @@ pub async fn sys_execve(
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let inode = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
 
-    kernel_exec(path, inode, argv, envp).await?;
+    kernel_exec(ctx, path, inode, argv, envp).await?;
 
     Ok(0)
 }

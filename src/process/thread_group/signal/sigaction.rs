@@ -3,7 +3,7 @@ use libkernel::error::{KernelError, Result};
 use libkernel::memory::address::TUA;
 
 use crate::memory::uaccess::{UserCopyable, copy_from_user, copy_to_user};
-use crate::sched::current::current_task;
+use crate::sched::syscall_ctx::ProcessCtx;
 
 use super::ksigaction::UserspaceSigAction;
 use super::uaccess::UserSigId;
@@ -88,6 +88,7 @@ impl From<SigActionState> for UserSigAction {
 }
 
 pub async fn sys_rt_sigaction(
+    ctx: &ProcessCtx,
     sig: UserSigId,
     act: TUA<UserSigAction>,
     oact: TUA<UserSigAction>,
@@ -110,7 +111,7 @@ pub async fn sys_rt_sigaction(
     };
 
     let old_action = {
-        let task = current_task();
+        let task = ctx.shared();
 
         let mut sigstate = task.process.signals.lock_save_irq();
         let old_action = sigstate.action[sig];

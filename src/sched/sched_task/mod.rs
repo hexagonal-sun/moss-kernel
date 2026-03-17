@@ -35,7 +35,7 @@ pub struct SchedulerData {
 }
 
 impl SchedulerData {
-    fn new(task: &Box<OwnedTask>) -> Self {
+    fn new(task: &OwnedTask) -> Self {
         Self {
             v_runtime: 0,
             v_eligible: 0,
@@ -55,7 +55,6 @@ pub struct Work {
     pub state: TaskStateMachine,
     pub sched_data: SpinLock<Option<SchedulerData>>,
 }
-
 
 impl Deref for Work {
     type Target = Arc<Task>;
@@ -110,7 +109,6 @@ impl Drop for RunnableTask {
         *self.work.sched_data.lock_save_irq() = Some(self.sched_data.clone());
     }
 }
-
 
 impl Deref for RunnableTask {
     type Target = SchedulerData;

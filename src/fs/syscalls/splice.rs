@@ -1,4 +1,4 @@
-use crate::{kernel::kpipe::KPipe, process::fd_table::Fd, sched::current::current_task};
+use crate::{kernel::kpipe::KPipe, process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
 use alloc::sync::Arc;
 use libkernel::{
     error::{KernelError, Result},
@@ -6,13 +6,14 @@ use libkernel::{
 };
 
 pub async fn sys_sendfile(
+    ctx: &ProcessCtx,
     out_fd: Fd,
     in_fd: Fd,
     _offset: TUA<u64>,
     mut count: usize,
 ) -> Result<usize> {
     let (reader, writer) = {
-        let task = current_task();
+        let task = ctx.shared();
         let fds = task.fd_table.lock_save_irq();
 
         let reader = fds.get(in_fd).ok_or(KernelError::BadFd)?;

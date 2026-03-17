@@ -17,19 +17,20 @@ use crate::{
     fs::syscalls::at::{AtFlags, resolve_at_start_node, resolve_path_flags},
     memory::uaccess::{copy_from_user, cstr::UserCStr},
     process::fd_table::Fd,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 
 const UTIME_NOW: u64 = (1 << 30) - 1;
 const UTIME_OMIT: u64 = (1 << 30) - 2;
 
 pub async fn sys_utimensat(
+    ctx: &ProcessCtx,
     dirfd: Fd,
     path: TUA<c_char>,
     times: TUA<[TimeSpec; 2]>,
     flags: i32,
 ) -> Result<usize> {
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     // linux specifically uses NULL path to indicate futimens, see utimensat(2)
     let node = if path.is_null() {
@@ -44,7 +45,7 @@ pub async fn sys_utimensat(
 
         let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
         let flags = AtFlags::from_bits_retain(flags);
-        let start_node = resolve_at_start_node(dirfd, path, flags).await?;
+        let start_node = resolve_at_start_node(ctx, dirfd, path, flags).await?;
 
         resolve_path_flags(dirfd, path, start_node, &task, flags).await?
     };

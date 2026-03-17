@@ -10,16 +10,16 @@ use core::fmt::Debug;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use core::task::Waker;
 use core::time::Duration;
-use current::{CUR_TASK_PTR, current_task};
 use libkernel::error::Result;
 use log::warn;
 use runqueue::RunQueue;
 use sched_task::{RunnableTask, Work};
+use syscall_ctx::ProcessCtx;
 use waker::create_waker;
 
-pub mod current;
 mod runqueue;
 pub mod sched_task;
+pub mod syscall_ctx;
 pub mod uspc_ret;
 pub mod waker;
 
@@ -130,8 +130,8 @@ fn schedule() {
     drop(deferred);
 }
 
-pub fn spawn_kernel_work(fut: impl Future<Output = ()> + 'static + Send) {
-    current_task().ctx.put_kernel_work(Box::pin(fut));
+pub fn spawn_kernel_work(ctx: &mut ProcessCtx, fut: impl Future<Output = ()> + 'static + Send) {
+    ctx.task_mut().ctx.put_kernel_work(Box::pin(fut));
 }
 
 #[cfg(feature = "smp")]

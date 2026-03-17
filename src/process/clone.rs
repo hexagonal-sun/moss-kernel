@@ -1,11 +1,15 @@
 use super::owned::OwnedTask;
 use super::ptrace::{PTrace, TracePoint, ptrace_stop};
-use super::{ctx::Context, thread_group::signal::SigSet};
+use super::{
+    ctx::Context,
+    thread_group::signal::{AtomicSigSet, SigSet},
+};
 use crate::memory::uaccess::copy_to_user;
 use crate::sched::sched_task::Work;
+use crate::sched::syscall_ctx::ProcessCtx;
 use crate::{
     process::{TASK_LIST, Task},
-    sched::{self, current::current_task},
+    sched::{self},
     sync::SpinLock,
 };
 use alloc::boxed::Box;
@@ -50,6 +54,7 @@ bitflags! {
 }
 
 pub async fn sys_clone(
+    ctx: &ProcessCtx,
     flags: u32,
     newsp: UA,
     parent_tidptr: TUA<u32>,
@@ -60,10 +65,10 @@ pub async fn sys_clone(
 
     // TODO: differentiate between `TracePoint::Fork`, `TracePoint::Clone` and
     // `TracePoint::VFork`.
-    let should_trace_new_tsk = ptrace_stop(TracePoint::Fork).await;
+    let should_trace_new_tsk = ptrace_stop(ctx, TracePoint::Fork).await;
 
     let new_task = {
-        let current_task = current_task();
+        let current_task = ctx.task();
 
         let mut user_ctx = *current_task.ctx.user();
 
@@ -141,20 +146,20 @@ pub async fn sys_clone(
 
         let creds = current_task.creds.lock_save_irq().clone();
 
-        let new_sigmask = current_task.sig_mask;
+        let new_sigmask = AtomicSigSet::new(current_task.sig_mask.load());
+
+        let initial_signals = if should_trace_new_tsk {
+            // When we want to trace a new task through one of
+            // PTRACE_O_TRACE{FORK,VFORK,CLONE}, stop the child as soon as
+            // it is created.
+            AtomicSigSet::new(SigSet::SIGSTOP)
+        } else {
+            AtomicSigSet::empty()
+        };
 
         OwnedTask {
             ctx: Context::from_user_ctx(user_ctx),
             priority: current_task.priority,
-            sig_mask: new_sigmask,
-            pending_signals: if should_trace_new_tsk {
-                // When we want to trace a new task through one of
-                // PTRACE_O_TRACE{FORK,VFORK,CLONE}, stop the child as soon as
-                // it is created.
-                SigSet::SIGSTOP
-            } else {
-                SigSet::empty()
-            },
             robust_list: None,
             child_tid_ptr: if !child_tidptr.is_null() {
                 Some(child_tidptr)
@@ -171,6 +176,8 @@ pub async fn sys_clone(
                 root,
                 creds: SpinLock::new(creds),
                 ptrace: SpinLock::new(ptrace),
+                sig_mask: new_sigmask,
+                pending_signals: initial_signals,
                 utime: AtomicUsize::new(0),
                 stime: AtomicUsize::new(0),
                 last_account: AtomicUsize::new(0),

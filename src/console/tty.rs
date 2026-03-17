@@ -6,7 +6,7 @@ use crate::{
         Pgid,
         signal::{InterruptResult, Interruptable},
     },
-    sched::current::current_task,
+    sched::current_work,
     sync::SpinLock,
 };
 use alloc::{boxed::Box, sync::Arc};
@@ -191,7 +191,7 @@ impl FileOps for Tty {
                     .meta
                     .lock_save_irq()
                     .fg_pg
-                    .unwrap_or_else(|| *current_task().process.pgid.lock_save_irq());
+                    .unwrap_or_else(|| *current_work().process.pgid.lock_save_irq());
 
                 copy_to_user(TUA::from_value(argp), fg_pg).await?;
 

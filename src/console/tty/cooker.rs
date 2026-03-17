@@ -7,7 +7,7 @@ use crate::kernel::rand::entropy_pool;
 use crate::process::thread_group::Pgid;
 use crate::process::thread_group::signal::SigId;
 use crate::process::thread_group::signal::kill::send_signal_to_pg;
-use crate::sched::current::current_task;
+use crate::sched::current_work;
 use crate::sync::{CondVar, SpinLock};
 use alloc::{sync::Arc, vec::Vec};
 use libkernel::error::Result;
@@ -80,7 +80,7 @@ impl TtyInputHandler for SpinLock<TtyInputCooker> {
                 let pgid: Pgid = {
                     let meta = this.meta.lock_save_irq();
                     meta.fg_pg
-                        .unwrap_or_else(|| *current_task().process.pgid.lock_save_irq())
+                        .unwrap_or_else(|| *current_work().process.pgid.lock_save_irq())
                 };
 
                 drop(this);

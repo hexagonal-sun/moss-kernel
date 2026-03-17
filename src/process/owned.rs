@@ -7,7 +7,7 @@ use super::{
     thread_group::{
         Tgid,
         builder::ThreadGroupBuilder,
-        signal::{SigId, SigSet, SignalActionState},
+        signal::{AtomicSigSet, SignalActionState},
     },
     threading::RobustListHead,
 };
@@ -32,8 +32,6 @@ use libkernel::{
 /// between other tasks and can therefore be access lock-free.
 pub struct OwnedTask {
     pub ctx: Context,
-    pub sig_mask: SigSet,
-    pub pending_signals: SigSet,
     pub priority: Option<i8>,
     pub robust_list: Option<TUA<RobustListHead>>,
     pub child_tid_ptr: Option<TUA<u32>>,
@@ -78,13 +76,13 @@ impl OwnedTask {
             utime: AtomicUsize::new(0),
             stime: AtomicUsize::new(0),
             last_account: AtomicUsize::new(0),
+            pending_signals: AtomicSigSet::empty(),
+            sig_mask: AtomicSigSet::empty(),
         };
 
         Self {
             priority: Some(i8::MIN),
             ctx: Context::from_user_ctx(user_ctx),
-            sig_mask: SigSet::empty(),
-            pending_signals: SigSet::empty(),
             robust_list: None,
             child_tid_ptr: None,
             t_shared: Arc::new(task),
@@ -108,11 +106,11 @@ impl OwnedTask {
             last_account: AtomicUsize::new(0),
             utime: AtomicUsize::new(0),
             stime: AtomicUsize::new(0),
+            pending_signals: AtomicSigSet::empty(),
+            sig_mask: AtomicSigSet::empty(),
         };
 
         Self {
-            pending_signals: SigSet::empty(),
-            sig_mask: SigSet::empty(),
             priority: None,
             ctx: Context::from_user_ctx(<ArchImpl as Arch>::new_user_context(
                 VA::null(),
@@ -132,32 +130,6 @@ impl OwnedTask {
 
     pub fn set_priority(&mut self, priority: i8) {
         self.priority = Some(priority);
-    }
-
-    pub fn raise_task_signal(&mut self, signal: SigId) {
-        self.pending_signals.insert(signal.into());
-    }
-
-    /// Take a pending signal from this task's pending signal queue, or the
-    /// process's pending signal queue, while repsecting the signal mask.
-    pub fn take_signal(&mut self) -> Option<SigId> {
-        self.pending_signals.take_signal(self.sig_mask).or_else(|| {
-            self.process
-                .pending_signals
-                .lock_save_irq()
-                .take_signal(self.sig_mask)
-        })
-    }
-
-    /// Check for a pending signal from this task's pending signal queue, or the
-    /// process's pending signal queue, while repsecting the signal mask.
-    pub fn peek_signal(&self) -> Option<SigId> {
-        self.pending_signals.peek_signal(self.sig_mask).or_else(|| {
-            self.process
-                .pending_signals
-                .lock_save_irq()
-                .peek_signal(self.sig_mask)
-        })
     }
 
     pub fn update_accounting(&self, curr_time: Option<Instant>) {

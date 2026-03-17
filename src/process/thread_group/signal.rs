@@ -1,10 +1,12 @@
-use crate::{memory::uaccess::UserCopyable, sched::current::current_task};
+use crate::{memory::uaccess::UserCopyable, process::Task, sched::current_work};
+use alloc::sync::Arc;
 use bitflags::bitflags;
 use core::{
     alloc::Layout,
     fmt::Display,
     mem::transmute,
     ops::{Index, IndexMut},
+    sync::atomic::{AtomicU64, Ordering},
     task::Poll,
 };
 use ksigaction::{KSignalAction, UserspaceSigAction};
@@ -99,6 +101,57 @@ impl SigSet {
     /// mask, `mask`. Returns the ID of the set signal.
     pub fn peek_signal(&self, mask: SigSet) -> Option<SigId> {
         self.difference(mask).iter().next().map(|x| x.into())
+    }
+}
+
+/// An atomically-accessible signal set.
+pub struct AtomicSigSet(AtomicU64);
+
+impl AtomicSigSet {
+    pub const fn new(set: SigSet) -> Self {
+        Self(AtomicU64::new(set.bits()))
+    }
+
+    pub const fn empty() -> Self {
+        Self(AtomicU64::new(0))
+    }
+
+    /// Atomically insert a signal into the set.
+    pub fn insert(&self, signal: SigSet) {
+        self.0.fetch_or(signal.bits(), Ordering::Relaxed);
+    }
+
+    /// Check for a pending signal while respecting the mask, without removing
+    /// it.
+    pub fn peek_signal(&self, mask: SigSet) -> Option<SigId> {
+        SigSet::from_bits_retain(self.0.load(Ordering::Relaxed)).peek_signal(mask)
+    }
+
+    /// Atomically remove and return a pending signal while respecting the mask.
+    pub fn take_signal(&self, mask: SigSet) -> Option<SigId> {
+        loop {
+            let cur = self.0.load(Ordering::Relaxed);
+            let set = SigSet::from_bits_retain(cur);
+            let sig = set.peek_signal(mask)?;
+            let new = set.difference(sig.into()).bits();
+            match self
+                .0
+                .compare_exchange(cur, new, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return Some(sig),
+                Err(_) => continue,
+            }
+        }
+    }
+
+    /// Load the current signal set as a plain `SigSet`.
+    pub fn load(&self) -> SigSet {
+        SigSet::from_bits_retain(self.0.load(Ordering::Relaxed))
+    }
+
+    /// Store a full signal set.
+    pub fn store(&self, set: SigSet) {
+        self.0.store(set.bits(), Ordering::Relaxed);
     }
 }
 
@@ -276,6 +329,7 @@ pub trait Interruptable<T, F: Future<Output = T>> {
 /// signal.
 pub struct InterruptableFut<T, F: Future<Output = T>> {
     sub_fut: F,
+    task: Arc<Task>,
 }
 
 impl<T, F: Future<Output = T>> Interruptable<T, F> for F {
@@ -283,7 +337,10 @@ impl<T, F: Future<Output = T>> Interruptable<T, F> for F {
         // TODO: Set the task state to a new variant `Interruptable`. This
         // allows the `deliver_signal` code to wake up a task to deliver a
         // signal to where it will be actioned.
-        InterruptableFut { sub_fut: self }
+        InterruptableFut {
+            sub_fut: self,
+            task: Arc::clone(&*current_work()),
+        }
     }
 }
 
@@ -295,8 +352,9 @@ impl<T, F: Future<Output = T>> Future for InterruptableFut<T, F> {
         cx: &mut core::task::Context<'_>,
     ) -> Poll<Self::Output> {
         // Try the underlying future first.
+        let this = unsafe { self.get_unchecked_mut() };
         let res = unsafe {
-            self.map_unchecked_mut(|f| &mut f.sub_fut)
+            core::pin::Pin::new_unchecked(&mut this.sub_fut)
                 .poll(cx)
                 .map(|x| InterruptResult::Uninterrupted(x))
         };
@@ -306,7 +364,7 @@ impl<T, F: Future<Output = T>> Future for InterruptableFut<T, F> {
         }
 
         // See if there's a pending signal which interrupts this future.
-        if current_task().peek_signal().is_some() {
+        if this.task.peek_signal().is_some() {
             Poll::Ready(InterruptResult::Interrupted)
         } else {
             Poll::Pending

@@ -2,7 +2,7 @@ use crate::fs::VFS;
 use crate::memory::uaccess::copy_to_user_slice;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::process::fd_table::Fd;
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::sync::Arc;
 use libkernel::error::{KernelError, Result};
 use libkernel::fs::Inode;
@@ -22,21 +22,31 @@ async fn listxattr(node: Arc<dyn Inode>, ua: UA, size: usize) -> Result<usize> {
     }
 }
 
-pub async fn sys_listxattr(path: TUA<core::ffi::c_char>, list: UA, size: usize) -> Result<usize> {
+pub async fn sys_listxattr(
+    ctx: &ProcessCtx,
+    path: TUA<core::ffi::c_char>,
+    list: UA,
+    size: usize,
+) -> Result<usize> {
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
     listxattr(node, list, size).await
 }
 
-pub async fn sys_llistxattr(path: TUA<core::ffi::c_char>, list: UA, size: usize) -> Result<usize> {
+pub async fn sys_llistxattr(
+    ctx: &ProcessCtx,
+    path: TUA<core::ffi::c_char>,
+    list: UA,
+    size: usize,
+) -> Result<usize> {
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let node = VFS
         .resolve_path_nofollow(path, VFS.root_inode(), &task)
@@ -44,9 +54,9 @@ pub async fn sys_llistxattr(path: TUA<core::ffi::c_char>, list: UA, size: usize)
     listxattr(node, list, size).await
 }
 
-pub async fn sys_flistxattr(fd: Fd, list: UA, size: usize) -> Result<usize> {
+pub async fn sys_flistxattr(ctx: &ProcessCtx, fd: Fd, list: UA, size: usize) -> Result<usize> {
     let node = {
-        let task = current_task_shared();
+        let task = ctx.shared().clone();
         let file = task
             .fd_table
             .lock_save_irq()

@@ -1,4 +1,4 @@
-use super::{current::current_task, current_work, current_work_waker, schedule};
+use super::{current_work, current_work_waker, schedule};
 use crate::{
     arch::{Arch, ArchImpl},
     process::{
@@ -9,6 +9,7 @@ use crate::{
             wait::ChildState,
         },
     },
+    sched::syscall_ctx::ProcessCtx,
 };
 use alloc::boxed::Box;
 use core::{ptr, sync::atomic::Ordering, task::Poll};
@@ -79,23 +80,26 @@ fn try_sleep_current() -> bool {
 /// This function will panic if it detects an attempt to process signals or
 /// kernel work for the special idle task, as this indicates a critical bug in
 /// the scheduler or task management.
-pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
+pub fn dispatch_userspace_task(frame: *mut UserCtx) {
     let mut state = State::PickNewTask;
+
+    // SAFETY: Access is exclusive since we're not polling any futures.
+    let mut ctx = unsafe { ProcessCtx::from_current() };
 
     'dispatch: loop {
         match state {
             State::PickNewTask => {
                 // Pick a new task, potentially context switching to a new task.
                 schedule();
+                // SAFETY: As above.
+                ctx = unsafe { ProcessCtx::from_current() };
                 state = State::ProcessKernelWork;
             }
             State::ProcessKernelWork => {
                 // First, let's handle signals. If there is any scheduled signal
                 // work (this has to be async to handle faults, etc).
-                let (signal_work, is_idle) = {
-                    let mut task = current_task();
-                    (task.ctx.take_signal_work(), task.is_idle_task())
-                };
+                let signal_work = ctx.task_mut().ctx.take_signal_work();
+                let is_idle = ctx.task().is_idle_task();
 
                 if let Some(mut signal_work) = signal_work {
                     if is_idle {
@@ -106,23 +110,23 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                         .as_mut()
                         .poll(&mut core::task::Context::from_waker(&current_work_waker()))
                     {
-                        Poll::Ready(Ok(state)) => {
+                        Poll::Ready(Ok(restored)) => {
                             // Signal actioning is complete. Return to userspace.
-                            unsafe { ptr::copy_nonoverlapping(&state as _, ctx, 1) };
+                            unsafe { ptr::copy_nonoverlapping(&restored as _, frame, 1) };
                             return;
                         }
                         Poll::Ready(Err(_)) => {
                             // If we errored, then we *cannot* progress the task.
                             // Delivery of the signal failed. Force the process to
                             // terminate.
-                            kernel_exit_with_signal(SigId::SIGSEGV, true);
+                            kernel_exit_with_signal(ctx.shared().clone(), SigId::SIGSEGV, true);
 
                             // Look for another task, this one is now dead.
                             state = State::PickNewTask;
                             continue;
                         }
                         Poll::Pending => {
-                            current_task().ctx.put_signal_work(signal_work);
+                            ctx.task_mut().ctx.put_signal_work(signal_work);
 
                             if try_sleep_current() {
                                 state = State::PickNewTask;
@@ -135,7 +139,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                 }
 
                 // Now let's handle any kernel work that's been spawned for this task.
-                let kern_work = current_task().ctx.take_kernel_work();
+                let kern_work = ctx.task_mut().ctx.take_kernel_work();
                 if let Some(mut kern_work) = kern_work {
                     if is_idle {
                         panic!("Idle process should never have kernel work");
@@ -164,7 +168,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                             continue;
                         }
                         Poll::Pending => {
-                            current_task().ctx.put_kernel_work(kern_work);
+                            ctx.task_mut().ctx.put_kernel_work(kern_work);
 
                             if try_sleep_current() {
                                 state = State::PickNewTask;
@@ -179,108 +183,111 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
                 // No kernel work. Check for any pending signals.
 
                 // We never handle signals for the idle task.
-                if current_task().is_idle_task() {
+                if ctx.task().is_idle_task() {
                     state = State::ReturnToUserspace;
                     continue;
                 }
 
-                {
-                    let mut task = current_task();
-
-                    while let Some(signal) = task.take_signal() {
-                        let mut ptrace = task.ptrace.lock_save_irq();
-                        if ptrace.trace_signal(signal, task.ctx.user()) {
-                            ptrace.set_waker(current_work_waker());
-                            ptrace.notify_tracer_of_trap(&task.process);
-                            drop(ptrace);
-                            drop(task);
-
-                            if current_work().state.try_pending_stop() {
-                                state = State::PickNewTask;
-                            } else {
-                                // Woken concurrently (tracer already resumed us).
-                                state = State::ProcessKernelWork;
-                            }
-                            continue 'dispatch;
-                        }
+                while let Some(signal) = ctx.task().take_signal() {
+                    let mut ptrace = ctx.task().ptrace.lock_save_irq();
+                    if ptrace.trace_signal(signal, ctx.task().ctx.user()) {
+                        ptrace.set_waker(current_work_waker());
+                        ptrace.notify_tracer_of_trap(&ctx.task().process);
                         drop(ptrace);
 
-                        let sigaction = task.process.signals.lock_save_irq().action_signal(signal);
+                        if current_work().state.try_pending_stop() {
+                            state = State::PickNewTask;
+                        } else {
+                            // Woken concurrently (tracer already resumed us).
+                            state = State::ProcessKernelWork;
+                        }
+                        continue 'dispatch;
+                    }
+                    drop(ptrace);
 
-                        match sigaction {
-                            // Signal ignored, look for another.
-                            None => continue,
-                            Some(KSignalAction::Term | KSignalAction::Core) => {
-                                // Terminate the process, and find a new task.
-                                drop(task);
-                                kernel_exit_with_signal(signal, false);
+                    let sigaction = ctx
+                        .task()
+                        .process
+                        .signals
+                        .lock_save_irq()
+                        .action_signal(signal);
 
-                                state = State::PickNewTask;
-                                continue 'dispatch;
+                    match sigaction {
+                        // Signal ignored, look for another.
+                        None => continue,
+                        Some(KSignalAction::Term | KSignalAction::Core) => {
+                            // Terminate the process, and find a new task.
+                            kernel_exit_with_signal(ctx.shared().clone(), signal, false);
+
+                            state = State::PickNewTask;
+                            continue 'dispatch;
+                        }
+                        Some(KSignalAction::Stop) => {
+                            // Default action: stop (suspend) the entire process.
+                            let process = &ctx.task().process;
+
+                            // Notify the parent that we have stopped (SIGCHLD).
+                            if let Some(parent) = process
+                                .parent
+                                .lock_save_irq()
+                                .as_ref()
+                                .and_then(|p| p.upgrade())
+                            {
+                                parent
+                                    .child_notifiers
+                                    .child_update(process.tgid, ChildState::Stop { signal });
+
+                                parent.deliver_signal(SigId::SIGCHLD);
                             }
-                            Some(KSignalAction::Stop) => {
-                                // Default action: stop (suspend) the entire process.
-                                let process = &task.process;
 
-                                // Notify the parent that we have stopped (SIGCHLD).
-                                if let Some(parent) = process
-                                    .parent
-                                    .lock_save_irq()
-                                    .as_ref()
-                                    .and_then(|p| p.upgrade())
-                                {
-                                    parent
-                                        .child_notifiers
-                                        .child_update(process.tgid, ChildState::Stop { signal });
-
-                                    parent.deliver_signal(SigId::SIGCHLD);
+                            for thr_weak in process.tasks.lock_save_irq().values() {
+                                if let Some(thr) = thr_weak.upgrade() {
+                                    thr.state.try_pending_stop();
                                 }
-
-                                for thr_weak in process.tasks.lock_save_irq().values() {
-                                    if let Some(thr) = thr_weak.upgrade() {
-                                        thr.state.try_pending_stop();
-                                    }
-                                }
-
-                                state = State::PickNewTask;
-                                continue 'dispatch;
                             }
-                            Some(KSignalAction::Continue) => {
-                                let process = &task.process;
 
-                                // Wake up all stopped/sleeping threads in the process.
-                                for thr_weak in process.tasks.lock_save_irq().values() {
-                                    if let Some(thr) = thr_weak.upgrade() {
-                                        crate::sched::waker::create_waker(thr).wake();
-                                    }
+                            state = State::PickNewTask;
+                            continue 'dispatch;
+                        }
+                        Some(KSignalAction::Continue) => {
+                            let process = &ctx.task().process;
+
+                            // Wake up all stopped/sleeping threads in the process.
+                            for thr_weak in process.tasks.lock_save_irq().values() {
+                                if let Some(thr) = thr_weak.upgrade() {
+                                    crate::sched::waker::create_waker(thr).wake();
                                 }
-
-                                // Notify the parent that we have continued (SIGCHLD).
-                                if let Some(parent) = process
-                                    .parent
-                                    .lock_save_irq()
-                                    .as_ref()
-                                    .and_then(|p| p.upgrade())
-                                {
-                                    parent
-                                        .child_notifiers
-                                        .child_update(process.tgid, ChildState::Continue);
-
-                                    parent.deliver_signal(SigId::SIGCHLD);
-                                }
-
-                                // Re-process kernel work for this task (there may be more to do).
-                                state = State::ProcessKernelWork;
-                                continue 'dispatch;
                             }
-                            Some(KSignalAction::Userspace(id, action)) => {
-                                let fut = ArchImpl::do_signal(id, action);
 
-                                task.ctx.put_signal_work(Box::pin(fut));
+                            // Notify the parent that we have continued (SIGCHLD).
+                            if let Some(parent) = process
+                                .parent
+                                .lock_save_irq()
+                                .as_ref()
+                                .and_then(|p| p.upgrade())
+                            {
+                                parent
+                                    .child_notifiers
+                                    .child_update(process.tgid, ChildState::Continue);
 
-                                state = State::ProcessKernelWork;
-                                continue 'dispatch;
+                                parent.deliver_signal(SigId::SIGCHLD);
                             }
+
+                            // Re-process kernel work for this task (there may be more to do).
+                            state = State::ProcessKernelWork;
+                            continue 'dispatch;
+                        }
+                        Some(KSignalAction::Userspace(id, action)) => {
+                            // SAFETY: Signal work will be polled indepdently of
+                            // kernel work. Therefore there will be no
+                            // concurrent accesses of the ctx.
+                            let ctx2 = unsafe { ctx.clone() };
+                            let fut = ArchImpl::do_signal(ctx2, id, action);
+
+                            ctx.task_mut().ctx.put_signal_work(Box::pin(fut));
+
+                            state = State::ProcessKernelWork;
+                            continue 'dispatch;
                         }
                     }
                 }
@@ -290,7 +297,7 @@ pub fn dispatch_userspace_task(ctx: *mut UserCtx) {
 
             State::ReturnToUserspace => {
                 // Real user-space return now.
-                current_task().ctx.restore_user_ctx(ctx);
+                ctx.task().ctx.restore_user_ctx(frame);
                 return;
             }
         }

@@ -1,7 +1,7 @@
 use crate::{
     fs::{DummyInode, VFS},
     process::{Task, fd_table::Fd},
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 use alloc::sync::Arc;
 use libkernel::{
@@ -37,12 +37,17 @@ bitflags::bitflags! {
 
 /// Given the paraters to one of the sys_{action}at syscalls, resolve the
 /// arguments to a start node to which path should be applied.
-async fn resolve_at_start_node(dirfd: Fd, path: &Path, flags: AtFlags) -> Result<Arc<dyn Inode>> {
+async fn resolve_at_start_node(
+    ctx: &ProcessCtx,
+    dirfd: Fd,
+    path: &Path,
+    flags: AtFlags,
+) -> Result<Arc<dyn Inode>> {
     if flags.contains(AtFlags::AT_EMPTY_PATH) && path.as_str().is_empty() {
         // just return a dummy, since it'll operate on dirfd anyways
         return Ok(Arc::new(DummyInode {}));
     }
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let start_node: Arc<dyn Inode> = if path.is_absolute() {
         // Absolute path ignores dirfd.

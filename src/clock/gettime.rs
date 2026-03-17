@@ -7,15 +7,19 @@ use libkernel::{
 
 use super::{ClockId, realtime::date, timespec::TimeSpec};
 use crate::drivers::timer::{Instant, now};
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use crate::{drivers::timer::uptime, memory::uaccess::copy_to_user};
 
-pub async fn sys_clock_gettime(clockid: i32, time_spec: TUA<TimeSpec>) -> Result<usize> {
+pub async fn sys_clock_gettime(
+    ctx: &ProcessCtx,
+    clockid: i32,
+    time_spec: TUA<TimeSpec>,
+) -> Result<usize> {
     let time = match ClockId::try_from(clockid).map_err(|_| KernelError::InvalidValue)? {
         ClockId::Realtime => date(),
         ClockId::Monotonic => uptime(),
         ClockId::ProcessCpuTimeId => {
-            let task = current_task_shared();
+            let task = ctx.shared();
             let total_time = task.process.stime.load(Ordering::Relaxed) as u64
                 + task.process.utime.load(Ordering::Relaxed) as u64;
             let last_update = Instant::from_user_normalized(
@@ -26,7 +30,7 @@ pub async fn sys_clock_gettime(clockid: i32, time_spec: TUA<TimeSpec>) -> Result
             Duration::from(Instant::from_user_normalized(total_time)) + delta
         }
         ClockId::ThreadCpuTimeId => {
-            let task = current_task_shared();
+            let task = ctx.shared();
             let total_time = task.stime.load(Ordering::Relaxed) as u64
                 + task.utime.load(Ordering::Relaxed) as u64;
             let last_update =

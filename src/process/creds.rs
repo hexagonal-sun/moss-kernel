@@ -3,7 +3,7 @@ use core::convert::Infallible;
 use crate::process::thread_group::Sid;
 use crate::{
     memory::uaccess::{UserCopyable, copy_to_user},
-    sched::current::current_task,
+    sched::syscall_ctx::ProcessCtx,
 };
 use libkernel::{
     error::Result,
@@ -70,48 +70,53 @@ impl Credentials {
     }
 }
 
-pub fn sys_getuid() -> core::result::Result<usize, Infallible> {
-    let uid: u32 = current_task().creds.lock_save_irq().uid().into();
+pub fn sys_getuid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
+    let uid: u32 = ctx.shared().creds.lock_save_irq().uid().into();
 
     Ok(uid as _)
 }
 
-pub fn sys_geteuid() -> core::result::Result<usize, Infallible> {
-    let uid: u32 = current_task().creds.lock_save_irq().euid().into();
+pub fn sys_geteuid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
+    let uid: u32 = ctx.shared().creds.lock_save_irq().euid().into();
 
     Ok(uid as _)
 }
 
-pub fn sys_getgid() -> core::result::Result<usize, Infallible> {
-    let gid: u32 = current_task().creds.lock_save_irq().gid().into();
+pub fn sys_getgid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
+    let gid: u32 = ctx.shared().creds.lock_save_irq().gid().into();
 
     Ok(gid as _)
 }
 
-pub fn sys_getegid() -> core::result::Result<usize, Infallible> {
-    let gid: u32 = current_task().creds.lock_save_irq().egid().into();
+pub fn sys_getegid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
+    let gid: u32 = ctx.shared().creds.lock_save_irq().egid().into();
 
     Ok(gid as _)
 }
 
-pub fn sys_setfsuid(_new_id: usize) -> core::result::Result<usize, Infallible> {
+pub fn sys_setfsuid(ctx: &ProcessCtx, _new_id: usize) -> core::result::Result<usize, Infallible> {
     // Return the uid.  This syscall is deprecated.
-    sys_getuid()
+    sys_getuid(ctx)
 }
 
-pub fn sys_setfsgid(_new_id: usize) -> core::result::Result<usize, Infallible> {
+pub fn sys_setfsgid(ctx: &ProcessCtx, _new_id: usize) -> core::result::Result<usize, Infallible> {
     // Return the gid. This syscall is deprecated.
-    sys_getgid()
+    sys_getgid(ctx)
 }
 
-pub fn sys_gettid() -> core::result::Result<usize, Infallible> {
-    let tid: u32 = current_task().tid.0;
+pub fn sys_gettid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
+    let tid: u32 = ctx.shared().tid.0;
 
     Ok(tid as _)
 }
 
-pub async fn sys_getresuid(ruid: TUA<Uid>, euid: TUA<Uid>, suid: TUA<Uid>) -> Result<usize> {
-    let creds = current_task().creds.lock_save_irq().clone();
+pub async fn sys_getresuid(
+    ctx: &ProcessCtx,
+    ruid: TUA<Uid>,
+    euid: TUA<Uid>,
+    suid: TUA<Uid>,
+) -> Result<usize> {
+    let creds = ctx.shared().creds.lock_save_irq().clone();
 
     copy_to_user(ruid, creds.uid).await?;
     copy_to_user(euid, creds.euid).await?;
@@ -120,8 +125,13 @@ pub async fn sys_getresuid(ruid: TUA<Uid>, euid: TUA<Uid>, suid: TUA<Uid>) -> Re
     Ok(0)
 }
 
-pub async fn sys_getresgid(rgid: TUA<Gid>, egid: TUA<Gid>, sgid: TUA<Gid>) -> Result<usize> {
-    let creds = current_task().creds.lock_save_irq().clone();
+pub async fn sys_getresgid(
+    ctx: &ProcessCtx,
+    rgid: TUA<Gid>,
+    egid: TUA<Gid>,
+    sgid: TUA<Gid>,
+) -> Result<usize> {
+    let creds = ctx.shared().creds.lock_save_irq().clone();
 
     copy_to_user(rgid, creds.gid).await?;
     copy_to_user(egid, creds.egid).await?;
@@ -130,14 +140,14 @@ pub async fn sys_getresgid(rgid: TUA<Gid>, egid: TUA<Gid>, sgid: TUA<Gid>) -> Re
     Ok(0)
 }
 
-pub async fn sys_getsid() -> Result<usize> {
-    let sid: u32 = current_task().process.sid.lock_save_irq().value();
+pub async fn sys_getsid(ctx: &ProcessCtx) -> Result<usize> {
+    let sid: u32 = ctx.shared().process.sid.lock_save_irq().value();
 
     Ok(sid as _)
 }
 
-pub async fn sys_setsid() -> Result<usize> {
-    let process = current_task().process.clone();
+pub async fn sys_setsid(ctx: &ProcessCtx) -> Result<usize> {
+    let process = ctx.shared().process.clone();
 
     let new_sid = process.tgid.value();
     *process.sid.lock_save_irq() = Sid(new_sid);

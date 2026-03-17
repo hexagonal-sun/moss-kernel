@@ -2,7 +2,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::memory::uaccess::copy_to_user_slice;
-use crate::sched::current::current_task;
+use crate::sched::syscall_ctx::ProcessCtx;
 use libkernel::memory::region::VirtMemoryRegion;
 use libkernel::{
     UserAddressSpace,
@@ -11,7 +11,7 @@ use libkernel::{
     memory::address::{UA, VA},
 };
 
-pub async fn sys_mincore(start: u64, len: usize, vec: UA) -> Result<usize> {
+pub async fn sys_mincore(ctx: &ProcessCtx, start: u64, len: usize, vec: UA) -> Result<usize> {
     // addr must be a multiple of the system page size
     // len must be > 0
     let start_va = VA::from_value(start as usize);
@@ -35,8 +35,7 @@ pub async fn sys_mincore(start: u64, len: usize, vec: UA) -> Result<usize> {
     let mut buf: Vec<u8> = vec![0; pages];
 
     {
-        let task = current_task();
-        let mut vm_guard = task.vm.lock_save_irq();
+        let mut vm_guard = ctx.shared().vm.lock_save_irq();
         let mm = vm_guard.mm_mut();
 
         // Validate the entire region is covered by VMAs

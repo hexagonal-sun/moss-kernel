@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{process::fd_table::Fd, sched::current::current_task};
+use crate::{process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
 use alloc::string::{String, ToString};
 use libkernel::{
     error::{KernelError, Result},
@@ -46,6 +46,7 @@ fn prot_to_perms(prot: u64) -> VMAPermissions {
 /// A `Result` containing the starting address of the new mapping on success,
 /// or a `KernelError` on failure.
 pub async fn sys_mmap(
+    ctx: &ProcessCtx,
     addr: u64,
     len: u64,
     prot: u64,
@@ -90,7 +91,8 @@ pub async fn sys_mmap(
         (VMAreaKind::Anon, String::new())
     } else {
         // File-backed mapping: require a valid fd and use the provided offset.
-        let fd = current_task()
+        let fd = ctx
+            .shared()
             .fd_table
             .lock_save_irq()
             .get(fd)
@@ -125,7 +127,7 @@ pub async fn sys_mmap(
     };
 
     // Lock the task and call the core memory manager to perform the mapping.
-    let new_mapping_addr = current_task().vm.lock_save_irq().mm_mut().mmap(
+    let new_mapping_addr = ctx.shared().vm.lock_save_irq().mm_mut().mmap(
         address_request,
         requested_len,
         permissions,
@@ -136,10 +138,10 @@ pub async fn sys_mmap(
     Ok(new_mapping_addr.value())
 }
 
-pub async fn sys_munmap(addr: VA, len: usize) -> Result<usize> {
+pub async fn sys_munmap(ctx: &ProcessCtx, addr: VA, len: usize) -> Result<usize> {
     let region = VirtMemoryRegion::new(addr, len);
 
-    let pages = current_task().vm.lock_save_irq().mm_mut().munmap(region)?;
+    let pages = ctx.shared().vm.lock_save_irq().mm_mut().munmap(region)?;
 
     // Free any physical frames that were unmapped.
     if !pages.is_empty() {
@@ -159,11 +161,11 @@ pub async fn sys_munmap(addr: VA, len: usize) -> Result<usize> {
     Ok(0)
 }
 
-pub fn sys_mprotect(addr: VA, len: usize, prot: u64) -> Result<usize> {
+pub fn sys_mprotect(ctx: &ProcessCtx, addr: VA, len: usize, prot: u64) -> Result<usize> {
     let perms = prot_to_perms(prot);
     let region = VirtMemoryRegion::new(addr, len);
 
-    current_task()
+    ctx.shared()
         .vm
         .lock_save_irq()
         .mm_mut()

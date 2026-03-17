@@ -10,10 +10,11 @@ use crate::{
         memory::uaccess::UAccessResult,
     },
     memory::fault::{FaultResolution, handle_demand_fault, handle_protection_fault},
-    process::thread_group::signal::SigId,
-    sched::{current::current_task, spawn_kernel_work},
+    process::{ProcVM, thread_group::signal::SigId},
+    sched::{current_work, spawn_kernel_work, syscall_ctx::ProcessCtx},
+    sync::SpinLock,
 };
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc};
 use libkernel::{
     UserAddressSpace,
     error::Result,
@@ -37,20 +38,22 @@ impl FixupTable {
     }
 }
 
-fn run_mem_fault_handler(exception: Exception, info: AbortIss) -> Result<FaultResolution> {
+fn run_mem_fault_handler(
+    proc_vm: Arc<SpinLock<ProcVM>>,
+    exception: Exception,
+    info: AbortIss,
+) -> Result<FaultResolution> {
     let access_kind = determine_access_kind(exception, info);
 
     if let Some(far) = info.far {
         let fault_addr = VA::from_value(far as usize);
 
-        let task = current_task();
-
         match info.ifsc.category() {
             IfscCategory::TranslationFault => {
-                handle_demand_fault(task.vm.clone(), fault_addr, access_kind)
+                handle_demand_fault(proc_vm.clone(), fault_addr, access_kind)
             }
             IfscCategory::PermissionFault => {
-                let mut vm = task.vm.lock_save_irq();
+                let mut vm = proc_vm.lock_save_irq();
 
                 let pg_info = vm
                     .mm_mut()
@@ -68,7 +71,7 @@ fn run_mem_fault_handler(exception: Exception, info: AbortIss) -> Result<FaultRe
 }
 
 fn handle_uacess_abort(exception: Exception, info: AbortIss, state: &mut ExceptionState) {
-    match run_mem_fault_handler(exception, info) {
+    match run_mem_fault_handler(current_work().vm.clone(), exception, info) {
         // We mapped in a page, the uacess handler can proceed.
         Ok(FaultResolution::Resolved) => (),
         // If the fault couldn't be resolved, signal to the uacess fixup that
@@ -117,16 +120,16 @@ pub fn handle_kernel_mem_fault(exception: Exception, info: AbortIss, state: &mut
     }
 }
 
-pub fn handle_mem_fault(exception: Exception, info: AbortIss) {
-    match run_mem_fault_handler(exception, info) {
+pub fn handle_mem_fault(ctx: &mut ProcessCtx, exception: Exception, info: AbortIss) {
+    match run_mem_fault_handler(ctx.shared().vm.clone(), exception, info) {
         Ok(FaultResolution::Resolved) => {}
         Ok(FaultResolution::Denied) => {
-            current_task().process.deliver_signal(SigId::SIGSEGV);
+            ctx.task().process.deliver_signal(SigId::SIGSEGV);
         }
         // If the page fault involves sleepy kernel work, we can
         // spawn that work on the process, since there is no other
         // kernel work happening.
-        Ok(FaultResolution::Deferred(fut)) => spawn_kernel_work(async {
+        Ok(FaultResolution::Deferred(fut)) => spawn_kernel_work(ctx, async {
             if Box::into_pin(fut).await.is_err() {
                 panic!("Page fault defered error, SIGBUS on process");
             }

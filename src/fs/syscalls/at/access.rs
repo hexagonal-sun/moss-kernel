@@ -1,7 +1,7 @@
 use super::{AtFlags, resolve_at_start_node};
 use crate::{
     fs::syscalls::at::resolve_path_flags, memory::uaccess::cstr::UserCStr, process::fd_table::Fd,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 use core::ffi::c_char;
 use libkernel::{
@@ -10,18 +10,29 @@ use libkernel::{
     memory::address::TUA,
 };
 
-pub async fn sys_faccessat(dirfd: Fd, path: TUA<c_char>, mode: i32) -> Result<usize> {
-    sys_faccessat2(dirfd, path, mode, 0).await
+pub async fn sys_faccessat(
+    ctx: &ProcessCtx,
+    dirfd: Fd,
+    path: TUA<c_char>,
+    mode: i32,
+) -> Result<usize> {
+    sys_faccessat2(ctx, dirfd, path, mode, 0).await
 }
 
-pub async fn sys_faccessat2(dirfd: Fd, path: TUA<c_char>, mode: i32, flags: i32) -> Result<usize> {
+pub async fn sys_faccessat2(
+    ctx: &ProcessCtx,
+    dirfd: Fd,
+    path: TUA<c_char>,
+    mode: i32,
+    flags: i32,
+) -> Result<usize> {
     let mut buf = [0; 1024];
 
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
     let access_mode = AccessMode::from_bits_retain(mode);
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let at_flags = AtFlags::from_bits_retain(flags);
-    let start_node = resolve_at_start_node(dirfd, path, at_flags).await?;
+    let start_node = resolve_at_start_node(ctx, dirfd, path, at_flags).await?;
     let node = resolve_path_flags(dirfd, path, start_node, &task, at_flags).await?;
 
     // If mode is F_OK (value 0), the check is for the file's existence.

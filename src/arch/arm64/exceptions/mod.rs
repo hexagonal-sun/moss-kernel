@@ -7,7 +7,7 @@ use crate::{
     interrupts::get_interrupt_root,
     ksym_pa,
     memory::PAGE_ALLOC,
-    sched::{current::current_task, uspc_ret::dispatch_userspace_task},
+    sched::{syscall_ctx::ProcessCtx, uspc_ret::dispatch_userspace_task},
     spawn_kernel_work,
 };
 use aarch64_cpu::registers::{CPACR_EL1, ReadWriteable, VBAR_EL1};
@@ -148,7 +148,11 @@ extern "C" fn el1_serror_spx(state: &mut ExceptionState) {
 
 #[unsafe(no_mangle)]
 extern "C" fn el0_sync(state_ptr: *mut ExceptionState) -> *const ExceptionState {
-    current_task().ctx.save_user_ctx(state_ptr);
+    // SAFETY: Since we've just entered form EL0, there *cannot* be another
+    // syscall currently running for this task, therefore exclusive access to
+    // `OwnedTask` is guaranteed.
+    let mut ctx = unsafe { ProcessCtx::from_current() };
+    ctx.task_mut().ctx.save_user_ctx(state_ptr);
 
     let state = unsafe { state_ptr.as_ref().unwrap() };
 
@@ -158,10 +162,14 @@ extern "C" fn el0_sync(state_ptr: *mut ExceptionState) -> *const ExceptionState 
 
     match exception {
         Exception::InstrAbortLowerEL(info) | Exception::DataAbortLowerEL(info) => {
-            handle_mem_fault(exception, info);
+            handle_mem_fault(&mut ctx, exception, info);
         }
         Exception::SVC64(_) => {
-            spawn_kernel_work(handle_syscall());
+            // SAFETY: The other `ctx` won't be poll'd until
+            // `dispatch_userspace_task` at which point this variable will have
+            // gone out of scope.
+            let mut ctx2 = unsafe { ctx.clone() };
+            spawn_kernel_work(&mut ctx2, handle_syscall(ctx));
         }
         Exception::TrappedFP(_) => {
             CPACR_EL1.modify(CPACR_EL1::FPEN::TrapNothing);
@@ -178,7 +186,11 @@ extern "C" fn el0_sync(state_ptr: *mut ExceptionState) -> *const ExceptionState 
 
 #[unsafe(no_mangle)]
 extern "C" fn el0_irq(state: *mut ExceptionState) -> *mut ExceptionState {
-    current_task().ctx.save_user_ctx(state);
+    // SAFETY: Since we've just entered form EL0, there *cannot* be another
+    // syscall currently running for this task, therefore exclusive access to
+    // `OwnedTask` is guaranteed.
+    let mut ctx = unsafe { ProcessCtx::from_current() };
+    ctx.task_mut().ctx.save_user_ctx(state);
 
     match get_interrupt_root() {
         Some(ref im) => im.handle_interrupt(),

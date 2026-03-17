@@ -5,7 +5,7 @@ use crate::{
     process::thread_group::signal::{
         SigId, ksigaction::UserspaceSigAction, sigaction::SigActionFlags,
     },
-    sched::current::current_task,
+    sched::syscall_ctx::ProcessCtx,
 };
 use libkernel::{
     error::Result,
@@ -26,8 +26,12 @@ struct RtSigFrame {
 // information regarding this task's context and is made up of PoDs.
 unsafe impl UserCopyable for RtSigFrame {}
 
-pub async fn do_signal(id: SigId, sa: UserspaceSigAction) -> Result<ExceptionState> {
-    let task = current_task();
+pub async fn do_signal(
+    ctx: ProcessCtx,
+    id: SigId,
+    sa: UserspaceSigAction,
+) -> Result<ExceptionState> {
+    let task = ctx.task();
     let mut signal = task.process.signals.lock_save_irq();
 
     let saved_state = *task.ctx.user();
@@ -57,7 +61,6 @@ pub async fn do_signal(id: SigId, sa: UserspaceSigAction) -> Result<ExceptionSta
     };
 
     drop(signal);
-    drop(task);
 
     copy_to_user(addr, frame).await?;
 
@@ -69,8 +72,8 @@ pub async fn do_signal(id: SigId, sa: UserspaceSigAction) -> Result<ExceptionSta
     Ok(new_state)
 }
 
-pub async fn do_signal_return() -> Result<ExceptionState> {
-    let task = current_task();
+pub async fn do_signal_return(ctx: ProcessCtx) -> Result<ExceptionState> {
+    let task = ctx.task();
 
     let sig_frame_addr: TUA<RtSigFrame> = TUA::from_value(task.ctx.user().sp_el0 as _);
 

@@ -6,7 +6,7 @@ use crate::{
     fs::open_file::OpenFile,
     kernel_driver,
     process::fd_table::Fd,
-    sched::current::current_task,
+    sched::current_work,
 };
 use alloc::{string::ToString, sync::Arc};
 use libkernel::{
@@ -21,11 +21,9 @@ struct TtyDev {}
 
 impl OpenableDevice for TtyDev {
     fn open(&self, _args: OpenFlags) -> Result<Arc<OpenFile>> {
-        let task = current_task();
-
         // TODO: This should really open the controlling terminal of the
         // session.
-        Ok(task
+        Ok(current_work()
             .fd_table
             .lock_save_irq()
             .get(Fd(0))

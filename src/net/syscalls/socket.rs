@@ -3,7 +3,7 @@ use crate::fs::open_file::OpenFile;
 use crate::net::tcp::TcpSocket;
 use crate::net::unix::UnixSocket;
 use crate::net::{AF_INET, AF_UNIX, IPPROTO_TCP, SOCK_DGRAM, SOCK_SEQPACKET, SOCK_STREAM};
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use libkernel::error::KernelError;
@@ -12,7 +12,12 @@ use libkernel::fs::OpenFlags;
 pub const CLOSE_ON_EXEC: i32 = 0x80000;
 pub const NONBLOCK: i32 = 0x800;
 
-pub async fn sys_socket(domain: i32, type_: i32, protocol: i32) -> libkernel::error::Result<usize> {
+pub async fn sys_socket(
+    ctx: &ProcessCtx,
+    domain: i32,
+    type_: i32,
+    protocol: i32,
+) -> libkernel::error::Result<usize> {
     let _close_on_exec = (type_ & CLOSE_ON_EXEC) != 0;
     let _nonblock = (type_ & NONBLOCK) != 0;
     // Mask out flags
@@ -28,7 +33,8 @@ pub async fn sys_socket(domain: i32, type_: i32, protocol: i32) -> libkernel::er
     };
     // TODO: Correct flags
     let open_file = OpenFile::new(new_socket, OpenFlags::empty());
-    let fd = current_task_shared()
+    let fd = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .insert(Arc::new(open_file))?;

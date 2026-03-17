@@ -3,17 +3,17 @@ use crate::{
         Tid,
         thread_group::{Pgid, Tgid, ThreadGroup, pid::PidT},
     },
-    sched::current::current_task,
+    sched::syscall_ctx::ProcessCtx,
 };
 
 use super::{SigId, uaccess::UserSigId};
 use crate::process::thread_group::TG_LIST;
 use libkernel::error::{KernelError, Result};
 
-pub fn sys_kill(pid: PidT, signal: UserSigId) -> Result<usize> {
+pub fn sys_kill(ctx: &ProcessCtx, pid: PidT, signal: UserSigId) -> Result<usize> {
     let signal: SigId = signal.try_into()?;
 
-    let current_task = current_task();
+    let current_task = ctx.shared();
     // Kill ourselves
     if pid == current_task.process.tgid.value() as PidT {
         current_task.process.deliver_signal(signal);
@@ -63,9 +63,9 @@ pub fn sys_kill(pid: PidT, signal: UserSigId) -> Result<usize> {
     Ok(0)
 }
 
-pub fn sys_tkill(tid: PidT, signal: UserSigId) -> Result<usize> {
+pub fn sys_tkill(ctx: &ProcessCtx, tid: PidT, signal: UserSigId) -> Result<usize> {
     let target_tid = Tid(tid as _);
-    let current_task = current_task();
+    let current_task = ctx.shared();
 
     let signal: SigId = signal.try_into()?;
 

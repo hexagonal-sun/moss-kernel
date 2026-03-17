@@ -1,4 +1,4 @@
-use crate::{ArchImpl, arch::Arch, sched::current::current_task_shared};
+use crate::{ArchImpl, arch::Arch, sched::syscall_ctx::ProcessCtx};
 use core::sync::atomic::AtomicBool;
 use libkernel::{
     error::{KernelError, Result},
@@ -7,8 +7,14 @@ use libkernel::{
 
 pub static CAD_ENABLED: AtomicBool = AtomicBool::new(false);
 
-pub async fn sys_reboot(magic: u32, magic2: u32, op: u32, _arg: usize) -> Result<usize> {
-    current_task_shared()
+pub async fn sys_reboot(
+    ctx: &ProcessCtx,
+    magic: u32,
+    magic2: u32,
+    op: u32,
+    _arg: usize,
+) -> Result<usize> {
+    ctx.shared()
         .creds
         .lock_save_irq()
         .caps()

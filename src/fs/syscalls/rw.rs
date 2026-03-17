@@ -1,11 +1,12 @@
-use crate::{process::fd_table::Fd, sched::current::current_task};
+use crate::{process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
 use libkernel::{
     error::{KernelError, Result},
     memory::address::UA,
 };
 
-pub async fn sys_write(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
-    let file = current_task()
+pub async fn sys_write(ctx: &ProcessCtx, fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)
@@ -16,8 +17,9 @@ pub async fn sys_write(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
     ops.write(ctx, user_buf, count).await
 }
 
-pub async fn sys_read(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
-    let file = current_task()
+pub async fn sys_read(ctx: &ProcessCtx, fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)
@@ -28,8 +30,15 @@ pub async fn sys_read(fd: Fd, user_buf: UA, count: usize) -> Result<usize> {
     ops.read(ctx, user_buf, count).await
 }
 
-pub async fn sys_pwrite64(fd: Fd, user_buf: UA, count: usize, offset: u64) -> Result<usize> {
-    let file = current_task()
+pub async fn sys_pwrite64(
+    ctx: &ProcessCtx,
+    fd: Fd,
+    user_buf: UA,
+    count: usize,
+    offset: u64,
+) -> Result<usize> {
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)
@@ -40,8 +49,15 @@ pub async fn sys_pwrite64(fd: Fd, user_buf: UA, count: usize, offset: u64) -> Re
     ops.writeat(user_buf, count, offset).await
 }
 
-pub async fn sys_pread64(fd: Fd, user_buf: UA, count: usize, offset: u64) -> Result<usize> {
-    let file = current_task()
+pub async fn sys_pread64(
+    ctx: &ProcessCtx,
+    fd: Fd,
+    user_buf: UA,
+    count: usize,
+    offset: u64,
+) -> Result<usize> {
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)

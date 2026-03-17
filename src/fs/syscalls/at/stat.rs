@@ -2,7 +2,7 @@ use crate::{
     fs::syscalls::at::{resolve_at_start_node, resolve_path_flags},
     memory::uaccess::{UserCopyable, copy_to_user, cstr::UserCStr},
     process::fd_table::Fd,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 use core::ffi::c_char;
 use libkernel::{
@@ -68,6 +68,7 @@ impl From<FileAttr> for Stat {
 }
 
 pub async fn sys_newfstatat(
+    ctx: &ProcessCtx,
     dirfd: Fd,
     path: TUA<c_char>,
     statbuf: TUA<Stat>,
@@ -75,11 +76,11 @@ pub async fn sys_newfstatat(
 ) -> Result<usize> {
     let mut buf = [0; 1024];
 
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
     let flags = AtFlags::from_bits_truncate(flags);
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
 
-    let start_node = match resolve_at_start_node(dirfd, path, flags).await {
+    let start_node = match resolve_at_start_node(ctx, dirfd, path, flags).await {
         Ok(node) => node,
         Err(err) if err != KernelError::NotSupported => panic!("{err}"),
         Err(err) => return Err(err),

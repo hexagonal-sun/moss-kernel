@@ -5,9 +5,10 @@ use libkernel::memory::address::TUA;
 use crate::kernel::kpipe::KPipe;
 use crate::memory::uaccess::{copy_from_user, copy_to_user};
 use crate::process::fd_table::Fd;
-use crate::sched::current::current_task;
+use crate::sched::syscall_ctx::ProcessCtx;
 
 pub async fn sys_copy_file_range(
+    ctx: &ProcessCtx,
     fd_in: Fd,
     off_in: TUA<i32>,
     fd_out: Fd,
@@ -44,7 +45,7 @@ pub async fn sys_copy_file_range(
     };
 
     let (reader, writer) = {
-        let task = current_task();
+        let task = ctx.shared();
         let fds = task.fd_table.lock_save_irq();
 
         let reader = fds.get(fd_in).ok_or(KernelError::BadFd)?;

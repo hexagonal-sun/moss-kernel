@@ -6,7 +6,7 @@ use libkernel::{
 use crate::{
     memory::uaccess::{UserCopyable, copy_from_user, copy_to_user},
     process::thread_group::{TG_LIST, Tgid},
-    sched::current::current_task,
+    sched::syscall_ctx::ProcessCtx,
 };
 
 use super::pid::PidT;
@@ -184,6 +184,7 @@ impl ResourceLimits {
 }
 
 pub async fn sys_prlimit64(
+    ctx: &ProcessCtx,
     pid: PidT,
     resource: u32,
     new_rlim: TUA<RLimit>,
@@ -192,7 +193,7 @@ pub async fn sys_prlimit64(
     let resource: RlimitId = resource.try_into()?;
 
     let task = if pid == 0 {
-        current_task().process.clone()
+        ctx.shared().process.clone()
     } else {
         TG_LIST
             .lock_save_irq()

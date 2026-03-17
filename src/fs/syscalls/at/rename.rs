@@ -14,7 +14,7 @@ use crate::{
     },
     memory::uaccess::cstr::UserCStr,
     process::fd_table::Fd,
-    sched::current::current_task_shared,
+    sched::syscall_ctx::ProcessCtx,
 };
 
 // from linux/fcntl.h
@@ -23,15 +23,17 @@ const AT_RENAME_EXCHANGE: u32 = 0x0002; // Atomically exchange the target and so
 const AT_RENAME_WHITEOUT: u32 = 0x0004; // Create a whiteout entry for the old path.
 
 pub async fn sys_renameat(
+    ctx: &ProcessCtx,
     old_dirfd: Fd,
     old_path: TUA<c_char>,
     new_dirfd: Fd,
     new_path: TUA<c_char>,
 ) -> Result<usize> {
-    sys_renameat2(old_dirfd, old_path, new_dirfd, new_path, 0).await
+    sys_renameat2(ctx, old_dirfd, old_path, new_dirfd, new_path, 0).await
 }
 
 pub async fn sys_renameat2(
+    ctx: &ProcessCtx,
     old_dirfd: Fd,
     old_path: TUA<c_char>,
     new_dirfd: Fd,
@@ -53,7 +55,7 @@ pub async fn sys_renameat2(
     let mut buf = [0; 1024];
     let mut buf2 = [0; 1024];
 
-    let task = current_task_shared();
+    let task = ctx.shared().clone();
 
     let old_path = Path::new(
         UserCStr::from_ptr(old_path)
@@ -68,8 +70,8 @@ pub async fn sys_renameat2(
     let old_name = old_path.file_name().ok_or(FsError::InvalidInput)?;
     let new_name = new_path.file_name().ok_or(FsError::InvalidInput)?;
 
-    let old_start_node = resolve_at_start_node(old_dirfd, old_path, AtFlags::empty()).await?;
-    let new_start_node = resolve_at_start_node(new_dirfd, new_path, AtFlags::empty()).await?;
+    let old_start_node = resolve_at_start_node(ctx, old_dirfd, old_path, AtFlags::empty()).await?;
+    let new_start_node = resolve_at_start_node(ctx, new_dirfd, new_path, AtFlags::empty()).await?;
 
     let old_parent_inode = if let Some(parent_path) = old_path.parent() {
         VFS.resolve_path(parent_path, old_start_node.clone(), &task)

@@ -2,18 +2,20 @@ use crate::fs::open_file::OpenFile;
 use crate::memory::uaccess::{copy_from_user, copy_to_user, copy_to_user_slice};
 use crate::net::SocketLen;
 use crate::process::fd_table::Fd;
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use libkernel::error::KernelError;
 use libkernel::fs::OpenFlags;
 use libkernel::memory::address::{TUA, UA};
 
 pub async fn sys_accept4(
+    ctx: &ProcessCtx,
     fd: Fd,
     addr: UA,
     addrlen: TUA<SocketLen>,
     _flags: i32,
 ) -> libkernel::error::Result<usize> {
-    let file = current_task_shared()
+    let file = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .get(fd)
@@ -29,7 +31,8 @@ pub async fn sys_accept4(
     let new_socket = new_socket.as_file();
 
     let open_file = OpenFile::new(new_socket, OpenFlags::empty());
-    let new_fd = current_task_shared()
+    let new_fd = ctx
+        .shared()
         .fd_table
         .lock_save_irq()
         .insert(alloc::sync::Arc::new(open_file))?;
@@ -47,9 +50,10 @@ pub async fn sys_accept4(
 }
 
 pub async fn sys_accept(
+    ctx: &ProcessCtx,
     fd: Fd,
     addr: UA,
     addrlen: TUA<SocketLen>,
 ) -> libkernel::error::Result<usize> {
-    sys_accept4(fd, addr, addrlen, 0).await
+    sys_accept4(ctx, fd, addr, addrlen, 0).await
 }

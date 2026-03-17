@@ -6,7 +6,7 @@ use crate::{
         fd_table::Fd,
         thread_group::signal::{InterruptResult, Interruptable, SigId},
     },
-    sched::current::current_task,
+    sched::{current_work, syscall_ctx::ProcessCtx},
     sync::CondVar,
 };
 use alloc::{boxed::Box, sync::Arc};
@@ -180,7 +180,7 @@ impl PipeWriter {
             // buffer. There's no point writing data if there's no consumer!
             if gone_fut.as_mut().poll(cx).is_ready() {
                 // Other side of the pipe has been closed.
-                current_task().raise_task_signal(SigId::SIGPIPE);
+                current_work().process.deliver_signal(SigId::SIGPIPE);
                 Poll::Ready(Err(KernelError::BrokenPipe))
             } else if let Poll::Ready(x) = write_fut.as_mut().poll(cx) {
                 Poll::Ready(x)
@@ -240,7 +240,7 @@ impl Drop for PipeWriter {
     }
 }
 
-pub async fn sys_pipe2(fds: TUA<[Fd; 2]>, flags: u32) -> Result<usize> {
+pub async fn sys_pipe2(ctx: &ProcessCtx, fds: TUA<[Fd; 2]>, flags: u32) -> Result<usize> {
     let flags = OpenFlags::from_bits_retain(flags);
 
     let kbuf = KPipe::new()?;
@@ -259,12 +259,10 @@ pub async fn sys_pipe2(fds: TUA<[Fd; 2]>, flags: u32) -> Result<usize> {
 
     let (read_fd, write_fd) = {
         static INODE_ID: AtomicU64 = AtomicU64::new(0);
-
-        let task = current_task();
-        let mut fds = task.fd_table.lock_save_irq();
+        let mut fds = ctx.task().fd_table.lock_save_irq();
 
         let inode = {
-            let creds = task.creds.lock_save_irq();
+            let creds = ctx.task().creds.lock_save_irq();
             Arc::new(PipeInode {
                 id: InodeId::from_fsid_and_inodeid(0xf, INODE_ID.fetch_add(1, Ordering::Relaxed)),
                 time: date(),
