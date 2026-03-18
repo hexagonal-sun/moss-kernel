@@ -194,6 +194,59 @@ fn test_mincore() {
 
 register_test!(test_mincore);
 
+fn test_itimer() {
+    use libc::{ITIMER_REAL, itimerval};
+    use std::mem::MaybeUninit;
+
+    unsafe {
+        // Set signal handler for SIGALRM to avoid process termination when the timer expires
+        // We'll flip a bit in a static variable when the signal handler is called, and check that bit at the end of the test to verify the timer actually expired.
+        static TIMER_EXPIRED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        extern "C" fn sigalrm_handler(_signum: libc::c_int) {
+            TIMER_EXPIRED.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = sigalrm_handler as *const () as usize;
+        sa.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut sa.sa_mask);
+        if libc::sigaction(libc::SIGALRM, &sa, std::ptr::null_mut()) != 0 {
+            panic!("sigaction failed: {}", std::io::Error::last_os_error());
+        }
+
+        let mut old_timer = MaybeUninit::<itimerval>::uninit();
+        let new_timer = itimerval {
+            it_interval: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            it_value: libc::timeval {
+                tv_sec: 1,
+                tv_usec: 0,
+            },
+        };
+        let ret = libc::setitimer(
+            ITIMER_REAL,
+            &new_timer as *const itimerval,
+            old_timer.as_mut_ptr(),
+        );
+        if ret != 0 {
+            panic!("setitimer failed: {}", std::io::Error::last_os_error());
+        }
+        let old_timer = old_timer.assume_init();
+        assert_eq!(old_timer.it_value.tv_sec, 0);
+        assert_eq!(old_timer.it_value.tv_usec, 0);
+        // Wait for 2 seconds to ensure the timer has time to expire
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        assert!(
+            TIMER_EXPIRED.load(std::sync::atomic::Ordering::SeqCst),
+            "Expected timer to have expired and signal handler to have been called"
+        );
+    }
+}
+
+register_test!(test_itimer);
+
 fn run_test(test_fn: fn()) -> Result<(), i32> {
     // Fork a new process to run the test
     unsafe {
@@ -236,10 +289,10 @@ fn main() {
     let start = std::time::Instant::now();
     let mut failures = 0;
     for test in inventory::iter::<Test> {
-        if let Some(filter) = filter {
-            if !test.test_text.contains(filter) {
-                continue;
-            }
+        if let Some(filter) = filter
+            && !test.test_text.contains(filter)
+        {
+            continue;
         }
         print!("{} ...", test.test_text);
         let _ = stdout().flush();
