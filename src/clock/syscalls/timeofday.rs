@@ -1,5 +1,5 @@
-use super::timespec::TimeSpec;
 use crate::clock::realtime::{date, set_date};
+use crate::clock::timespec::TimeSpec;
 use crate::memory::uaccess::{UserCopyable, copy_from_user, copy_to_user};
 use core::time::Duration;
 use libkernel::{error::Result, memory::address::TUA};

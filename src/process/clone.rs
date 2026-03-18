@@ -174,6 +174,7 @@ pub async fn sys_clone(
                 fd_table: files,
                 cwd,
                 root,
+                i_timers: SpinLock::new(*current_task.i_timers.lock_save_irq()),
                 creds: SpinLock::new(creds),
                 ptrace: SpinLock::new(ptrace),
                 sig_mask: new_sigmask,
