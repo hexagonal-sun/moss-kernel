@@ -1,4 +1,5 @@
-use crate::drivers::timer::{Instant, now};
+use crate::arch::{Arch, ArchImpl};
+use crate::drivers::timer::now;
 #[cfg(feature = "smp")]
 use crate::interrupts::cpu_messenger::{Message, message_cpu};
 use crate::kernel::cpu_id::CpuId;
@@ -70,6 +71,10 @@ per_cpu_private! {
     static SCHED_STATE: SchedState = SchedState::new;
 }
 
+per_cpu_shared! {
+    pub static SHARED_SCHED_STATE: SharedSchedState = SharedSchedState::new;
+}
+
 /// Default time-slice assigned to runnable tasks.
 const DEFAULT_TIME_SLICE: Duration = Duration::from_millis(4);
 
@@ -129,18 +134,22 @@ pub fn spawn_kernel_work(fut: impl Future<Output = ()> + 'static + Send) {
     current_task().ctx.put_kernel_work(Box::pin(fut));
 }
 
-/// Global atomic storing info about the least-tasked CPU.
-/// First 16 bits: CPU ID
-/// Remaining 48 bits: Run-queue weight
-#[cfg(feature = "smp")]
-static LEAST_TASKED_CPU_INFO: AtomicU64 = AtomicU64::new(0);
-const WEIGHT_SHIFT: u32 = 16;
-
 #[cfg(feature = "smp")]
 fn get_best_cpu() -> CpuId {
-    // Get the CPU with the least number of tasks.
-    let least_tasked_cpu_info = LEAST_TASKED_CPU_INFO.load(Ordering::Acquire);
-    CpuId::from_value((least_tasked_cpu_info & 0xffff) as usize)
+    let r = 0..ArchImpl::cpu_count();
+    r.min_by(|&x, &y| {
+        // TODO: Find a way to calculate already assigned affinities and account for that
+        let info_x = SHARED_SCHED_STATE.get_by_cpu(x);
+        let info_y = SHARED_SCHED_STATE.get_by_cpu(y);
+        let weight_x = info_x.total_runq_weight.load(Ordering::Relaxed);
+        let weight_y = info_y.total_runq_weight.load(Ordering::Relaxed);
+        weight_x.cmp(&weight_y)
+    })
+    .map(CpuId::from_value)
+    .unwrap_or_else(|| {
+        warn!("No CPUs found when trying to get best CPU! Defaulting to CPU 0");
+        CpuId::from_value(0)
+    })
 }
 
 /// Insert the given task onto a CPU's run queue.
@@ -149,17 +158,27 @@ pub fn insert_work(work: Arc<Work>) {
 }
 
 #[cfg(feature = "smp")]
-pub fn insert_task_cross_cpu(task: Arc<Work>) {
-    let cpu = get_best_cpu();
-    if cpu == CpuId::this() {
-        SCHED_STATE.borrow_mut().run_q.add_work(task);
+pub fn insert_work_cross_cpu(work: Arc<Work>) {
+    let last_cpu = work
+        .sched_data
+        .lock_save_irq()
+        .as_ref()
+        .map(|s| s.last_cpu)
+        .unwrap_or(usize::MAX);
+    let cpu = if last_cpu == usize::MAX {
+        get_best_cpu()
     } else {
-        message_cpu(cpu, Message::EnqueueWork(task)).expect("Failed to send task to CPU");
+        CpuId::from_value(last_cpu)
+    };
+    if cpu == CpuId::this() {
+        SCHED_STATE.borrow_mut().run_q.add_work(work);
+    } else {
+        message_cpu(cpu, Message::EnqueueWork(work)).expect("Failed to send task to CPU");
     }
 }
 
 #[cfg(not(feature = "smp"))]
-pub fn insert_task_cross_cpu(task: Arc<Work>) {
+pub fn insert_work_cross_cpu(task: Arc<Work>) {
     insert_work(task);
 }
 
@@ -179,46 +198,11 @@ impl SchedState {
     /// Update the global least-tasked CPU info atomically.
     #[cfg(feature = "smp")]
     fn update_global_least_tasked_cpu_info(&self) {
-        fn none<T>() -> Option<T> {
-            None
-        }
-
-        per_cpu_private! {
-            static LAST_UPDATE: Option<Instant> = none;
-        }
-
-        // Try and throttle contention on the atomic variable.
-        const MIN_COOLDOWN: Duration = Duration::from_millis(16);
-        if let Some(last) = LAST_UPDATE.borrow().as_ref()
-            && let Some(now) = now()
-            && now - *last < MIN_COOLDOWN
-        {
-            return;
-        }
-        *LAST_UPDATE.borrow_mut() = now();
-
         let weight = self.run_q.weight();
-        let cpu_id = CpuId::this().value() as u64;
-        let new_info = (cpu_id & 0xffff) | ((weight & 0xffffffffffff) << WEIGHT_SHIFT);
-        let mut old_info = LEAST_TASKED_CPU_INFO.load(Ordering::Acquire);
-        // Ensure we don't spin forever (possible with a larger number of CPUs)
-        const MAX_RETRIES: usize = 8;
-        // Ensure consistency
-        for _ in 0..MAX_RETRIES {
-            let old_cpu_id = old_info & 0xffff;
-            let old_weight = old_info >> WEIGHT_SHIFT;
-            if (cpu_id == old_cpu_id && old_info != new_info) || (weight < old_weight) {
-                match LEAST_TASKED_CPU_INFO.compare_exchange(
-                    old_info,
-                    new_info,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => break,
-                    Err(x) => old_info = x,
-                }
-            }
-        }
+        SHARED_SCHED_STATE
+            .get()
+            .total_runq_weight
+            .store(weight, Ordering::Relaxed);
     }
 
     #[cfg(not(feature = "smp"))]
@@ -242,6 +226,18 @@ impl SchedState {
         }
 
         self.run_q.schedule(now_inst)
+    }
+}
+
+pub struct SharedSchedState {
+    pub total_runq_weight: AtomicU64,
+}
+
+impl SharedSchedState {
+    pub fn new() -> Self {
+        Self {
+            total_runq_weight: AtomicU64::new(0),
+        }
     }
 }
 

@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use core::task::{RawWaker, RawWakerVTable, Waker};
 
 use super::{
-    SCHED_STATE,
+    insert_work_cross_cpu,
     sched_task::{Work, state::WakerAction},
 };
 
@@ -25,7 +25,7 @@ unsafe fn wake_waker_no_consume(data: *const ()) {
 
     match work.state.wake() {
         WakerAction::Enqueue => {
-            SCHED_STATE.borrow_mut().run_q.add_work(work);
+            insert_work_cross_cpu(work);
         }
         WakerAction::PreventedSleep | WakerAction::None => {}
     }

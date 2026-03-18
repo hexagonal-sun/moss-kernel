@@ -191,7 +191,7 @@ pub async fn sys_clone(
         .lock_save_irq()
         .insert(desc.tid, Arc::downgrade(&work));
 
-    sched::insert_task_cross_cpu(work);
+    sched::insert_work_cross_cpu(work);
 
     NUM_FORKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 

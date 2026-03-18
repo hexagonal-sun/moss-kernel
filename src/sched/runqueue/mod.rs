@@ -8,6 +8,7 @@ use crate::{
 };
 use alloc::{boxed::Box, collections::binary_heap::BinaryHeap, sync::Arc, vec::Vec};
 use core::{cmp, ptr, sync::atomic::Ordering};
+use libkernel::CpuOps;
 use vclock::VClock;
 
 mod vclock;
@@ -116,6 +117,7 @@ impl RunQueue {
                     // Task wants to deactivate. Drop the RunnableTask now to
                     // restore sched_data.
                     let work = cur_task.task.clone();
+                    cur_task.sched_data.last_cpu = ArchImpl::id();
                     self.total_weight = self.total_weight.saturating_sub(cur_task.weight() as u64);
                     drop(cur_task);
 

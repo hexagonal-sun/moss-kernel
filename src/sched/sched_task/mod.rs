@@ -22,6 +22,9 @@ pub struct Work {
     pub sched_data: SpinLock<Option<SchedulerData>>,
 }
 
+pub const NR_CPUS: usize = 256;
+pub const CPU_MASK_SIZE: usize = NR_CPUS / 64;
+
 #[derive(Clone)]
 pub struct SchedulerData {
     pub v_runtime: u128,
@@ -32,6 +35,8 @@ pub struct SchedulerData {
     pub exec_start: Option<Instant>,
     pub deadline: Option<Instant>,
     pub last_run: Option<Instant>,
+    pub last_cpu: usize,
+    pub cpu_mask: [u64; CPU_MASK_SIZE],
 }
 
 impl SchedulerData {
@@ -43,6 +48,8 @@ impl SchedulerData {
             exec_start: None,
             deadline: None,
             last_run: None,
+            last_cpu: usize::MAX,
+            cpu_mask: [u64::MAX; CPU_MASK_SIZE],
         }
     }
 }
