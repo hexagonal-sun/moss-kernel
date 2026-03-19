@@ -17,7 +17,8 @@ use state::TaskStateMachine;
 pub mod state;
 
 pub const NR_CPUS: usize = 256;
-pub const CPU_MASK_SIZE: usize = NR_CPUS / 64;
+pub const CPU_MASK_SIZE: usize = NR_CPUS / 8;
+pub type CpuMask = [u8; CPU_MASK_SIZE];
 
 #[derive(Clone)]
 pub struct SchedulerData {
@@ -30,7 +31,7 @@ pub struct SchedulerData {
     pub deadline: Option<Instant>,
     pub last_run: Option<Instant>,
     pub last_cpu: usize,
-    pub cpu_mask: [u64; CPU_MASK_SIZE],
+    pub cpu_mask: CpuMask,
     pub priority: i8,
 }
 
@@ -44,7 +45,7 @@ impl SchedulerData {
             deadline: None,
             last_run: None,
             last_cpu: usize::MAX,
-            cpu_mask: [u64::MAX; CPU_MASK_SIZE],
+            cpu_mask: [u8::MAX; CPU_MASK_SIZE],
             priority: task.priority(),
         }
     }

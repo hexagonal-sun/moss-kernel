@@ -98,7 +98,11 @@ use crate::{
         },
         threading::{futex::sys_futex, sys_set_robust_list, sys_set_tid_address},
     },
-    sched::{self, sched_task::state::TaskState, sys_sched_yield},
+    sched::{
+        self,
+        sched_task::state::TaskState,
+        syscalls::{sys_sched_getaffinity, sys_sched_setaffinity, sys_sched_yield},
+    },
 };
 use alloc::boxed::Box;
 use libkernel::{
@@ -493,7 +497,8 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             )
             .await
         }
-        0x7b => Err(KernelError::NotSupported),
+        0x7a => sys_sched_setaffinity(&ctx, arg1 as _, arg2 as _, TUA::from_value(arg3 as _)).await,
+        0x7b => sys_sched_getaffinity(&ctx, arg1 as _, arg2 as _, TUA::from_value(arg3 as _)).await,
         0x7c => sys_sched_yield(),
         0x81 => sys_kill(&ctx, arg1 as _, arg2.into()),
         0x82 => sys_tkill(&ctx, arg1 as _, arg2.into()),

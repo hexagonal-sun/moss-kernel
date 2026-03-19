@@ -4,13 +4,13 @@ use crate::drivers::timer::now;
 use crate::interrupts::cpu_messenger::{Message, message_cpu};
 use crate::kernel::cpu_id::CpuId;
 use crate::process::owned::OwnedTask;
+use crate::sched::sched_task::{CPU_MASK_SIZE, CpuMask};
 use crate::{per_cpu_private, per_cpu_shared, process::TASK_LIST};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use core::task::Waker;
 use core::time::Duration;
-use libkernel::error::Result;
 use log::warn;
 use runqueue::RunQueue;
 use sched_task::{RunnableTask, Work};
@@ -20,6 +20,7 @@ use waker::create_waker;
 mod runqueue;
 pub mod sched_task;
 pub mod syscall_ctx;
+pub mod syscalls;
 pub mod uspc_ret;
 pub mod waker;
 
@@ -135,21 +136,30 @@ pub fn spawn_kernel_work(ctx: &mut ProcessCtx, fut: impl Future<Output = ()> + '
 }
 
 #[cfg(feature = "smp")]
-fn get_best_cpu() -> CpuId {
+fn get_best_cpu(cpu_mask: CpuMask) -> CpuId {
     let r = 0..ArchImpl::cpu_count();
-    r.min_by(|&x, &y| {
-        // TODO: Find a way to calculate already assigned affinities and account for that
-        let info_x = SHARED_SCHED_STATE.get_by_cpu(x);
-        let info_y = SHARED_SCHED_STATE.get_by_cpu(y);
-        let weight_x = info_x.total_runq_weight.load(Ordering::Relaxed);
-        let weight_y = info_y.total_runq_weight.load(Ordering::Relaxed);
-        weight_x.cmp(&weight_y)
-    })
-    .map(CpuId::from_value)
-    .unwrap_or_else(|| {
-        warn!("No CPUs found when trying to get best CPU! Defaulting to CPU 0");
-        CpuId::from_value(0)
-    })
+    r.enumerate()
+        // Filter to only CPUs in the mask
+        .filter(|(i, _)| {
+            let byte_index = i / 8;
+            let bit_index = i % 8;
+            (cpu_mask[byte_index] & (1 << bit_index)) != 0
+        })
+        .map(|(_, cpu_id)| cpu_id)
+        // Find optimal CPU based on least run queue weight
+        .min_by(|&x, &y| {
+            // TODO: Find a way to calculate already assigned affinities and account for that
+            let info_x = SHARED_SCHED_STATE.get_by_cpu(x);
+            let info_y = SHARED_SCHED_STATE.get_by_cpu(y);
+            let weight_x = info_x.total_runq_weight.load(Ordering::Relaxed);
+            let weight_y = info_y.total_runq_weight.load(Ordering::Relaxed);
+            weight_x.cmp(&weight_y)
+        })
+        .map(CpuId::from_value)
+        .unwrap_or_else(|| {
+            warn!("No CPUs found when trying to get best CPU! Defaulting to CPU 0");
+            CpuId::from_value(0)
+        })
 }
 
 /// Insert the given task onto a CPU's run queue.
@@ -159,17 +169,28 @@ pub fn insert_work(work: Arc<Work>) {
 
 #[cfg(feature = "smp")]
 pub fn insert_work_cross_cpu(work: Arc<Work>) {
-    let last_cpu = work
-        .sched_data
-        .lock_save_irq()
+    let sched_data = work.sched_data.lock_save_irq();
+    let last_cpu = sched_data
         .as_ref()
         .map(|s| s.last_cpu)
         .unwrap_or(usize::MAX);
+    let mask = sched_data
+        .as_ref()
+        .map(|s| s.cpu_mask)
+        .unwrap_or([u8::MAX; CPU_MASK_SIZE]);
     let cpu = if last_cpu == usize::MAX {
-        get_best_cpu()
+        get_best_cpu(mask)
     } else {
-        CpuId::from_value(last_cpu)
+        // Check if the last CPU is still in the affinity mask, and if so, prefer it to improve cache locality.
+        let byte_index = last_cpu / 8;
+        let bit_index = last_cpu % 8;
+        if (mask[byte_index] & (1 << bit_index)) != 0 {
+            CpuId::from_value(last_cpu)
+        } else {
+            get_best_cpu(mask)
+        }
     };
+    drop(sched_data);
     if cpu == CpuId::this() {
         SCHED_STATE.borrow_mut().run_q.add_work(work);
     } else {
@@ -262,11 +283,6 @@ pub fn sched_init_secondary() {
     SCHED_STATE.borrow().update_global_least_tasked_cpu_info();
 
     schedule();
-}
-
-pub fn sys_sched_yield() -> Result<usize> {
-    schedule();
-    Ok(0)
 }
 
 pub fn current_work() -> Arc<Work> {
