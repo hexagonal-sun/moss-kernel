@@ -63,29 +63,25 @@ pub fn translate_kernel_va(addr: VA) -> PA {
     PA::from_value(v + get_kimage_start().value())
 }
 
-pub fn flush_to_ram<T>(mut x: *const T) {
-    let mut stride: u64 = 0;
+pub fn flush_to_ram<T>(x: *const T) {
+    let mut stride: usize = 0;
 
     // Calc  cache line stride.
     unsafe { asm!("mrs {0}, ctr_el0", out(reg) stride, options(nostack, nomem)) };
     stride = (1 << ((stride >> 16) & 0xf)) * 4;
 
-    let end = unsafe { x.byte_add(size_of::<T>()) };
+    let end = unsafe { x.byte_add(size_of::<T>()) } as usize;
+    let mut addr = (x as usize) & !(stride - 1); // align down
 
-    while x < end {
+    while addr < end {
         // Clear the cache line for the given VA.
-        //
-        // NOTE: We allow the below lint since a flush to the cache is
-        // transparrent; memory hasn't changed from the point of view of the
-        // flushing core.
-        #[allow(clippy::pointers_in_nomem_asm_block)]
         unsafe {
-            asm!("dc cvac, {0}", in(reg) x, options(nostack, nomem));
+            asm!("dc cvac, {0}", in(reg) addr, options(nostack));
 
-            x = x.byte_add(stride as _);
+            addr += stride;
         }
     }
 
     // Ensure the cache maintaince op has finished.
-    unsafe { asm!("dsb ish", options(nostack, nomem)) };
+    unsafe { asm!("dsb ish", options(nostack)) };
 }
