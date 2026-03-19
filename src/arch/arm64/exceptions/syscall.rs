@@ -47,8 +47,8 @@ use crate::{
         },
     },
     kernel::{
-        hostname::sys_sethostname, power::sys_reboot, rand::sys_getrandom, sysinfo::sys_sysinfo,
-        uname::sys_uname,
+        getcpu::sys_getcpu, hostname::sys_sethostname, power::sys_reboot, rand::sys_getrandom,
+        sysinfo::sys_sysinfo, uname::sys_uname,
     },
     memory::{
         brk::sys_brk,
@@ -561,6 +561,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0xa3 => Err(KernelError::InvalidValue),
         0xa6 => sys_umask(&ctx, arg1 as _).map_err(|e| match e {}),
         0xa7 => sys_prctl(&ctx, arg1 as _, arg2, arg3).await,
+        0xa8 => sys_getcpu(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xa9 => sys_gettimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xaa => sys_settimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xac => sys_getpid(&ctx).map_err(|e| match e {}),
