@@ -16,6 +16,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 use creds::Credentials;
 use fd_table::FileDescriptorTable;
 use libkernel::{
@@ -147,6 +148,22 @@ impl Comm {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct ITimer {
+    /// If interval is `None`, this timer is a one-shot timer.
+    pub interval: Option<Duration>,
+    /// Instant (wrt the needed clock) at which this timer will next expire.
+    pub next: Instant,
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct ITimers {
+    pub real: Option<ITimer>,
+    // virtual is a reserved keyword
+    pub virtual_: Option<ITimer>,
+    pub prof: Option<ITimer>,
+}
+
 pub struct Task {
     pub tid: Tid,
     pub comm: Arc<SpinLock<Comm>>,
@@ -155,6 +172,7 @@ pub struct Task {
     pub cwd: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
     pub root: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
     pub creds: SpinLock<Credentials>,
+    pub i_timers: SpinLock<ITimers>,
     pub fd_table: Arc<SpinLock<FileDescriptorTable>>,
     pub ptrace: SpinLock<PTrace>,
     pub sig_mask: AtomicSigSet,

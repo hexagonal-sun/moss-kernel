@@ -1,6 +1,8 @@
 use super::Driver;
+use crate::clock::syscalls::itimer::ITimerType;
 use crate::interrupts::{InterruptDescriptor, InterruptHandler};
 use crate::per_cpu_private;
+use crate::process::TaskDescriptor;
 use crate::sync::OnceLock;
 use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
 use core::{
@@ -74,7 +76,12 @@ enum WakeupKind {
 
     /// This wake up is for the kernel's preemption mechanism.
     Preempt,
+
+    ITimer(TaskDescriptor, ITimerType),
 }
+
+unsafe impl Send for WakeupKind {}
+unsafe impl Sync for WakeupKind {}
 
 struct WakeupEvent {
     when: Instant,
@@ -174,6 +181,9 @@ impl InterruptHandler for SysTimer {
                         // Do nothing, the IRQ return-to-userspace code will
                         // call schedule() for us.
                     }
+                    WakeupKind::ITimer(desc, ty) => {
+                        crate::clock::syscalls::itimer::itimer_irq_handler(desc, ty);
+                    }
                 }
             } else {
                 // The next event is in the future, so we're done.
@@ -229,6 +239,41 @@ impl SysTimer {
             }
         })
         .await;
+    }
+
+    pub fn schedule_itimer(&self, desc: TaskDescriptor, ty: ITimerType, when: Instant) {
+        let mut wakeup_q = WAKEUP_Q.borrow_mut();
+
+        wakeup_q.push(WakeupEvent {
+            when,
+            what: WakeupKind::ITimer(desc, ty),
+        });
+
+        // After pushing, we must update the hardware timer in case our
+        // new event is the earliest one.
+        if let Some(next_event) = wakeup_q.peek() {
+            self.driver.schedule_interrupt(Some(next_event.when));
+        }
+    }
+
+    pub fn remove_scheduled_itimer(&self, desc: TaskDescriptor, ty: ITimerType) {
+        let mut wakeup_q = WAKEUP_Q.borrow_mut();
+
+        // Remove any matching itimer events from the queue.
+        wakeup_q.retain(|event| {
+            if let WakeupKind::ITimer(event_desc, event_ty) = event.what {
+                !(event_desc == desc && event_ty == ty)
+            } else {
+                true
+            }
+        });
+        // TODO: Handle cross-CPU cases where the itimer event might be on a different CPU's queue.
+
+        // After removing, we must update the hardware timer in case we removed
+        // the earliest event.
+        if let Some(next_event) = wakeup_q.peek() {
+            self.driver.schedule_interrupt(Some(next_event.when));
+        }
     }
 
     /// Schedule a preemption event for the current CPU.
@@ -306,8 +351,12 @@ pub fn schedule_preempt(when: Instant) {
     }
 }
 
-static SYS_TIMER: OnceLock<Arc<SysTimer>> = OnceLock::new();
+pub static SYS_TIMER: OnceLock<Arc<SysTimer>> = OnceLock::new();
 
 per_cpu_private! {
     static WAKEUP_Q: BinaryHeap<WakeupEvent> = BinaryHeap::new;
+}
+
+per_cpu_private! {
+    static NEXT_WAKE_ID: u32 = u32::default;
 }
