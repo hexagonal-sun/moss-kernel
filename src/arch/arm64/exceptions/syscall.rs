@@ -253,6 +253,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         }
         0x28 => {
             sys_mount(
+                &ctx,
                 TUA::from_value(arg1 as _),
                 TUA::from_value(arg2 as _),
                 TUA::from_value(arg3 as _),

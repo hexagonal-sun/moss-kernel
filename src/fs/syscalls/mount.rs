@@ -1,6 +1,6 @@
 use crate::fs::VFS;
 use crate::memory::uaccess::cstr::UserCStr;
-use crate::sched::current::current_task_shared;
+use crate::sched::syscall_ctx::ProcessCtx;
 use bitflags::bitflags;
 use core::ffi::c_char;
 use libkernel::error::{KernelError, Result};
@@ -46,6 +46,7 @@ bitflags! {
 }
 
 pub async fn sys_mount(
+    ctx: &ProcessCtx,
     dev_name: TUA<c_char>,
     dir_name: TUA<c_char>,
     type_: TUA<c_char>,
@@ -72,11 +73,7 @@ pub async fn sys_mount(
         .copy_from_user(&mut buf)
         .await?;
     let mount_point = VFS
-        .resolve_path(
-            Path::new(dir_name),
-            VFS.root_inode(),
-            &current_task_shared(),
-        )
+        .resolve_path(Path::new(dir_name), VFS.root_inode(), ctx.shared())
         .await?;
     let mut buf = [0u8; 1024];
     let _type = if type_.is_null() {
