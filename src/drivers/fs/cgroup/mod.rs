@@ -94,6 +94,10 @@ macro_rules! static_dir {
                 )*
                 Ok(Box::new(SimpleDirStream::new(entries, start_offset)))
             }
+
+            fn as_any(&self) -> &dyn core::any::Any {
+                self
+            }
         }
     };
 }

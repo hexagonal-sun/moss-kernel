@@ -328,6 +328,8 @@ pub trait Inode: Send + Sync + Any {
     async fn datasync(&self) -> Result<()> {
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// A simplified trait for read-only files in procfs/sysfs that provides default implementations
@@ -376,6 +378,10 @@ where
 
     async fn readlink(&self) -> Result<PathBuf> {
         self.readlink().await
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
