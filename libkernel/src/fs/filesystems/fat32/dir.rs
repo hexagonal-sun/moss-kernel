@@ -11,6 +11,7 @@ use crate::{
 };
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
 use async_trait::async_trait;
+use core::any::Any;
 use log::warn;
 
 bitflags::bitflags! {
@@ -398,6 +399,10 @@ impl<T: Fat32Operations> Inode for Fat32DirNode<T> {
 
     async fn getattr(&self) -> Result<FileAttr> {
         Ok(self.attr.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

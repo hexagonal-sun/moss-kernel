@@ -7,6 +7,7 @@ use alloc::{
     sync::Arc,
 };
 use async_trait::async_trait;
+use core::any::Any;
 use core::sync::atomic::{AtomicU64, Ordering};
 use libkernel::fs::attr::{FileAttr, FilePermissions};
 use libkernel::fs::{BlockDevice, DirStream, Dirent, Filesystem};
@@ -170,6 +171,10 @@ impl Inode for DevFsINode {
             }
             InodeKind::CharDevice { .. } => Err(FsError::NotADirectory.into()),
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

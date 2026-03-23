@@ -100,6 +100,10 @@ impl Inode for ProcFdInode {
 
         Ok(Box::new(SimpleDirStream::new(entries, start_offset)))
     }
+
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
 }
 
 // TODO: Support fd links in /proc/[pid]/fd/

@@ -23,6 +23,7 @@ use alloc::{
     vec::Vec,
 };
 use async_trait::async_trait;
+use core::any::Any;
 use core::time::Duration;
 use core::{
     cmp::min,
@@ -324,6 +325,10 @@ where
         self.inner.lock_save_irq().size = attr.size as _;
         *self.attr.lock_save_irq() = attr;
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -660,6 +665,10 @@ where
     fn dir_is_empty(&self) -> Result<bool> {
         Ok(self.entries.lock_save_irq().is_empty())
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 impl<C, G, T> TmpFsDirInode<C, G, T>
@@ -751,6 +760,10 @@ impl<C: CpuOps> Inode for TmpFsSymlinkInode<C> {
             guard.push((name.to_owned(), buf.to_vec()));
             Ok(())
         }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

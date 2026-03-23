@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 async-trait = { workspace = true }
 bitflags = { workspace = true }
-ext4plus = "0.1.0-alpha.5"
+ext4plus = "0.1.0-alpha.7"
 intrusive-collections = { version = "0.10.0", default-features = false }
 log = { workspace = true }
 object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }

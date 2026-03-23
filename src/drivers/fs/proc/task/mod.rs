@@ -12,6 +12,7 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use async_trait::async_trait;
+use core::any::Any;
 use libkernel::error::FsError;
 use libkernel::fs::attr::{FileAttr, FilePermissions};
 use libkernel::fs::{
@@ -148,5 +149,9 @@ impl Inode for ProcTaskInode {
         }
 
         Ok(Box::new(SimpleDirStream::new(entries, start_offset)))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

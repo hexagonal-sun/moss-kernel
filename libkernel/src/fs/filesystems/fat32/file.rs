@@ -5,6 +5,7 @@ use crate::{
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use async_trait::async_trait;
+use core::any::Any;
 
 use super::{Cluster, Fat32Operations, reader::Fat32Reader};
 
@@ -38,6 +39,10 @@ impl<T: Fat32Operations> Inode for Fat32FileNode<T> {
 
     async fn getattr(&self) -> Result<FileAttr> {
         Ok(self.attr.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
