@@ -1,13 +1,16 @@
+use crate::clock::timer::{TimerNamespace, make_timer_id, parse_timer_id};
 use crate::clock::timespec::TimeSpec;
 use crate::drivers::timer::{Instant, now, uptime};
 use crate::memory::uaccess::{UserCopyable, copy_from_user, copy_to_user};
 use crate::process::thread_group::signal::SigId;
 use crate::process::{ITimer, Task, Tid, find_task_by_tid};
 use crate::sched::syscall_ctx::ProcessCtx;
+use alloc::boxed::Box;
 use core::time::Duration;
 use libkernel::memory::address::TUA;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
 pub enum ITimerType {
     Real = 0,
     Virtual = 1,
@@ -61,7 +64,15 @@ impl Default for ITimerVal {
 
 unsafe impl UserCopyable for ITimerVal {}
 
-pub fn itimer_irq_handler(tid: Tid, ty: ITimerType) -> Option<Instant> {
+pub fn itimer_irq_handler(tid: Tid, id: u64) -> Option<Instant> {
+    let (namespace, ty) = parse_timer_id(id);
+    if namespace != TimerNamespace::ITimer {
+        return None; // Not an itimer, should not happen
+    }
+    let ty = match ITimerType::try_from(ty as i32) {
+        Ok(ty) => ty,
+        Err(_) => return None, // Invalid timer type, should not happen
+    };
     let task = find_task_by_tid(tid)?;
     match ty {
         ITimerType::Real => {
@@ -161,14 +172,22 @@ pub async fn sys_setitimer(
                 crate::drivers::timer::SYS_TIMER
                     .get()
                     .unwrap()
-                    .remove_scheduled_itimer(current_task.tid(), ITimerType::Real);
+                    .remove_scheduled_timer(
+                        current_task.tid(),
+                        make_timer_id(TimerNamespace::ITimer, ITimerType::Real as u32),
+                    );
             }
             if let Some(next) = next {
                 timers.real = Some(ITimer { interval, next });
                 crate::drivers::timer::SYS_TIMER
                     .get()
                     .unwrap()
-                    .schedule_itimer(current_task.tid(), ITimerType::Real, next);
+                    .schedule_timer(
+                        current_task.tid(),
+                        make_timer_id(TimerNamespace::ITimer, ITimerType::Real as u32),
+                        Box::new(itimer_irq_handler),
+                        next,
+                    );
             }
         }
         _ => unimplemented!(),

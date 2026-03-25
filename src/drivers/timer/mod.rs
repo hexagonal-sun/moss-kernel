@@ -1,9 +1,9 @@
 use super::Driver;
-use crate::clock::syscalls::itimer::ITimerType;
 use crate::interrupts::{InterruptDescriptor, InterruptHandler};
 use crate::per_cpu_private;
 use crate::process::Tid;
 use crate::sync::OnceLock;
+use alloc::boxed::Box;
 use alloc::{collections::binary_heap::BinaryHeap, sync::Arc};
 use core::{
     future::poll_fn,
@@ -77,7 +77,11 @@ enum WakeupKind {
     /// This wake up is for the kernel's preemption mechanism.
     Preempt,
 
-    ITimer(Tid, ITimerType),
+    Timer(
+        Tid,
+        u64,
+        Box<dyn Fn(Tid, u64) -> Option<Instant> + Send + Sync>,
+    ),
 }
 
 unsafe impl Send for WakeupKind {}
@@ -181,8 +185,14 @@ impl InterruptHandler for SysTimer {
                         // Do nothing, the IRQ return-to-userspace code will
                         // call schedule() for us.
                     }
-                    WakeupKind::ITimer(tid, ty) => {
-                        crate::clock::syscalls::itimer::itimer_irq_handler(tid, ty);
+                    WakeupKind::Timer(tid, timer_id, callback) => {
+                        if let Some(next_instant) = callback(tid, timer_id) {
+                            // Re-schedule the timer for its next expiration.
+                            wake_q.push(WakeupEvent {
+                                when: next_instant,
+                                what: WakeupKind::Timer(tid, timer_id, callback),
+                            });
+                        }
                     }
                 }
             } else {
@@ -241,12 +251,18 @@ impl SysTimer {
         .await;
     }
 
-    pub fn schedule_itimer(&self, tid: Tid, ty: ITimerType, when: Instant) {
+    pub fn schedule_timer(
+        &self,
+        tid: Tid,
+        id: u64,
+        callback: Box<dyn Fn(Tid, u64) -> Option<Instant> + Send + Sync>,
+        when: Instant,
+    ) {
         let mut wakeup_q = WAKEUP_Q.borrow_mut();
 
         wakeup_q.push(WakeupEvent {
             when,
-            what: WakeupKind::ITimer(tid, ty),
+            what: WakeupKind::Timer(tid, id, callback),
         });
 
         // After pushing, we must update the hardware timer in case our
@@ -256,18 +272,17 @@ impl SysTimer {
         }
     }
 
-    pub fn remove_scheduled_itimer(&self, tid: Tid, ty: ITimerType) {
+    pub fn remove_scheduled_timer(&self, tid: Tid, id: u64) {
         let mut wakeup_q = WAKEUP_Q.borrow_mut();
 
-        // Remove any matching itimer events from the queue.
+        // Remove any timers matching the given tid and id.
         wakeup_q.retain(|event| {
-            if let WakeupKind::ITimer(event_tid, event_ty) = event.what {
-                !(event_tid == tid && event_ty == ty)
+            if let WakeupKind::Timer(event_tid, event_id, _) = &event.what {
+                !(event_tid == &tid && event_id == &id)
             } else {
                 true
             }
         });
-        // TODO: Handle cross-CPU cases where the itimer event might be on a different CPU's queue.
 
         // After removing, we must update the hardware timer in case we removed
         // the earliest event.

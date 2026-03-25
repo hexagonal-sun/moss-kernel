@@ -1,5 +1,6 @@
 pub mod realtime;
 pub mod syscalls;
+pub mod timer;
 pub mod timespec;
 
 pub enum ClockId {
