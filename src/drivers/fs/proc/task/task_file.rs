@@ -130,7 +130,7 @@ Threads:\t{tasks}\n",
                     output.push_str(&format!("{} ", 0)); // cstime
                     output.push_str(&format!("{} ", *task.process.priority.lock_save_irq())); // priority
                     output.push_str(&format!("{} ", 0)); // nice
-                    output.push_str(&format!("{} ", 0)); // num_threads
+                    output.push_str(&format!("{} ", task.process.tasks.lock_save_irq().len())); // num_threads
                     output.push_str(&format!("{} ", 0)); // itrealvalue
                     output.push_str(&format!("{} ", 0)); // starttime
                     output.push_str(&format!("{} ", 0)); // vsize
@@ -149,7 +149,13 @@ Threads:\t{tasks}\n",
                     output.push_str(&format!("{} ", 0)); // nswap
                     output.push_str(&format!("{} ", 0)); // cnswap
                     output.push_str(&format!("{} ", 0)); // exit_signal
-                    output.push_str(&format!("{} ", 0)); // processor
+                    output.push_str(&format!(
+                        "{} ",
+                        task.sched_data
+                            .lock_save_irq()
+                            .as_ref()
+                            .map_or(0, |s| s.last_cpu)
+                    )); // processor
                     output.push_str(&format!("{} ", 0)); // rt_priority
                     output.push_str(&format!("{} ", 0)); // policy
                     output.push_str(&format!("{} ", 0)); // delayacct_blkio_ticks
