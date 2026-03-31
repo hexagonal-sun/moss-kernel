@@ -103,6 +103,41 @@ Threads:\t{tasks}\n",
                 TaskFileType::Comm => format!("{name}\n", name = name.as_str()),
                 TaskFileType::State => format!("{state}\n"),
                 TaskFileType::Stat => {
+                    let vm = task.vm.lock_save_irq();
+
+                    let mut vsize = 0;
+                    let mut startcode = 0;
+                    let mut endcode = 0;
+                    let mut startstack = 0;
+                    let mut start_data = 0;
+                    let mut end_data = 0;
+
+                    for vma in vm.mm().iter_vmas() {
+                        let start = vma.region().start_address().value();
+                        let end = vma.region().end_address().value();
+                        vsize += vma.region().size();
+
+                        if vma.name() == "[stack]" {
+                            startstack = start;
+                        } else if vma.permissions().execute {
+                            if startcode == 0 || start < startcode {
+                                startcode = start;
+                            }
+                            if end > endcode {
+                                endcode = end;
+                            }
+                        } else if vma.permissions().write && !vma.name().starts_with('[') {
+                            if start_data == 0 || start < start_data {
+                                start_data = start;
+                            }
+                            if end > end_data {
+                                end_data = end;
+                            }
+                        }
+                    }
+
+                    let start_brk = vm.start_brk().value();
+
                     let mut output = String::new();
                     output.push_str(&format!("{} ", task.process.tgid.value())); // pid
                     output.push_str(&format!("({}) ", name.as_str())); // comm
@@ -133,12 +168,12 @@ Threads:\t{tasks}\n",
                     output.push_str(&format!("{} ", task.process.tasks.lock_save_irq().len())); // num_threads
                     output.push_str(&format!("{} ", 0)); // itrealvalue
                     output.push_str(&format!("{} ", 0)); // starttime
-                    output.push_str(&format!("{} ", 0)); // vsize
+                    output.push_str(&format!("{vsize} ")); // vsize
                     output.push_str(&format!("{} ", 0)); // rss
                     output.push_str(&format!("{} ", 0)); // rsslim
-                    output.push_str(&format!("{} ", 0)); // startcode
-                    output.push_str(&format!("{} ", 0)); // endcode
-                    output.push_str(&format!("{} ", 0)); // startstack
+                    output.push_str(&format!("{startcode} ")); // startcode
+                    output.push_str(&format!("{endcode} ")); // endcode
+                    output.push_str(&format!("{startstack} ")); // startstack
                     output.push_str(&format!("{} ", 0)); // kstkesp
                     output.push_str(&format!("{} ", 0)); // kstkeip
                     output.push_str(&format!("{} ", 0)); // signal
@@ -161,9 +196,9 @@ Threads:\t{tasks}\n",
                     output.push_str(&format!("{} ", 0)); // delayacct_blkio_ticks
                     output.push_str(&format!("{} ", 0)); // guest_time
                     output.push_str(&format!("{} ", 0)); // cguest_time
-                    output.push_str(&format!("{} ", 0)); // start_data
-                    output.push_str(&format!("{} ", 0)); // end_data
-                    output.push_str(&format!("{} ", 0)); // start_brk
+                    output.push_str(&format!("{start_data} ")); // start_data
+                    output.push_str(&format!("{end_data} ")); // end_data
+                    output.push_str(&format!("{start_brk} ")); // start_brk
                     output.push_str(&format!("{} ", 0)); // arg_start
                     output.push_str(&format!("{} ", 0)); // arg_end
                     output.push_str(&format!("{} ", 0)); // env_start

@@ -84,8 +84,16 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         }
     }
 
+    pub fn mm(&self) -> &MemoryMap<AS> {
+        &self.mm
+    }
+
     pub fn mm_mut(&mut self) -> &mut MemoryMap<AS> {
         &mut self.mm
+    }
+
+    pub fn start_brk(&self) -> VA {
+        self.brk.start_address()
     }
 
     pub fn current_brk(&self) -> VA {
