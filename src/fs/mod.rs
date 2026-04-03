@@ -6,6 +6,7 @@ use crate::{
 };
 use alloc::{borrow::ToOwned, boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
 use async_trait::async_trait;
+use core::any::Any;
 use core::sync::atomic::{AtomicU64, Ordering};
 use dir::DirFile;
 use libkernel::{
@@ -34,6 +35,10 @@ pub struct DummyInode {}
 impl Inode for DummyInode {
     fn id(&self) -> InodeId {
         InodeId::dummy()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

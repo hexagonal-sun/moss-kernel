@@ -11,6 +11,7 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
+use core::any::Any;
 use core::{
     future,
     pin::pin,
@@ -67,6 +68,10 @@ impl Inode for PipeInode {
             uid: self.uid,
             gid: self.gid,
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

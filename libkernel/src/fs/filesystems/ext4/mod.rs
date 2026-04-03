@@ -26,6 +26,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use async_trait::async_trait;
+use core::any::Any;
 use core::error::Error;
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
@@ -157,7 +158,7 @@ impl InodeInner {
                 InodeInner::Regular(File::open_inode(fs, inode).unwrap())
             }
             ext4plus::FileType::Directory => {
-                InodeInner::Directory(Dir::open_inode(fs, inode).await.unwrap())
+                InodeInner::Directory(Dir::open_inode(fs, inode).unwrap())
             }
             _ => InodeInner::Other(inode),
         }
@@ -378,11 +379,13 @@ where
         if inode.id().fs_id() != fs.id() {
             return Err(KernelError::Fs(FsError::CrossDevice));
         }
-        let mut other_inode = ExtInode::read(
-            &fs.inner,
-            (inode.id().inode_id() as u32).try_into().unwrap(),
-        )
-        .await?;
+        let mut other_inode = inode
+            .as_any()
+            .downcast_ref::<Ext4Inode<CPU>>()
+            .ok_or(FsError::CrossDevice)?
+            .inner
+            .lock()
+            .await;
         let file_type = other_inode.file_type();
         inner_dir
             .link(
@@ -443,15 +446,20 @@ where
             return Ok(());
         }
 
-        let old_parent_id = old_parent.id();
+        if old_parent.id().fs_id() != self.id().fs_id() {
+            return Err(KernelError::Fs(FsError::CrossDevice));
+        }
         let fs = self.fs_ref.upgrade().unwrap();
 
-        let old_parent_inode = ExtInode::read(
-            &fs.inner,
-            (old_parent_id.inode_id() as u32).try_into().unwrap(),
-        )
-        .await?;
-        let old_parent_dir = Dir::open_inode(&fs.inner, old_parent_inode).await?;
+        let old_parent_inode = old_parent
+            .as_any()
+            .downcast_ref::<Ext4Inode<CPU>>()
+            .ok_or(FsError::CrossDevice)?
+            .inner
+            .lock()
+            .await
+            .clone();
+        let old_parent_dir = Dir::open_inode(&fs.inner, old_parent_inode)?;
 
         let inner = self.inner.lock().await;
         let inner_dir = match &*inner {
@@ -532,6 +540,13 @@ where
                 child_inode,
             )
             .await?;
+        *old_parent
+            .as_any()
+            .downcast_ref::<Ext4Inode<CPU>>()
+            .ok_or(FsError::CrossDevice)?
+            .inner
+            .lock()
+            .await = InodeInner::Directory(old_parent_dir);
         Ok(())
     }
 
@@ -563,6 +578,10 @@ where
         let fs = self.fs_ref.upgrade().ok_or(FsError::InvalidFs)?;
         inner.write(&fs.inner).await?;
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

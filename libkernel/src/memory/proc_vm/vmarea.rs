@@ -486,6 +486,7 @@ impl VMArea {
 #[cfg(test)]
 pub mod tests {
     use crate::fs::InodeId;
+    use core::any::Any;
 
     use super::*;
     use async_trait::async_trait;
@@ -497,6 +498,10 @@ pub mod tests {
     impl Inode for DummyTestInode {
         fn id(&self) -> InodeId {
             unreachable!("Not called")
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
         }
     }
 
