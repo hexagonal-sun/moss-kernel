@@ -71,7 +71,8 @@ use crate::{
         clone::sys_clone,
         creds::{
             sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_getsid,
-            sys_gettid, sys_getuid, sys_setfsgid, sys_setfsuid, sys_setsid,
+            sys_gettid, sys_getuid, sys_setfsgid, sys_setfsuid, sys_setgid, sys_setregid,
+            sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid,
         },
         exec::sys_execve,
         exit::{sys_exit, sys_exit_group},
@@ -537,6 +538,11 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             return;
         }
         0x8e => sys_reboot(&ctx, arg1 as _, arg2 as _, arg3 as _, arg4 as _).await,
+        0x8f => sys_setregid(&ctx, arg1 as _, arg2 as _),
+        0x90 => sys_setgid(&ctx, arg1 as _),
+        0x91 => sys_setreuid(&ctx, arg1 as _, arg2 as _),
+        0x92 => sys_setuid(&ctx, arg1 as _),
+        0x93 => sys_setresuid(&ctx, arg1 as _, arg2 as _, arg3 as _),
         0x94 => {
             sys_getresuid(
                 &ctx,
@@ -546,6 +552,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             )
             .await
         }
+        0x95 => sys_setresgid(&ctx, arg1 as _, arg2 as _, arg3 as _),
         0x96 => {
             sys_getresgid(
                 &ctx,
