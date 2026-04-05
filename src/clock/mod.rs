@@ -1,7 +1,6 @@
-pub mod gettime;
 pub mod realtime;
-pub mod settime;
-pub mod timeofday;
+pub mod syscalls;
+pub mod timer;
 pub mod timespec;
 
 pub enum ClockId {

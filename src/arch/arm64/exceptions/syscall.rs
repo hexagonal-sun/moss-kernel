@@ -1,7 +1,8 @@
 use crate::{
     arch::{Arch, ArchImpl},
-    clock::{
+    clock::syscalls::{
         gettime::sys_clock_gettime,
+        itimer::{sys_getitimer, sys_setitimer},
         settime::sys_clock_settime,
         timeofday::{sys_gettimeofday, sys_settimeofday},
     },
@@ -476,6 +477,16 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         }
         0x63 => sys_set_robust_list(&mut ctx, TUA::from_value(arg1 as _), arg2 as _).await,
         0x65 => sys_nanosleep(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0x66 => sys_getitimer(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,
+        0x67 => {
+            sys_setitimer(
+                &ctx,
+                arg1 as _,
+                TUA::from_value(arg2 as _),
+                TUA::from_value(arg3 as _),
+            )
+            .await
+        }
         0x70 => sys_clock_settime(arg1 as _, TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,
         0x73 => {

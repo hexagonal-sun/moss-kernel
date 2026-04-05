@@ -5,7 +5,7 @@ use libkernel::{
     memory::address::TUA,
 };
 
-use super::{ClockId, realtime::date, timespec::TimeSpec};
+use crate::clock::{ClockId, realtime::date, timespec::TimeSpec};
 use crate::drivers::timer::{Instant, now};
 use crate::sched::syscall_ctx::ProcessCtx;
 use crate::{drivers::timer::uptime, memory::uaccess::copy_to_user};
