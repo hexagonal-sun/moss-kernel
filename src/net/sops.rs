@@ -52,7 +52,7 @@ pub trait SocketOps: Send + Sync {
         buf: UA,
         count: usize,
         flags: RecvFlags,
-    ) -> libkernel::error::Result<usize>;
+    ) -> libkernel::error::Result<(usize, Option<SockAddr>)>;
     async fn recvfrom(
         &mut self,
         ctx: &mut FileCtx,
@@ -95,7 +95,9 @@ where
         buf: UA,
         count: usize,
     ) -> libkernel::error::Result<usize> {
-        self.recv(ctx, buf, count, RecvFlags::empty()).await
+        self.recv(ctx, buf, count, RecvFlags::empty())
+            .await
+            .map(|(len, _)| len)
     }
 
     async fn readat(
