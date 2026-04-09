@@ -1,19 +1,41 @@
 [package]
 name = "libkernel"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+sync = []
+alloc = ["sync", "dep:intrusive-collections"]
+paging = ["alloc", "dep:tock-registers", "dep:paste"]
+proc = []
+fs = ["proc", "sync", "dep:async-trait", "dep:ext4plus"]
+proc_vm = ["paging", "fs", "dep:object"]
+kbuf = ["sync", "dep:ringbuf"]
+all = ["paging", "fs", "proc_vm", "kbuf"]
+
 [dependencies]
-async-trait = { workspace = true }
+# Always-on dependencies
 bitflags = { workspace = true }
-ext4plus = "0.1.0-alpha.7"
-intrusive-collections = { version = "0.10.0", default-features = false }
 log = { workspace = true }
-object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }
-paste = { workspace = true }
-ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
 thiserror = { version = "2.0.12", default-features = false }
-tock-registers = "0.10.1"
+
+# alloc
+intrusive-collections = { version = "0.10.0", default-features = false, optional = true }
+
+# paging
+paste = { workspace = true, optional = true }
+tock-registers = { version = "0.10.1", optional = true }
+
+# fs
+async-trait = { workspace = true, optional = true }
+ext4plus = { version = "0.1.0-alpha.7", optional = true }
+
+# proc_vm
+object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"], optional = true }
+
+# kbuf
+ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 rand = { workspace = true, features = ["default"] }

@@ -1,5 +1,6 @@
 use core::fmt;
 
+#[cfg(feature = "proc_vm")]
 use super::proc_vm::vmarea::VMAPermissions;
 
 /// Represents the memory permissions for a virtual memory mapping.
@@ -12,6 +13,7 @@ pub struct PtePermissions {
     cow: bool,
 }
 
+#[cfg(feature = "proc_vm")]
 impl From<VMAPermissions> for PtePermissions {
     fn from(value: VMAPermissions) -> Self {
         Self {

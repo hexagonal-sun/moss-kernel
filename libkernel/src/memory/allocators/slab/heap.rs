@@ -5,7 +5,7 @@ use crate::{
         PAGE_SIZE,
         address::{AddressTranslator, VA},
         allocators::phys::PageAllocGetter,
-        page::ClaimedPage,
+        claimed_page::ClaimedPage,
         region::PhysMemoryRegion,
     },
 };
