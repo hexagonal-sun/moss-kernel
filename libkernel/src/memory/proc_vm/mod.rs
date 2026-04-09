@@ -15,6 +15,7 @@ pub mod vmarea;
 
 const BRK_PERMISSIONS: VMAPermissions = VMAPermissions::rw();
 
+/// The virtual memory state of a user-space process.
 pub struct ProcessVM<AS: UserAddressSpace> {
     mm: MemoryMap<AS>,
     brk: VirtMemoryRegion,
@@ -49,6 +50,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         Ok(Self { mm, brk })
     }
 
+    /// Constructs a `ProcessVM` from an existing memory map.
     pub fn from_map(map: MemoryMap<AS>) -> Self {
         // Last entry will be the VMA with the highest address.
         let brk = map
@@ -67,6 +69,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         }
     }
 
+    /// Creates an empty `ProcessVM` with no mappings and a zero-sized heap.
     pub fn empty() -> Result<Self> {
         Ok(Self {
             mm: MemoryMap::new()?,
@@ -74,6 +77,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         })
     }
 
+    /// Finds the VMA covering `addr` if the given access type is permitted.
     pub fn find_vma_for_fault(&self, addr: VA, access_type: AccessKind) -> Option<&VMArea> {
         let vma = self.mm.find_vma(addr)?;
 
@@ -84,18 +88,22 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         }
     }
 
+    /// Returns a non-mutable reference to the underlying memory map.
     pub fn mm(&self) -> &MemoryMap<AS> {
         &self.mm
     }
 
+    /// Returns a mutable reference to the underlying memory map.
     pub fn mm_mut(&mut self) -> &mut MemoryMap<AS> {
         &mut self.mm
     }
 
+    /// Returns the current start address of the program break (heap).
     pub fn start_brk(&self) -> VA {
         self.brk.start_address()
     }
 
+    /// Returns the current end address of the program break (heap).
     pub fn current_brk(&self) -> VA {
         self.brk.end_address()
     }
@@ -165,6 +173,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         Ok(new_end_addr)
     }
 
+    /// Clones this process VM, marking all writable pages as copy-on-write.
     pub fn clone_as_cow(&mut self) -> Result<Self> {
         Ok(Self {
             mm: self.mm.clone_as_cow()?,

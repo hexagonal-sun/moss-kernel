@@ -1,3 +1,5 @@
+//! Physical page-frame allocator (buddy allocator).
+
 use crate::{
     CpuOps,
     error::{KernelError, Result},
@@ -155,22 +157,28 @@ impl FrameAllocatorInner {
     }
 }
 
+/// Thread-safe wrapper around the buddy frame allocator.
 pub struct FrameAllocator<CPU: CpuOps> {
     pub(super) inner: SpinLockIrq<FrameAllocatorInner, CPU>,
 }
 
+/// An RAII guard for a contiguous allocation of physical page frames.
+///
+/// When dropped, the pages are automatically returned to the allocator.
 pub struct PageAllocation<'a, CPU: CpuOps> {
     region: PhysMemoryRegion,
     inner: &'a SpinLockIrq<FrameAllocatorInner, CPU>,
 }
 
 impl<CPU: CpuOps> PageAllocation<'_, CPU> {
+    /// Consumes the allocation without freeing it, returning the underlying region.
     pub fn leak(self) -> PhysMemoryRegion {
         let region = self.region;
         core::mem::forget(self);
         region
     }
 
+    /// Returns a reference to the physical memory region backing this allocation.
     pub fn region(&self) -> &PhysMemoryRegion {
         &self.region
     }
@@ -434,11 +442,14 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
     }
 }
 
+/// Provides access to the global page-frame allocator.
 pub trait PageAllocGetter<C: CpuOps>: Send + Sync + 'static {
+    /// Returns a reference to the global [`FrameAllocator`].
     fn global_page_alloc() -> &'static FrameAllocator<C>;
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 pub mod tests {
     use super::*;
     use crate::{

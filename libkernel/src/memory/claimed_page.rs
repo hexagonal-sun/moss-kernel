@@ -1,3 +1,5 @@
+//! RAII wrapper for a page frame claimed from the physical page allocator.
+
 use super::{
     PAGE_SIZE,
     address::AddressTranslator,
@@ -55,6 +57,7 @@ impl<A: CpuOps, G: PageAllocGetter<A>, T: AddressTranslator<()>> ClaimedPage<A, 
         )
     }
 
+    /// Returns the physical address of this claimed page.
     #[inline(always)]
     pub fn pa(&self) -> PA {
         self.0.region().start_address()
@@ -98,6 +101,7 @@ impl<A: CpuOps, G: PageAllocGetter<A>, T: AddressTranslator<()>> ClaimedPage<A, 
         unsafe { slice::from_raw_parts_mut(self.as_ptr_mut(), PAGE_SIZE) }
     }
 
+    /// Consumes the claimed page, returning the underlying page frame without freeing it.
     pub fn leak(self) -> PageFrame {
         self.0.leak().start_address().to_pfn()
     }

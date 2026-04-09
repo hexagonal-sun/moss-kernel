@@ -65,6 +65,7 @@ where
     }
 }
 
+/// A mutable borrow of per-CPU data that restores interrupts on drop.
 pub struct IrqSafeRefMut<'a, T, CPU: CpuOps> {
     borrow: ManuallyDrop<RefMut<'a, T>>,
     flags: usize,
@@ -198,6 +199,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<RefCell<T>, CPU> {
         }
     }
 
+    /// Attempts to mutably borrow the per-CPU data, returning `None` if already borrowed.
     #[track_caller]
     pub fn try_borrow_mut(&self) -> Option<IrqGuard<RefMut<'_, T>, CPU>> {
         let flags = CPU::disable_interrupts();
@@ -225,6 +227,7 @@ impl<T: Send, CPU: CpuOps> PerCpu<RefCell<T>, CPU> {
 }
 
 impl<T: Send + Sync, CPU: CpuOps> PerCpu<T, CPU> {
+    /// Returns a reference to the data for the given CPU.
     pub fn get_by_cpu(&self, cpu_id: usize) -> &T {
         unsafe { self.get_for_cpu(cpu_id) }
     }

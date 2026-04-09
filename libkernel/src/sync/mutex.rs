@@ -1,3 +1,5 @@
+//! Async-aware mutual-exclusion lock.
+
 use alloc::collections::VecDeque;
 use core::cell::UnsafeCell;
 use core::future::Future;

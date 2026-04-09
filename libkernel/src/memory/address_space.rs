@@ -1,3 +1,5 @@
+//! Kernel and user address-space management.
+
 use alloc::vec::Vec;
 
 use crate::{
@@ -14,7 +16,9 @@ use crate::{
 
 /// An architecture-independent representation of a page table entry (PTE).
 pub struct PageInfo {
+    /// The page frame number identifying the physical page.
     pub pfn: PageFrame,
+    /// The permission bits for this page table entry.
     pub perms: PtePermissions,
 }
 

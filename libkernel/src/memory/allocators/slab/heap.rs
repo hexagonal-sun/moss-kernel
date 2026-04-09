@@ -1,3 +1,5 @@
+//! Kernel heap built on top of the slab allocator.
+
 use super::{allocator::SlabAllocator, cache::SlabCache};
 use crate::{
     CpuOps,
@@ -11,15 +13,21 @@ use crate::{
 };
 use core::{alloc::GlobalAlloc, marker::PhantomData, ops::DerefMut};
 
+/// Provides access to the global slab allocator instance.
 pub trait SlabGetter<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> {
+    /// Returns a reference to the global slab allocator.
     fn global_slab_alloc() -> &'static SlabAllocator<CPU, A, T>;
 }
 
+/// Per-CPU storage backend for a [`SlabCache`] pointer.
 pub trait SlabCacheStorage {
+    /// Stores the slab cache pointer (e.g. into per-CPU data).
     fn store(ptr: *mut SlabCache);
+    /// Retrieves the slab cache for the current CPU.
     fn get() -> impl DerefMut<Target = SlabCache>;
 }
 
+/// The kernel heap allocator backed by the slab allocator and frame allocator.
 pub struct KHeap<CPU, S, PG, T, SG>
 where
     CPU: CpuOps,
@@ -56,6 +64,7 @@ where
     T: AddressTranslator<()>,
     SG: SlabGetter<CPU, PG, T>,
 {
+    /// Creates a new kernel heap instance.
     pub const fn new() -> Self {
         Self {
             phantom1: PhantomData,
@@ -74,6 +83,7 @@ where
         pages_needed.next_power_of_two().ilog2() as usize
     }
 
+    /// Initializes the per-CPU slab cache for the current CPU.
     pub fn init_for_this_cpu() {
         let page: ClaimedPage<CPU, PG, T> =
             ClaimedPage::alloc_zeroed().expect("Cannot allocate heap page");

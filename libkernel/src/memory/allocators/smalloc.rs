@@ -1,5 +1,4 @@
-//! `smalloc` module: A simple physical memory allocator for early boot and
-//! kernel use.
+//! A simple physical memory allocator for early boot and kernel use.
 //!
 //! This allocator manages a fixed number of memory and reservation regions and
 //! supports basic allocation and freeing of physical memory blocks.
@@ -34,6 +33,7 @@ use core::{
     ops::{Index, IndexMut},
 };
 
+/// A fixed-capacity list of non-overlapping physical memory regions.
 #[derive(Clone)]
 pub struct RegionList {
     count: usize,
@@ -42,10 +42,12 @@ pub struct RegionList {
 }
 
 impl RegionList {
+    /// Returns `true` if the list contains no regions.
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
 
+    /// Creates a new region list backed by a pre-allocated buffer at `region_ptr`.
     pub const fn new(max: usize, region_ptr: *mut PhysMemoryRegion) -> Self {
         Self {
             count: 0,
@@ -68,6 +70,7 @@ impl RegionList {
         self.count -= 1;
     }
 
+    /// Inserts a region, merging with adjacent neighbours when possible.
     pub fn insert_region(&mut self, mut new_region: PhysMemoryRegion) {
         if self.count == self.max {
             panic!("Cannot insert into full region list");
@@ -108,6 +111,7 @@ impl RegionList {
         self[insert_idx] = new_region;
     }
 
+    /// Returns an iterator over the regions in this list.
     pub fn iter(&self) -> impl Iterator<Item = PhysMemoryRegion> {
         (0..self.count).map(|x| self[x])
     }
@@ -156,8 +160,11 @@ impl IndexMut<usize> for RegionList {
     }
 }
 
+/// A simple physical memory allocator that tracks free and reserved regions.
 pub struct Smalloc<T: AddressTranslator<()>> {
+    /// Available memory regions.
     pub memory: RegionList,
+    /// Reserved memory regions (e.g. ACPI tables, device memory).
     pub res: RegionList,
     permit_region_realloc: bool,
     _phantom: PhantomData<T>,
@@ -171,6 +178,7 @@ enum RegionListType {
 unsafe impl<T: AddressTranslator<()>> Send for Smalloc<T> {}
 
 impl<T: AddressTranslator<()>> Smalloc<T> {
+    /// Creates a new allocator with the given memory and reservation lists.
     pub const fn new(memory: RegionList, reserved_list: RegionList) -> Self {
         Self {
             memory,
@@ -230,6 +238,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
         None
     }
 
+    /// Allocates a region of the given `size` and alignment. Returns the base physical address.
     pub fn alloc(&mut self, size: usize, align: usize) -> Result<PA> {
         if self.res.requires_reallocation() {
             self.grow_region_list(RegionListType::Res)?;
@@ -245,6 +254,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
         Ok(address)
     }
 
+    /// Frees a previously allocated region at `addr` with the given `size`.
     pub fn free(&mut self, addr: PA, size: usize) -> Result<()> {
         let region_to_remove = PhysMemoryRegion::new(addr, size);
 
@@ -344,6 +354,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
         }
     }
 
+    /// Marks a physical region as reserved without allocating from free memory.
     pub fn add_reservation(&mut self, region: PhysMemoryRegion) -> Result<()> {
         if self.res.requires_reallocation() {
             self.grow_region_list(RegionListType::Res)?;
@@ -354,6 +365,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
         Ok(())
     }
 
+    /// Returns the base address of the first memory region, if any.
     pub fn base_ram_base_address(&self) -> Option<PA> {
         if self.memory.is_empty() {
             None
@@ -362,6 +374,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
         }
     }
 
+    /// Adds a new physical memory region to the allocator.
     pub fn add_memory(&mut self, region: PhysMemoryRegion) -> Result<()> {
         if self.memory.requires_reallocation() {
             self.grow_region_list(RegionListType::Mem)?;
@@ -372,16 +385,19 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
         Ok(())
     }
 
+    /// Allocates a single page-aligned page and returns its frame number.
     pub fn alloc_page(&mut self) -> Result<PageFrame> {
         let pa = self.alloc(PAGE_SIZE, PAGE_SIZE)?;
 
         Ok(PageFrame::from_pfn(pa.value() >> PAGE_SHIFT))
     }
 
+    /// Returns an iterator over all memory regions known to the allocator.
     pub fn iter_memory(&self) -> impl Iterator<Item = PhysMemoryRegion> {
         self.memory.iter()
     }
 
+    /// Returns a copy of the memory region list.
     pub fn get_memory_list(&self) -> RegionList {
         self.memory.clone()
     }
@@ -399,6 +415,7 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
     }
 }
 
+/// Iterator over free (unreserved) physical memory regions.
 pub struct FreeRegionsIter<M, R>
 where
     M: Iterator<Item = PhysMemoryRegion>,

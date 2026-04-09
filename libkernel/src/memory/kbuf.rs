@@ -22,6 +22,7 @@ struct KBufInner<T, S: Storage<Item = T>> {
     write_waiters: WakerSet,
 }
 
+/// A page-backed, async-aware circular kernel buffer.
 pub struct KBufCore<T, S: Storage<Item = T>, C: CpuOps> {
     inner: Arc<SpinLockIrq<KBufInner<T, S>, C>>,
 }
@@ -35,6 +36,7 @@ impl<T, S: Storage<Item = T>, C: CpuOps> Clone for KBufCore<T, S, C> {
 }
 
 impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
+    /// Creates a new kernel buffer backed by the given storage.
     pub fn new(storage: S) -> Self {
         let rb = unsafe { SharedRb::from_raw_parts(storage, 0, 0) };
 
@@ -47,6 +49,7 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         }
     }
 
+    /// Returns a future that resolves when data is available for reading.
     pub fn read_ready(&self) -> impl Future<Output = ()> + use<T, S, C> {
         let lock = self.inner.clone();
 
@@ -59,6 +62,7 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         )
     }
 
+    /// Waits until at least one slot is available for writing.
     pub async fn write_ready(&self) {
         wait_until(
             self.inner.clone(),
@@ -81,6 +85,7 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         }
     }
 
+    /// Attempts to push `obj` into the buffer without waiting. Returns `Err(obj)` if full.
     pub fn try_push(&self, obj: T) -> core::result::Result<(), T> {
         let mut inner = self.inner.lock_save_irq();
 
@@ -93,6 +98,7 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         res
     }
 
+    /// Pops a value from the buffer, waiting asynchronously if it is empty.
     pub async fn pop(&self) -> T {
         loop {
             self.read_ready().await;
@@ -103,6 +109,7 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         }
     }
 
+    /// Attempts to pop a value without blocking, returning `None` if the buffer is empty.
     pub fn try_pop(&self) -> Option<T> {
         let mut inner = self.inner.lock_save_irq();
 
@@ -115,12 +122,14 @@ impl<T, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         res
     }
 
+    /// Returns the capacity of the underlying ring buffer.
     pub fn capacity(&self) -> NonZeroUsize {
         self.inner.lock_save_irq().buf.capacity()
     }
 }
 
 impl<T: Copy, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
+    /// Asynchronously pops up to `buf.len()` items into `buf`, blocking until at least one is available.
     pub async fn pop_slice(&self, buf: &mut [T]) -> usize {
         wait_until(
             self.inner.clone(),
@@ -141,6 +150,7 @@ impl<T: Copy, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         .await
     }
 
+    /// Attempts to pop up to `buf.len()` items without blocking.
     pub fn try_pop_slice(&self, buf: &mut [T]) -> usize {
         let mut guard = self.inner.lock_save_irq();
         let size = guard.buf.pop_slice(buf);
@@ -150,6 +160,7 @@ impl<T: Copy, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         size
     }
 
+    /// Asynchronously pushes items from `buf`, blocking until space is available.
     pub async fn push_slice(&self, buf: &[T]) -> usize {
         wait_until(
             self.inner.clone(),
@@ -176,6 +187,7 @@ impl<T: Copy, S: Storage<Item = T>, C: CpuOps> KBufCore<T, S, C> {
         .await
     }
 
+    /// Attempts to push items from `buf` without blocking.
     pub fn try_push_slice(&self, buf: &[T]) -> usize {
         let mut guard = self.inner.lock_save_irq();
         let size = guard.buf.push_slice(buf);

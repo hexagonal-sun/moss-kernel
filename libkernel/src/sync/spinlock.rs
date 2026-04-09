@@ -1,3 +1,5 @@
+//! Low-level spin lock primitives.
+
 use core::cell::UnsafeCell;
 use core::hint::spin_loop;
 use core::marker::PhantomData;

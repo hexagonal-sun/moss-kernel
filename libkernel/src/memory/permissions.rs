@@ -1,3 +1,5 @@
+//! Page-table entry permission flags.
+
 use core::fmt;
 
 #[cfg(feature = "proc_vm")]

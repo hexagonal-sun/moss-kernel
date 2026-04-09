@@ -1,3 +1,9 @@
+//! Plain Old Data trait and blanket implementations.
+//!
+//! Types that implement [`Pod`] can be safely created by copying their raw byte
+//! representation. This is useful for reading on-disk structures from block
+//! devices.
+
 /// An unsafe trait indicating that a type is "Plain Old Data".
 ///
 /// A type is `Pod` if it is a simple collection of bytes with no invalid bit

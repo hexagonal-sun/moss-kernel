@@ -32,28 +32,38 @@ use async_trait::async_trait;
 use attr::{FileAttr, FilePermissions};
 use core::time::Duration;
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct OpenFlags: u32 {
-        const O_RDONLY    = 0b000;
-        const O_WRONLY    = 0b001;
-        const O_RDWR      = 0b010;
-        const O_ACCMODE   = 0b011;
-        const O_CREAT     = 0o100;
-        const O_EXCL      = 0o200;
-        const O_TRUNC     = 0o1000;
-        const O_DIRECTORY = 0o200000;
-        const O_APPEND    = 0o2000;
-        const O_NONBLOCK  = 0o4000;
-        const O_CLOEXEC   = 0o2000000;
+mod _open_flags {
+    #![allow(missing_docs)]
+    bitflags::bitflags! {
+        /// Flags used when opening a file, corresponding to POSIX `O_*` constants.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub struct OpenFlags: u32 {
+            const O_RDONLY    = 0b000;
+            const O_WRONLY    = 0b001;
+            const O_RDWR      = 0b010;
+            const O_ACCMODE   = 0b011;
+            const O_CREAT     = 0o100;
+            const O_EXCL      = 0o200;
+            const O_TRUNC     = 0o1000;
+            const O_DIRECTORY = 0o200000;
+            const O_APPEND    = 0o2000;
+            const O_NONBLOCK  = 0o4000;
+            const O_CLOEXEC   = 0o2000000;
+        }
     }
 }
+pub use _open_flags::OpenFlags;
 
-// Reserved psuedo filesystem instances created internally in the kernel.
+// Reserved pseudo filesystem instances created internally in the kernel.
+/// Filesystem instance ID for the device filesystem.
 pub const DEVFS_ID: u64 = 1;
+/// Filesystem instance ID for the proc filesystem.
 pub const PROCFS_ID: u64 = 2;
+/// Filesystem instance ID for the sys filesystem.
 pub const SYSFS_ID: u64 = 3;
+/// Filesystem instance ID for the cgroup filesystem.
 pub const CGROUPFS_ID: u64 = 4;
+/// Starting ID for user-mounted filesystem instances.
 pub const FS_ID_START: u64 = 10;
 
 /// Trait for a mounted filesystem instance. Its main role is to act as a
@@ -78,30 +88,34 @@ pub trait Filesystem: Send + Sync {
     }
 }
 
-// A unique identifier for an inode across the entire VFS. A tuple of
-// (filesystem_id, inode_number).
+/// A unique identifier for an inode across the entire VFS, combining a filesystem ID and inode number.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct InodeId(u64, u64);
 
 impl InodeId {
+    /// Creates an `InodeId` from a filesystem ID and an inode number.
     pub fn from_fsid_and_inodeid(fs_id: u64, inode_id: u64) -> Self {
         Self(fs_id, inode_id)
     }
 
+    /// Returns a sentinel `InodeId` used as a placeholder.
     pub fn dummy() -> Self {
         Self(u64::MAX, u64::MAX)
     }
 
+    /// Returns the filesystem ID component.
     pub fn fs_id(self) -> u64 {
         self.0
     }
 
+    /// Returns the inode number component.
     pub fn inode_id(self) -> u64 {
         self.1
     }
 }
 
 /// Standard POSIX file types.
+#[allow(missing_docs)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum FileType {
     File,
@@ -138,13 +152,18 @@ pub trait DirStream: Send + Sync {
 /// Represents a single directory entry.
 #[derive(Debug, Clone)]
 pub struct Dirent {
+    /// The inode identifier of this entry.
     pub id: InodeId,
+    /// The name of this directory entry.
     pub name: String,
+    /// The type of file this entry represents.
     pub file_type: FileType,
+    /// The byte offset of this entry within the directory.
     pub offset: u64,
 }
 
 impl Dirent {
+    /// Creates a new directory entry.
     pub fn new(name: String, id: InodeId, file_type: FileType, offset: u64) -> Self {
         Self {
             id,
@@ -158,8 +177,11 @@ impl Dirent {
 /// Specifies how to seek within a file, mirroring `std::io::SeekFrom`.
 #[derive(Debug, Copy, Clone)]
 pub enum SeekFrom {
+    /// Seek from the beginning of the file.
     Start(u64),
+    /// Seek from the end of the file.
     End(i64),
+    /// Seek relative to the current position.
     Current(i64),
 }
 
@@ -329,6 +351,7 @@ pub trait Inode: Send + Sync + Any {
         Ok(())
     }
 
+    /// Return this inode as an `Any` object, suitable for downcasting.
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -336,14 +359,19 @@ pub trait Inode: Send + Sync + Any {
 /// for common inode operations.
 #[async_trait]
 pub trait SimpleFile {
+    /// Returns the inode ID of this file.
     fn id(&self) -> InodeId;
+    /// Returns the file metadata.
     async fn getattr(&self) -> Result<FileAttr>;
+    /// Reads the entire file contents into a byte vector.
     async fn read(&self) -> Result<Vec<u8>>;
+    /// Reads the target of a symbolic link, if applicable.
     async fn readlink(&self) -> Result<PathBuf> {
         Err(KernelError::NotSupported)
     }
 }
 
+#[allow(missing_docs)]
 #[async_trait]
 impl<T> Inode for T
 where
@@ -385,12 +413,14 @@ where
     }
 }
 
+/// A simple in-memory directory stream backed by a `Vec` of entries.
 pub struct SimpleDirStream {
     entries: Vec<Dirent>,
     idx: usize,
 }
 
 impl SimpleDirStream {
+    /// Creates a new `SimpleDirStream` starting at the given offset.
     pub fn new(entries: Vec<Dirent>, start_offset: u64) -> Self {
         Self {
             entries,

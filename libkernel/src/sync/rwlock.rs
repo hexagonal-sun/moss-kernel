@@ -1,3 +1,5 @@
+//! Async-aware readers–writer lock.
+
 use super::spinlock::SpinLockIrq;
 use crate::CpuOps;
 use crate::sync::mutex::Mutex;

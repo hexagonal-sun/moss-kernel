@@ -1,4 +1,4 @@
-//! `address` module: Type-safe handling of virtual and physical addresses.
+//! Type-safe handling of virtual and physical addresses.
 //!
 //! This module defines strongly-typed address representations for both physical
 //! and virtual memory. It provides abstractions to ensure correct usage and
@@ -147,20 +147,24 @@ impl<K: MemKind, T> Address<K, T> {
         self.inner & PAGE_MASK
     }
 
+    /// Returns the null (zero) address.
     pub const fn null() -> Self {
         Self::from_value(0)
     }
 
+    /// Returns a new address offset forward by `n` bytes.
     #[must_use]
     pub const fn add_bytes(self, n: usize) -> Self {
         Self::from_value(self.value() + n)
     }
 
+    /// Returns a new address offset backward by `n` bytes.
     #[must_use]
     pub fn sub_bytes(self, n: usize) -> Self {
         Self::from_value(self.value() - n)
     }
 
+    /// Returns `true` if this is the null (zero) address.
     pub fn is_null(self) -> bool {
         self.inner == 0
     }
@@ -291,6 +295,7 @@ impl PA {
         TPA::from_value(self.value())
     }
 
+    /// Converts this physical address to a page frame number.
     pub fn to_pfn(&self) -> PageFrame {
         PageFrame::from_pfn(self.inner >> PAGE_SHIFT)
     }
@@ -298,7 +303,9 @@ impl PA {
 
 /// Trait for translating between physical and virtual addresses.
 pub trait AddressTranslator<T>: 'static + Send + Sync {
+    /// Translates a virtual address to its corresponding physical address.
     fn virt_to_phys(va: TVA<T>) -> TPA<T>;
+    /// Translates a physical address to its corresponding virtual address.
     fn phys_to_virt(pa: TPA<T>) -> TVA<T>;
 }
 

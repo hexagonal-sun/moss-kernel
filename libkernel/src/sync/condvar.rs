@@ -1,3 +1,5 @@
+//! Async-aware condition variable.
+
 use super::spinlock::SpinLockIrq;
 use super::waker_set::WakerSet;
 use crate::CpuOps;
@@ -5,8 +7,11 @@ use alloc::sync::Arc;
 
 /// The type of wakeup that should occur after a state update.
 pub enum WakeupType {
+    /// Do not wake any waiting task.
     None,
+    /// Wake exactly one waiting task.
     One,
+    /// Wake all waiting tasks.
     All,
 }
 

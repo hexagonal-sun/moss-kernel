@@ -1,3 +1,5 @@
+//! Block I/O buffer management.
+
 use core::{mem, slice};
 
 use crate::{error::Result, fs::BlockDevice, pod::Pod};

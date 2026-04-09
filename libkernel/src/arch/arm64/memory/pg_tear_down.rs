@@ -1,3 +1,5 @@
+//! Utilities for tearing down and freeing page table hierarchies.
+
 use super::pg_descriptors::{PaMapper, TableMapper};
 use super::pg_tables::L0Table;
 use super::{

@@ -1,10 +1,59 @@
+//! # libkernel
+//!
+//! Architecture-independent kernel building blocks for operating systems.
+//!
+//!
+//! `libkernel` provides the core abstractions that a kernel needs to manage
+//! memory, processes, filesystems, and synchronisation — all without tying the
+//! implementation to a particular CPU architecture. It is designed to run in a
+//! `no_std` environment and relies on feature gates to keep the dependency
+//! footprint minimal.
+//!
+//! ## Feature gates
+//!
+//! Most of the crate is hidden behind Cargo features so that consumers only pay
+//! for the subsystems they need:
+//!
+//! | Feature   | Enables                                               | Implies          |
+//! |-----------|-------------------------------------------------------|------------------|
+//! | `sync`    | Synchronisation primitives (spinlock, mutex, rwlock…) | —                |
+//! | `alloc`   | Memory allocators (buddy, slab) and collection types  | `sync`           |
+//! | `paging`  | Page tables, address-space management, PTE helpers    | `alloc`          |
+//! | `proc`    | Process identity types (UID/GID, capabilities)        | —                |
+//! | `fs`      | VFS traits, path manipulation, block I/O              | `proc`, `sync`   |
+//! | `proc_vm` | Process virtual-memory management (mmap, brk, CoW)    | `paging`, `fs`   |
+//! | `kbuf`    | Async-aware circular kernel buffers                   | `sync`           |
+//! | `all`     | Everything above                                      | all of the above |
+//!
+//! ## The `CpuOps` trait
+//!
+//! Nearly every synchronisation and memory primitive in the crate is generic
+//! over a [`CpuOps`] implementation. This trait abstracts the handful of
+//! arch-specific operations (core ID, interrupt masking, halt) that the
+//! arch-independent code depends on, making the library portable while still
+//! fully testable on the host.
+//!
+//! ## Crate layout
+//!
+//! - [`error`]  — Unified kernel error types and POSIX errno mapping.
+//! - [`memory`] — Typed addresses, memory regions, page allocators, and
+//!   address-space management.
+//! - [`sync`]   — Async-aware spinlocks, mutexes, rwlocks, condvars, channels,
+//!   and per-CPU storage *(feature `sync`)*.
+//! - [`fs`]     — VFS traits (`Filesystem`, `Inode`, `BlockDevice`), path
+//!   manipulation, and filesystem driver scaffolding *(feature `fs`)*.
+//! - [`proc`]   — Process identity types and Linux-compatible capabilities
+//!   *(feature `proc`)*.
+//! - [`arch`]   — Architecture-specific support code *(feature `paging`)*.
+
 #![cfg_attr(not(test), no_std)]
+#![warn(missing_docs)]
 
 #[cfg(feature = "paging")]
 pub mod arch;
-pub mod error;
 #[cfg(feature = "fs")]
 pub mod driver;
+pub mod error;
 #[cfg(feature = "fs")]
 pub mod fs;
 pub mod memory;
@@ -18,10 +67,32 @@ pub mod sync;
 extern crate alloc;
 
 #[cfg(feature = "paging")]
-pub use memory::address_space::{
-    KernAddressSpace, PageInfo, UserAddressSpace, VirtualMemory,
-};
+pub use memory::address_space::{KernAddressSpace, PageInfo, UserAddressSpace, VirtualMemory};
 
+/// Trait abstracting the small set of CPU operations that the
+/// architecture-independent kernel code requires.
+///
+/// Every concrete kernel target must provide an implementation of this trait.
+/// The synchronisation primitives in [`sync`] and the memory subsystem in
+/// [`memory`] are generic over `CpuOps`, which keeps this crate portable while
+/// allowing the real kernel — and unit tests — to supply their own
+/// implementations.
+///
+/// # Example (test mock)
+///
+/// ```
+/// use libkernel::CpuOps;
+///
+/// struct MockCpu;
+///
+/// impl CpuOps for MockCpu {
+///     fn id() -> usize { 0 }
+///     fn halt() -> ! { loop { core::hint::spin_loop() } }
+///     fn disable_interrupts() -> usize { 0 }
+///     fn restore_interrupt_state(_flags: usize) {}
+///     fn enable_interrupts() {}
+/// }
+/// ```
 pub trait CpuOps: 'static {
     /// Returns the ID of the currently executing core.
     fn id() -> usize;
@@ -41,6 +112,7 @@ pub trait CpuOps: 'static {
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 pub mod test {
     use core::hint::spin_loop;
 

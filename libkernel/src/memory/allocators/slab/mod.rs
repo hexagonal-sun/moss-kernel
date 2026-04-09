@@ -1,3 +1,5 @@
+//! Slab allocator for small, fixed-size kernel objects.
+
 use crate::memory::PAGE_SIZE;
 
 // Allocations of order 2 (4 pages) from the FA for slabs.

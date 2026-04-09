@@ -1,3 +1,5 @@
+//! A thread-safe cell that is initialized exactly once.
+
 use core::fmt;
 
 use crate::CpuOps;

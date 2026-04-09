@@ -1,3 +1,5 @@
+//! RAM-backed block device implementation.
+
 use crate::{
     KernAddressSpace,
     error::{IoError, KernelError, Result},
@@ -13,6 +15,7 @@ use alloc::boxed::Box;
 use async_trait::async_trait;
 use core::ptr;
 
+/// A block device backed by a region of RAM.
 pub struct RamdiskBlkDev {
     base: TVA<u8>,
     num_blocks: u64,

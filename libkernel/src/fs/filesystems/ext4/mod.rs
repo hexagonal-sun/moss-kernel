@@ -110,6 +110,7 @@ impl From<Metadata> for FileAttr {
     }
 }
 
+/// Wraps an ext4 directory iterator to produce VFS [`Dirent`] entries.
 pub struct ReadDirWrapper {
     inner: AsyncSkip<ReadDir>,
     fs_id: u64,
@@ -117,6 +118,7 @@ pub struct ReadDirWrapper {
 }
 
 impl ReadDirWrapper {
+    /// Creates a new `ReadDirWrapper` starting at the given offset.
     pub fn new(inner: ReadDir, fs_id: u64, start_offset: u64) -> Self {
         Self {
             inner: inner.skip(start_offset as usize),
@@ -187,6 +189,7 @@ impl DerefMut for InodeInner {
     }
 }
 
+/// An inode within an ext4 filesystem.
 pub struct Ext4Inode<CPU: CpuOps> {
     fs_ref: Weak<Ext4Filesystem<CPU>>,
     id: NonZeroU32,

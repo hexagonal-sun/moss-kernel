@@ -1,3 +1,5 @@
+//! In-memory temporary filesystem (tmpfs).
+
 use crate::{
     CpuOps,
     error::{FsError, KernelError, Result},
@@ -783,6 +785,7 @@ impl<C: CpuOps> TmpFsSymlinkInode<C> {
     }
 }
 
+/// An in-memory temporary filesystem backed by page allocations.
 pub struct TmpFs<C, G, T>
 where
     C: CpuOps,
@@ -802,6 +805,7 @@ where
     G: PageAllocGetter<C>,
     T: AddressTranslator<()>,
 {
+    /// Creates a new tmpfs instance with the given filesystem ID.
     pub fn new(fs_id: u64) -> Arc<Self> {
         Arc::new_cyclic(|weak_fs| {
             let root =
@@ -817,6 +821,7 @@ where
         })
     }
 
+    /// Allocates the next unique inode ID for this filesystem.
     pub fn alloc_inode_id(&self) -> u64 {
         self.next_inode_id.fetch_add(1, Ordering::Relaxed)
     }

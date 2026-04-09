@@ -1,3 +1,5 @@
+//! Page table walking and per-entry modification.
+
 use super::{
     pg_descriptors::{L3Descriptor, PageTableEntry, TableMapper},
     pg_tables::{L0Table, L3Table, PageTableMapper, PgTable, PgTableArray, TableMapperTable},
@@ -17,7 +19,9 @@ pub struct WalkContext<'a, PM>
 where
     PM: PageTableMapper + 'a,
 {
+    /// The mapper used to temporarily access page tables by physical address.
     pub mapper: &'a mut PM,
+    /// The TLB invalidator invoked after modifying page table entries.
     pub invalidator: &'a dyn TLBInvalidator,
 }
 

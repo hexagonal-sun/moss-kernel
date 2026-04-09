@@ -1,3 +1,5 @@
+//! Per-object-size slab cache management.
+
 use super::{
     alloc_order,
     allocator::{SlabAllocator, SlabManager},
@@ -20,6 +22,7 @@ const NUM_PTR_CACHES: usize = SLAB_MAX_OBJ_SHIFT as usize + 1;
 // Ensure that our cache fits in a single page.
 const _: () = assert!(core::mem::size_of::<SlabCache>() <= PAGE_SIZE);
 
+/// A fixed-size cache of recently freed pointers for a single size class.
 #[repr(C)]
 pub struct PtrCache {
     next_free: usize,
@@ -27,6 +30,7 @@ pub struct PtrCache {
 }
 
 impl PtrCache {
+    /// Creates an empty pointer cache.
     pub fn new() -> Self {
         Self {
             next_free: 0,
@@ -34,10 +38,12 @@ impl PtrCache {
         }
     }
 
+    /// Returns `true` if no pointers are cached.
     pub fn is_empty(&self) -> bool {
         self.next_free == 0
     }
 
+    /// Returns `true` if the cache has no remaining capacity.
     pub fn is_full(&self) -> bool {
         self.next_free == PTRS_PER_SZ_CLASS
     }
@@ -66,6 +72,7 @@ impl PtrCache {
         }
     }
 
+    /// Returns a cached pointer, or `None` if the cache is empty.
     pub fn alloc(&mut self) -> Option<*mut u8> {
         if self.is_empty() {
             return None;

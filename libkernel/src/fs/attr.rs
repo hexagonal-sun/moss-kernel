@@ -1,3 +1,5 @@
+//! File attribute types (permissions, modes, and metadata).
+
 use crate::{
     error::{KernelError, Result},
     proc::{
@@ -7,10 +9,10 @@ use crate::{
 };
 
 use super::{FileType, InodeId};
-use bitflags::bitflags;
 use core::time::Duration;
 
 bitflags::bitflags! {
+    /// POSIX access-mode flags for permission checks (`R_OK`, `W_OK`, `X_OK`).
     #[derive(Debug, Clone, Copy)]
     pub struct AccessMode: i32 {
         /// Execution is permitted
@@ -22,58 +24,70 @@ bitflags::bitflags! {
     }
 }
 
-bitflags! {
-    #[derive(Clone, Copy, Debug)]
-    pub struct FilePermissions: u16 {
-        const S_IXOTH = 0x0001;
-        const S_IWOTH = 0x0002;
-        const S_IROTH = 0x0004;
+mod _file_permissions {
+    #![allow(missing_docs)]
+    use bitflags::bitflags;
+    bitflags! {
+        /// POSIX file permission bits (owner/group/other read/write/execute and setuid/setgid/sticky).
+        #[derive(Clone, Copy, Debug)]
+        pub struct FilePermissions: u16 {
+            const S_IXOTH = 0x0001;
+            const S_IWOTH = 0x0002;
+            const S_IROTH = 0x0004;
 
-        const S_IXGRP = 0x0008;
-        const S_IWGRP = 0x0010;
-        const S_IRGRP = 0x0020;
+            const S_IXGRP = 0x0008;
+            const S_IWGRP = 0x0010;
+            const S_IRGRP = 0x0020;
 
-        const S_IXUSR = 0x0040;
-        const S_IWUSR = 0x0080;
-        const S_IRUSR = 0x0100;
+            const S_IXUSR = 0x0040;
+            const S_IWUSR = 0x0080;
+            const S_IRUSR = 0x0100;
 
-        const S_ISVTX = 0x0200;
+            const S_ISVTX = 0x0200;
 
-        const S_ISGID = 0x0400;
-        const S_ISUID = 0x0800;
+            const S_ISGID = 0x0400;
+            const S_ISUID = 0x0800;
+        }
     }
 }
+pub use _file_permissions::FilePermissions;
 
-bitflags! {
-    #[derive(Clone, Copy, Debug)]
-    pub struct FileMode: u16 {
-        const S_IXOTH = 0x0001;
-        const S_IWOTH = 0x0002;
-        const S_IROTH = 0x0004;
+mod _file_mode {
+    #![allow(missing_docs)]
+    use bitflags::bitflags;
+    bitflags! {
+        /// Combined file type and permission bits, as returned by `stat`.
+        #[derive(Clone, Copy, Debug)]
+        pub struct FileMode: u16 {
+            const S_IXOTH = 0x0001;
+            const S_IWOTH = 0x0002;
+            const S_IROTH = 0x0004;
 
-        const S_IXGRP = 0x0008;
-        const S_IWGRP = 0x0010;
-        const S_IRGRP = 0x0020;
+            const S_IXGRP = 0x0008;
+            const S_IWGRP = 0x0010;
+            const S_IRGRP = 0x0020;
 
-        const S_IXUSR = 0x0040;
-        const S_IWUSR = 0x0080;
-        const S_IRUSR = 0x0100;
+            const S_IXUSR = 0x0040;
+            const S_IWUSR = 0x0080;
+            const S_IRUSR = 0x0100;
 
-        const S_ISVTX = 0x0200;
+            const S_ISVTX = 0x0200;
 
-        const S_ISGID = 0x0400;
-        const S_ISUID = 0x0800;
+            const S_ISGID = 0x0400;
+            const S_ISUID = 0x0800;
 
-        // Mutually-exclusive file types:
-        const S_IFIFO = 0x1000;
-        const S_IFCHR = 0x2000;
-        const S_IFDIR = 0x4000;
-        const S_IFBLK = 0x6000;
-        const S_IFREG = 0x8000;
-        const S_IFLNK = 0xA000;
-        const S_IFSOCK = 0xC000;
+            // Mutually-exclusive file types:
+            const S_IFIFO = 0x1000;
+            const S_IFCHR = 0x2000;
+            const S_IFDIR = 0x4000;
+            const S_IFBLK = 0x6000;
+            const S_IFREG = 0x8000;
+            const S_IFLNK = 0xA000;
+            const S_IFSOCK = 0xC000;
+        }
     }
 }
+pub use _file_mode::FileMode;
 
 impl From<FileMode> for FilePermissions {
     fn from(mode: FileMode) -> Self {
@@ -82,6 +96,7 @@ impl From<FileMode> for FilePermissions {
 }
 
 impl FileMode {
+    /// Constructs a `FileMode` from a file type and permission bits.
     pub fn new(file_type: FileType, permissions: FilePermissions) -> Self {
         let mut mode = FileMode::from_bits_truncate(permissions.bits());
         mode |= match file_type {
@@ -98,6 +113,7 @@ impl FileMode {
 }
 
 /// Represents file metadata, similar to `stat`.
+#[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct FileAttr {
     pub id: InodeId,
@@ -116,6 +132,7 @@ pub struct FileAttr {
 }
 
 impl FileAttr {
+    /// Returns the combined file type and permission bits as a `FileMode`.
     pub fn mode(&self) -> FileMode {
         FileMode::new(self.file_type, self.permissions)
     }

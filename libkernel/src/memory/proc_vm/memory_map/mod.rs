@@ -1,3 +1,5 @@
+//! Memory map management for a process address space.
+
 use super::vmarea::{VMAPermissions, VMArea, VMAreaKind};
 use crate::{
     UserAddressSpace,
@@ -17,11 +19,20 @@ pub struct MemoryMap<AS: UserAddressSpace> {
     address_space: AS,
 }
 
+/// Specifies how the kernel should choose the virtual address for a mapping.
 #[derive(Debug, PartialEq, Eq)]
 pub enum AddressRequest {
+    /// Let the kernel pick any suitable address.
     Any,
+    /// Prefer the given address but fall back to any free region.
     Hint(VA),
-    Fixed { address: VA, permit_overlap: bool },
+    /// Map at exactly the given address.
+    Fixed {
+        /// The exact virtual address to map at.
+        address: VA,
+        /// If `true`, existing mappings in the range may be replaced.
+        permit_overlap: bool,
+    },
 }
 
 impl<AS: UserAddressSpace> MemoryMap<AS> {
@@ -168,6 +179,7 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
         self.unmap_region(range.align_to_page_boundary(), None)
     }
 
+    /// Changes the memory protection flags for a page-aligned region.
     pub fn mprotect(
         &mut self,
         protect_region: VirtMemoryRegion,
@@ -498,18 +510,22 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
         })
     }
 
+    /// Returns a mutable reference to the underlying address space.
     pub fn address_space_mut(&mut self) -> &mut AS {
         &mut self.address_space
     }
 
+    /// Returns the number of VMAs in this memory map.
     pub fn vma_count(&self) -> usize {
         self.vmas.len()
     }
 
+    /// Returns an iterator over all VMAs in address order.
     pub fn iter_vmas(&self) -> impl Iterator<Item = &VMArea> {
         self.vmas.values()
     }
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 pub mod tests;

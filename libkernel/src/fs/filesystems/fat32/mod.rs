@@ -1,3 +1,5 @@
+//! FAT32 filesystem driver.
+
 use crate::{
     error::{FsError, Result},
     fs::{FileType, Filesystem, Inode, InodeId, attr::FileAttr, blk::buffer::BlockBuffer},
@@ -23,6 +25,7 @@ mod fat;
 mod file;
 mod reader;
 
+/// A logical sector number on a FAT32 volume.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Sector(u32);
 
@@ -43,23 +46,28 @@ impl Add<Sector> for Sector {
 }
 
 impl Sector {
+    /// Returns an iterator over sectors from `self` (inclusive) to `other` (exclusive).
     pub fn sectors_until(self, other: Self) -> impl Iterator<Item = Self> {
         (self.0..other.0).map(Sector)
     }
 }
 
+/// A FAT32 cluster number.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Cluster(u32);
 
 impl Cluster {
+    /// Returns the raw cluster number as a `usize`.
     pub fn value(self) -> usize {
         self.0 as _
     }
 
+    /// Constructs a cluster number from its high and low 16-bit halves.
     pub fn from_high_low(clust_high: u16, clust_low: u16) -> Cluster {
         Cluster((clust_high as u32) << 16 | clust_low as u32)
     }
 
+    /// Returns `true` if this is a valid data cluster (number >= 2).
     pub fn is_valid(self) -> bool {
         self.0 >= 2
     }
@@ -71,6 +79,7 @@ impl Display for Cluster {
     }
 }
 
+/// A mounted FAT32 filesystem instance.
 pub struct Fat32Filesystem {
     dev: BlockBuffer,
     bpb: BiosParameterBlock,
@@ -80,6 +89,7 @@ pub struct Fat32Filesystem {
 }
 
 impl Fat32Filesystem {
+    /// Creates a new FAT32 filesystem from the given block device buffer.
     pub async fn new(dev: BlockBuffer, id: u64) -> Result<Arc<Self>> {
         let bpb = BiosParameterBlock::new(&dev).await?;
         let fat = Fat::read_fat(&dev, &bpb, 0).await?;

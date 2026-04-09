@@ -1,3 +1,8 @@
+//! Maps [`KernelError`] variants to POSIX `errno` values
+//! for returning results to user-space system calls.
+
+#![allow(missing_docs)]
+
 use crate::error::FsError;
 
 use super::KernelError;

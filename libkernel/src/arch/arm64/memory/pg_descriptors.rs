@@ -1,3 +1,5 @@
+//! AArch64 page table entry (PTE) descriptor types and traits.
+
 use paste::paste;
 use tock_registers::interfaces::{ReadWriteable, Readable};
 use tock_registers::{register_bitfields, registers::InMemoryRegister};
@@ -61,9 +63,12 @@ impl TableAddr {
     }
 }
 
+/// The memory type attribute applied to a page table mapping.
 #[derive(Debug, Clone, Copy)]
 pub enum MemoryType {
+    /// Device (non-cacheable, non-reorderable) memory.
     Device,
+    /// Normal (cacheable) memory.
     Normal,
 }
 
@@ -163,6 +168,7 @@ macro_rules! define_descriptor {
                     ))
                 }
 
+                /// Returns a new descriptor with the given permissions applied.
                 pub fn set_permissions(self, perms: PtePermissions) -> Self {
                     let reg = InMemoryRegister::new(self.0);
                     use [<$name Fields>]::BlockPageFields;
@@ -287,9 +293,13 @@ define_descriptor!(
     },
 );
 
+/// The decoded state of an L3 page descriptor.
 pub enum L3DescriptorState {
+    /// The entry is not present.
     Invalid,
+    /// The entry has been swapped out but retains address information.
     Swapped,
+    /// The entry is a valid page mapping.
     Valid,
 }
 

@@ -1,6 +1,22 @@
+//! Linux-compatible process capabilities.
+//!
+//! This module implements the five capability sets (`effective`, `permitted`,
+//! `inheritable`, `ambient`, `bounding`) used by the kernel for
+//! fine-grained privilege checks.
+
+#![allow(missing_docs)]
+
 use crate::error::{KernelError, Result};
 
+// Linux-compatible capability flags.
+//
+// Each flag corresponds to a single Linux capability as defined in
+// `include/uapi/linux/capability.h`.
 bitflags::bitflags! {
+    /// Linux-compatible capability flags.
+    ///
+    /// Each flag corresponds to a single Linux capability as defined in
+    /// `include/uapi/linux/capability.h`.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct CapabilitiesFlags: u64 {
         const CAP_CHOWN = 1 << 0;
@@ -47,6 +63,9 @@ bitflags::bitflags! {
     }
 }
 
+/// The five capability sets associated with a process.
+///
+/// See `capabilities(7)` for the full semantics of each set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     effective: CapabilitiesFlags,
@@ -57,6 +76,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// Creates a new `Capabilities` with the given sets.
     pub fn new(
         effective: CapabilitiesFlags,
         permitted: CapabilitiesFlags,
@@ -73,6 +93,7 @@ impl Capabilities {
         }
     }
 
+    /// Creates a root (all-capable) set.
     pub fn new_root() -> Self {
         Self {
             effective: CapabilitiesFlags::all(),
@@ -83,6 +104,7 @@ impl Capabilities {
         }
     }
 
+    /// Creates an empty (no capabilities) set.
     pub fn new_empty() -> Self {
         Self {
             effective: CapabilitiesFlags::empty(),
@@ -129,30 +151,37 @@ impl Capabilities {
         Ok(())
     }
 
+    /// Returns the effective capability flags.
     pub fn effective(&self) -> CapabilitiesFlags {
         self.effective
     }
 
+    /// Returns the permitted capability flags.
     pub fn permitted(&self) -> CapabilitiesFlags {
         self.permitted
     }
 
+    /// Returns the inheritable capability flags.
     pub fn inheritable(&self) -> CapabilitiesFlags {
         self.inheritable
     }
 
+    /// Returns the ambient capability flags.
     pub fn ambient(&self) -> CapabilitiesFlags {
         self.ambient
     }
 
+    /// Returns a mutable reference to the ambient capability flags.
     pub fn ambient_mut(&mut self) -> &mut CapabilitiesFlags {
         &mut self.ambient
     }
 
+    /// Returns the bounding capability flags.
     pub fn bounding(&self) -> CapabilitiesFlags {
         self.bounding
     }
 
+    /// Returns a mutable reference to the bounding capability flags.
     pub fn bounding_mut(&mut self) -> &mut CapabilitiesFlags {
         &mut self.bounding
     }

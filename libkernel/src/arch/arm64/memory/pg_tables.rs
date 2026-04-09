@@ -1,3 +1,5 @@
+//! AArch64 page table structures, levels, and mapping logic.
+
 use core::marker::PhantomData;
 
 use super::{
@@ -17,7 +19,9 @@ use crate::{
     },
 };
 
+/// Number of page table descriptors that fit in a single 4 KiB page.
 pub const DESCRIPTORS_PER_PAGE: usize = PAGE_SIZE / core::mem::size_of::<u64>();
+/// Bitmask used to extract the page table index from a shifted virtual address.
 pub const LEVEL_MASK: usize = DESCRIPTORS_PER_PAGE - 1;
 
 /// Trait representing a single level of the page table hierarchy.
@@ -47,8 +51,10 @@ pub trait PgTable: Clone + Copy {
     /// The descriptor (page table entry) type for this level.
     type Descriptor: PageTableEntry;
 
+    /// Constructs this table handle from a typed virtual pointer to its backing array.
     fn from_ptr(ptr: TVA<PgTableArray<Self>>) -> Self;
 
+    /// Returns the raw mutable pointer to the underlying descriptor array.
     fn to_raw_ptr(self) -> *mut u64;
 
     /// Compute the index into this page table from a virtual address.
@@ -81,6 +87,7 @@ pub(super) trait TableMapperTable: PgTable<Descriptor: TableMapper> + Clone + Co
     }
 }
 
+/// A page-aligned array of raw page table entries for a given table level.
 #[derive(Clone)]
 #[repr(C, align(4096))]
 pub struct PgTableArray<K: PgTable> {
@@ -89,6 +96,7 @@ pub struct PgTableArray<K: PgTable> {
 }
 
 impl<K: PgTable> PgTableArray<K> {
+    /// Creates a zeroed page table array (all entries invalid).
     pub const fn new() -> Self {
         Self {
             pages: [0; DESCRIPTORS_PER_PAGE],
@@ -104,8 +112,9 @@ impl<K: PgTable> Default for PgTableArray<K> {
 }
 
 macro_rules! impl_pgtable {
-    ($table:ident, $shift:expr, $desc_type:ident) => {
+    ($(#[$outer:meta])* $table:ident, $shift:expr, $desc_type:ident) => {
         #[derive(Clone, Copy)]
+        $(#[$outer])*
         pub struct $table {
             base: *mut u64,
         }
@@ -145,22 +154,26 @@ macro_rules! impl_pgtable {
     };
 }
 
-impl_pgtable!(L0Table, 39, L0Descriptor);
+impl_pgtable!(/// Level 0 page table (512 GiB per entry).
+    L0Table, 39, L0Descriptor);
 impl TableMapperTable for L0Table {
     type NextLevel = L1Table;
 }
 
-impl_pgtable!(L1Table, 30, L1Descriptor);
+impl_pgtable!(/// Level 1 page table (1 GiB per entry).
+    L1Table, 30, L1Descriptor);
 impl TableMapperTable for L1Table {
     type NextLevel = L2Table;
 }
 
-impl_pgtable!(L2Table, 21, L2Descriptor);
+impl_pgtable!(/// Level 2 page table (2 MiB per entry).
+    L2Table, 21, L2Descriptor);
 impl TableMapperTable for L2Table {
     type NextLevel = L3Table;
 }
 
-impl_pgtable!(L3Table, 12, L3Descriptor);
+impl_pgtable!(/// Level 3 page table (4 KiB per entry).
+    L3Table, 12, L3Descriptor);
 
 /// Trait for temporarily mapping and modifying a page table located at a
 /// physical address.
@@ -459,6 +472,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(missing_docs)]
 pub mod tests {
     use super::*;
     use crate::{

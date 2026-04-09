@@ -1,4 +1,4 @@
-/// A slab allocator for Moss.
+//! A slab memory allocator.
 use super::{
     SLAB_FRAME_ALLOC_ORDER, SLAB_MAX_OBJ_SHIFT, alloc_order,
     slab::{Slab, SlabState},
@@ -36,18 +36,18 @@ const MAX_FREE_SLABS: usize = 32;
 ///
 /// There is no 'full' list. Full slabs are unlinked from both the 'partial' and
 /// 'free' lists. They are allowed to float "in the ether" (referenced only by
-/// the global [FrameList]). When freeing an object from a 'full' slab, the
+/// the global `FrameList`). When freeing an object from a 'full' slab, the
 /// allocator detects the state transition and re-links the frame into the
 /// 'partial'/'free' list.
 ///
 /// # Safety and Ownership
 ///
-/// The FA and the `SlabManager` share a list of frame metadata via [FrameList]. To
+/// The FA and the `SlabManager` share a list of frame metadata via `FrameList`. To
 /// share this list safely, we implement an implicit ownership model:
 ///
 /// 1. When the FA allocates a frame, it initializes the metadata.
 /// 2. We convert this frame into a slab allocation via
-///    [PageAllocation::as_slab].
+///    `PageAllocation::as_slab`.
 /// 3. Once that function returns, this `SlabManager` is considered the
 ///    exclusive owner of that frame's metadata.
 ///
@@ -55,7 +55,7 @@ const MAX_FREE_SLABS: usize = 32;
 /// the metadata of any frame in its possession, as the `SpinLock` protecting
 /// this struct guarantees exclusive access to the specific size class that
 /// "owns" the frame. Ownership is eventually returned to the FA via
-/// [FrameAllocatorInner::free_slab].
+/// `FrameAllocatorInner::free_slab`.
 pub struct SlabManager<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> {
     pub(super) free: LinkedList<FrameAdapter>,
     pub(super) partial: LinkedList<FrameAdapter>,
@@ -253,6 +253,7 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabManager
     }
 }
 
+/// The top-level slab allocator, dispatching allocations to size-appropriate [`SlabManager`]s.
 pub struct SlabAllocator<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> {
     pub(super) managers:
         [SpinLockIrq<SlabManager<CPU, A, T>, CPU>; SLAB_MAX_OBJ_SHIFT as usize + 1],
@@ -268,6 +269,7 @@ unsafe impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> Sync
 }
 
 impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabAllocator<CPU, A, T> {
+    /// Creates a new slab allocator backed by the given frame list.
     pub fn new(frame_list: FrameList) -> Self {
         Self {
             managers: core::array::from_fn(|n| {
@@ -276,6 +278,7 @@ impl<CPU: CpuOps, A: PageAllocGetter<CPU>, T: AddressTranslator<()>> SlabAllocat
         }
     }
 
+    /// Returns a reference to the slab manager responsible for the given layout, if one exists.
     pub fn allocator_for_layout(
         &self,
         layout: core::alloc::Layout,

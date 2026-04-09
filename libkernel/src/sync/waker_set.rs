@@ -1,3 +1,5 @@
+//! Waker registration and notification set.
+
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use core::{
@@ -9,6 +11,7 @@ use crate::CpuOps;
 
 use super::spinlock::SpinLockIrq;
 
+/// A set of registered [`Waker`]s that can be selectively or collectively woken.
 pub struct WakerSet<T = ()> {
     waiters: BTreeMap<u64, (Waker, T)>,
     next_id: u64,
@@ -21,6 +24,7 @@ impl Default for WakerSet {
 }
 
 impl<T> WakerSet<T> {
+    /// Creates a new, empty waker set.
     pub fn new() -> Self {
         Self {
             waiters: BTreeMap::new(),
@@ -38,6 +42,7 @@ impl<T> WakerSet<T> {
         id
     }
 
+    /// Returns `true` if the given token is still registered in the set.
     pub fn contains_token(&self, token: u64) -> bool {
         self.waiters.contains_key(&token)
     }
@@ -84,6 +89,7 @@ impl<T> WakerSet<T> {
         }
     }
 
+    /// Registers a waker together with associated data, returning its token.
     pub fn register_with_data(&mut self, waker: &Waker, data: T) -> u64 {
         let id = self.allocate_id();
 
