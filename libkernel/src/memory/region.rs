@@ -29,8 +29,6 @@
 //! let mapped = region.map_via::<IdentityTranslator>();
 //! ```
 
-use crate::memory::PAGE_MASK;
-
 use super::{
     PAGE_SHIFT, PAGE_SIZE,
     address::{Address, AddressTranslator, MemKind, Physical, User, Virtual},
@@ -253,8 +251,9 @@ impl<T: MemKind> MemoryRegion<T> {
     }
 
     /// Increases the capacity of the region by size bytes.
+    #[cfg(feature = "proc_vm")]
     pub(crate) fn expand_by(&mut self, size: usize) {
-        assert!(size & PAGE_MASK == 0);
+        assert!(size & crate::memory::PAGE_MASK == 0);
 
         self.size += size;
     }

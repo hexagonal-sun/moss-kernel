@@ -8,7 +8,7 @@ use crate::{
         PAGE_SIZE,
         address::AddressTranslator,
         allocators::{phys::PageAllocGetter, slab::SLAB_MAX_OBJ_SHIFT},
-        page::ClaimedPage,
+        claimed_page::ClaimedPage,
     },
 };
 use core::mem::MaybeUninit;

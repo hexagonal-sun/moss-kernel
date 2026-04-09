@@ -23,7 +23,7 @@ test = true
 bench = false
 
 [dependencies]
-libkernel = { path = "libkernel" }
+libkernel = { path = "libkernel", features = ["all"] }
 moss-macros = { path = "moss-macros" }
 
 aarch64-cpu = "11.1.0"
