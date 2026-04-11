@@ -36,6 +36,9 @@ pub trait TableMapper: PageTableEntry {
 
 /// A descriptor that maps a physical address (L1, L2 blocks and L3 page).
 pub trait PaMapper: PageTableEntry {
+    /// A type that encodes different types of memory for this architecture.
+    type MemoryType;
+
     /// Constructs a new valid page descriptor that maps a physical address.
     fn new_map_pa(page_address: PA, memory_type: MemoryType, perms: PtePermissions) -> Self;
 
@@ -200,6 +203,8 @@ macro_rules! define_descriptor {
             }
 
             impl PaMapper for $name {
+                type MemoryType = MemoryType;
+
                 fn map_shift() -> usize { $tbl_shift }
 
                 fn could_map(region: PhysMemoryRegion, va: VA) -> bool {
