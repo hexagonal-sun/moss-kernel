@@ -224,6 +224,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x19 => sys_fcntl(&ctx, arg1.into(), arg2 as _, arg3 as _).await,
         0x1d => sys_ioctl(&ctx, arg1.into(), arg2 as _, arg3 as _).await,
         0x20 => Ok(0), // sys_flock is a noop
+        0x21 => Err(KernelError::NotSupported),
         0x22 => sys_mkdirat(&ctx, arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x23 => sys_unlinkat(&ctx, arg1.into(), TUA::from_value(arg2 as _), arg3 as _).await,
         0x24 => {
@@ -753,6 +754,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             .await
         }
         0x125 => Err(KernelError::NotSupported),
+        0x1ae => Err(KernelError::NotSupported),
         0x1b4 => sys_close_range(&ctx, arg1.into(), arg2.into(), arg3 as _).await,
         0x1b7 => {
             sys_faccessat2(

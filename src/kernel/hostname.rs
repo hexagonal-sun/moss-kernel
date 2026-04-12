@@ -1,4 +1,4 @@
-use crate::memory::uaccess::cstr::UserCStr;
+use crate::memory::uaccess::copy_from_user_slice;
 use crate::sched::syscall_ctx::ProcessCtx;
 use crate::sync::OnceLock;
 use crate::sync::SpinLock;
@@ -33,9 +33,10 @@ pub async fn sys_sethostname(
         return Err(KernelError::NameTooLong);
     }
     let mut buf = vec![0u8; name_len];
-    let name = UserCStr::from_ptr(name_ptr)
-        .copy_from_user(&mut buf)
-        .await?;
+    copy_from_user_slice(name_ptr.to_untyped(), &mut buf).await?;
+    let name = core::str::from_utf8(&buf)
+        .map_err(|_| KernelError::InvalidValue)?
+        .trim_end_matches('\0');
     *hostname().lock_save_irq() = name.to_string();
     Ok(0)
 }
