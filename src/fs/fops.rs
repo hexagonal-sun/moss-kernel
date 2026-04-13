@@ -141,4 +141,8 @@ pub trait FileOps: Send + Sync {
     fn as_socket(&mut self) -> Option<&mut dyn crate::net::SocketOps> {
         None
     }
+
+    fn as_epoll(&mut self) -> Option<&mut dyn crate::process::epoll::EpollOps> {
+        None
+    }
 }

@@ -74,6 +74,7 @@ use crate::{
             sys_gettid, sys_getuid, sys_setfsgid, sys_setfsuid, sys_setgid, sys_setregid,
             sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid,
         },
+        epoll::{sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait},
         exec::sys_execve,
         exit::{sys_exit, sys_exit_group},
         fd_table::{
@@ -134,6 +135,29 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
     };
 
     let res = match nr {
+        0x14 => sys_epoll_create1(&ctx, arg1 as _).await,
+        0x15 => {
+            sys_epoll_ctl(
+                &ctx,
+                arg1.into(),
+                arg2 as _,
+                arg3.into(),
+                TUA::from_value(arg4 as _),
+            )
+            .await
+        }
+        0x16 => {
+            sys_epoll_pwait(
+                &ctx,
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
         0x5 => {
             sys_setxattr(
                 &ctx,

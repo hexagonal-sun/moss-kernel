@@ -9,6 +9,8 @@ use crate::{
     sched::{current_work, syscall_ctx::ProcessCtx},
     sync::CondVar,
 };
+use core::pin::Pin;
+
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
 use core::any::Any;
@@ -120,6 +122,29 @@ impl PipeReader {
 
 #[async_trait]
 impl FileOps for PipeReader {
+    fn poll_read_ready(&self) -> Pin<Box<dyn Future<Output = Result<()>> + 'static + Send>> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            let mut read_fut = Box::pin(inner.buf.read_ready());
+            let mut gone_cond = Box::pin(
+                inner
+                    .other_side_gone
+                    .wait_until(|gone| if *gone { Some(()) } else { None }),
+            );
+
+            future::poll_fn(move |cx| {
+                if read_fut.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(Ok(()))
+                } else if gone_cond.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(Ok(()))
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await
+        })
+    }
+
     async fn read(&mut self, _ctx: &mut FileCtx, u_buf: UA, count: usize) -> Result<usize> {
         self.readat(u_buf, count, 0).await
     }
@@ -199,6 +224,29 @@ impl PipeWriter {
 
 #[async_trait]
 impl FileOps for PipeWriter {
+    fn poll_write_ready(&self) -> Pin<Box<dyn Future<Output = Result<()>> + 'static + Send>> {
+        let inner = self.inner.clone();
+        Box::pin(async move {
+            let mut write_fut = Box::pin(inner.buf.write_ready());
+            let mut gone_cond = Box::pin(
+                inner
+                    .other_side_gone
+                    .wait_until(|gone| if *gone { Some(()) } else { None }),
+            );
+
+            future::poll_fn(move |cx| {
+                if write_fut.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(Ok(()))
+                } else if gone_cond.as_mut().poll(cx).is_ready() {
+                    Poll::Ready(Ok(()))
+                } else {
+                    Poll::Pending
+                }
+            })
+            .await
+        })
+    }
+
     async fn read(&mut self, _ctx: &mut FileCtx, _buf: UA, _count: usize) -> Result<usize> {
         Err(KernelError::BadFd)
     }

@@ -5,6 +5,7 @@ use std::{
     thread,
 };
 
+mod epoll;
 mod fs;
 mod futex;
 mod signals;

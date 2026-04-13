@@ -37,6 +37,7 @@ pub mod caps;
 pub mod clone;
 pub mod creds;
 pub mod ctx;
+pub mod epoll;
 pub mod exec;
 pub mod exit;
 pub mod fd_table;
