@@ -16,6 +16,7 @@ pub mod kill;
 pub mod ksigaction;
 pub mod sigaction;
 pub mod sigaltstack;
+pub mod signalfd;
 pub mod sigprocmask;
 mod uaccess;
 

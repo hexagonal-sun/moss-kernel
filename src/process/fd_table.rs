@@ -1,6 +1,6 @@
 use crate::{fs::open_file::OpenFile, memory::uaccess::UserCopyable};
 use alloc::{sync::Arc, vec::Vec};
-use libkernel::error::{FsError, Result};
+use libkernel::error::{FsError, KernelError, Result};
 
 pub mod dup;
 pub mod fcntl;
@@ -77,12 +77,14 @@ impl FileDescriptorTable {
 
     /// Inserts a new file into the table, returning the new file descriptor.
     pub fn insert(&mut self, file: Arc<OpenFile>) -> Result<Fd> {
+        self.insert_with_flags(file, FdFlags::default())
+    }
+
+    /// Inserts a new file into the table with descriptor flags.
+    pub fn insert_with_flags(&mut self, file: Arc<OpenFile>, flags: FdFlags) -> Result<Fd> {
         let fd = self.find_free_fd()?;
 
-        let entry = FileDescriptorEntry {
-            file,
-            flags: FdFlags::default(),
-        };
+        let entry = FileDescriptorEntry { file, flags };
 
         self.insert_at(fd, entry);
 
@@ -123,6 +125,16 @@ impl FileDescriptorTable {
         let fd = Fd(self.entries.len() as i32);
         self.entries.push(Some(entry));
         Ok(fd)
+    }
+
+    pub fn add_flags(&mut self, fd: Fd, flags: FdFlags) -> Result<()> {
+        let entry = self
+            .entries
+            .get_mut(fd.0 as usize)
+            .and_then(|entry| entry.as_mut())
+            .ok_or(KernelError::BadFd)?;
+        entry.flags.insert(flags);
+        Ok(())
     }
 
     /// Removes a file descriptor from the table, returning the file if it
