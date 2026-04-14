@@ -1,5 +1,6 @@
 use super::Tid;
 use crate::{
+    drivers::fs::cgroup,
     memory::uaccess::UserCopyable,
     sched::{
         sched_task::{Work, state::TaskState},
@@ -224,6 +225,7 @@ impl ThreadGroup {
 
 impl Drop for ThreadGroup {
     fn drop(&mut self) {
+        cgroup::unregister_thread_group(self.tgid);
         TG_LIST.lock_save_irq().remove(&self.tgid);
     }
 }

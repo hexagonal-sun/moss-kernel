@@ -2,7 +2,7 @@ use core::sync::atomic::AtomicUsize;
 
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 
-use crate::sync::SpinLock;
+use crate::{drivers::fs::cgroup, sync::SpinLock};
 
 use super::{
     Pgid, ProcessState, Sid, TG_LIST, Tgid, ThreadGroup,
@@ -95,6 +95,8 @@ impl ThreadGroupBuilder {
         TG_LIST
             .lock_save_irq()
             .insert(self.tgid, Arc::downgrade(&ret));
+
+        cgroup::register_thread_group(&ret, self.parent.as_ref());
 
         ret
     }
