@@ -1,5 +1,4 @@
 use crate::register_test;
-use std::os::unix::io::AsRawFd;
 
 fn test_epoll_create() {
     unsafe {
