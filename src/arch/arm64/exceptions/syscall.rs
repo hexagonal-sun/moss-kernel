@@ -94,6 +94,7 @@ use crate::{
                 kill::{sys_kill, sys_tkill},
                 sigaction::sys_rt_sigaction,
                 sigaltstack::sys_sigaltstack,
+                signalfd::sys_signalfd4,
                 sigprocmask::sys_rt_sigprocmask,
             },
             umask::sys_umask,
@@ -401,6 +402,16 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
                 TUA::from_value(arg4 as _),
                 TUA::from_value(arg5 as _),
                 TUA::from_value(arg6 as _),
+            )
+            .await
+        }
+        0x4a => {
+            sys_signalfd4(
+                &ctx,
+                arg1 as _,
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
             )
             .await
         }

@@ -133,9 +133,7 @@ impl FileOps for PipeReader {
             );
 
             future::poll_fn(move |cx| {
-                if read_fut.as_mut().poll(cx).is_ready() {
-                    Poll::Ready(Ok(()))
-                } else if gone_cond.as_mut().poll(cx).is_ready() {
+                if read_fut.as_mut().poll(cx).is_ready() || gone_cond.as_mut().poll(cx).is_ready() {
                     Poll::Ready(Ok(()))
                 } else {
                     Poll::Pending
@@ -235,9 +233,8 @@ impl FileOps for PipeWriter {
             );
 
             future::poll_fn(move |cx| {
-                if write_fut.as_mut().poll(cx).is_ready() {
-                    Poll::Ready(Ok(()))
-                } else if gone_cond.as_mut().poll(cx).is_ready() {
+                if write_fut.as_mut().poll(cx).is_ready() || gone_cond.as_mut().poll(cx).is_ready()
+                {
                     Poll::Ready(Ok(()))
                 } else {
                     Poll::Pending

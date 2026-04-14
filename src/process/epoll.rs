@@ -229,15 +229,15 @@ pub async fn sys_epoll_pwait(
                 if let Poll::Ready(inner_fut) = pin_fut.as_mut().poll(cx) {
                     let mut inner_pin = Box::pin(inner_fut);
                     // Second poll: actually poll the file readiness future with the context
-                    if let Poll::Ready(Ok(revents)) = inner_pin.as_mut().poll(cx) {
-                        if revents.intersects(*poll_flags) || !revents.is_empty() {
-                            let mut out_event = *event;
-                            out_event.events = revents.bits() as u32;
-                            ready_events.push(out_event);
-                            ready = true;
-                            if ready_events.len() == maxevents as usize {
-                                break;
-                            }
+                    if let Poll::Ready(Ok(revents)) = inner_pin.as_mut().poll(cx)
+                        && (revents.intersects(*poll_flags) || !revents.is_empty())
+                    {
+                        let mut out_event = *event;
+                        out_event.events = revents.bits() as u32;
+                        ready_events.push(out_event);
+                        ready = true;
+                        if ready_events.len() == maxevents as usize {
+                            break;
                         }
                     }
                 }
@@ -252,10 +252,10 @@ pub async fn sys_epoll_pwait(
                 return Poll::Ready(true);
             }
 
-            if let Some(ref mut t) = timeout_fut {
-                if t.as_mut().poll(cx).is_ready() {
-                    return Poll::Ready(true);
-                }
+            if let Some(ref mut t) = timeout_fut
+                && t.as_mut().poll(cx).is_ready()
+            {
+                return Poll::Ready(true);
             }
 
             Poll::Pending

@@ -145,4 +145,10 @@ pub trait FileOps: Send + Sync {
     fn as_epoll(&mut self) -> Option<&mut dyn crate::process::epoll::EpollOps> {
         None
     }
+
+    fn as_signalfd(
+        &mut self,
+    ) -> Option<&mut crate::process::thread_group::signal::signalfd::SignalFd> {
+        None
+    }
 }
