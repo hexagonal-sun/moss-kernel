@@ -30,7 +30,7 @@ pub(super) trait TableMapperTable: PgTable<Descriptor: TableMapper> + Clone + Co
 }
 
 macro_rules! impl_pgtable {
-    ($(#[$outer:meta])* $table:ident, $shift:expr, $desc_type:ident) => {
+    ($(#[$outer:meta])* $table:ident, $desc_type:ident) => {
         #[derive(Clone, Copy)]
         $(#[$outer])*
         pub struct $table {
@@ -38,7 +38,6 @@ macro_rules! impl_pgtable {
         }
 
         impl PgTable for $table {
-            const SHIFT: usize = $shift;
             type Descriptor = $desc_type;
 
             fn from_ptr(ptr: TVA<PgTableArray<Self>>) -> Self {
@@ -73,25 +72,25 @@ macro_rules! impl_pgtable {
 }
 
 impl_pgtable!(/// Level 0 page table (512 GiB per entry).
-    L0Table, 39, L0Descriptor);
+    L0Table, L0Descriptor);
 impl TableMapperTable for L0Table {
     type NextLevel = L1Table;
 }
 
 impl_pgtable!(/// Level 1 page table (1 GiB per entry).
-    L1Table, 30, L1Descriptor);
+    L1Table, L1Descriptor);
 impl TableMapperTable for L1Table {
     type NextLevel = L2Table;
 }
 
 impl_pgtable!(/// Level 2 page table (2 MiB per entry).
-    L2Table, 21, L2Descriptor);
+    L2Table, L2Descriptor);
 impl TableMapperTable for L2Table {
     type NextLevel = L3Table;
 }
 
 impl_pgtable!(/// Level 3 page table (4 KiB per entry).
-    L3Table, 12, L3Descriptor);
+    L3Table, L3Descriptor);
 
 /// Describes the attributes of a memory range to be mapped.
 pub struct MapAttributes {

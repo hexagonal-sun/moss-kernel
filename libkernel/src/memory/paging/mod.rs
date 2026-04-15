@@ -18,6 +18,9 @@ pub trait PageTableEntry: Sized + Copy + Clone {
     /// The raw value for an invalid (not present) descriptor.
     const INVALID: Self::RawDescriptor;
 
+    /// The VA shift used for indexing at this descriptor level.
+    const MAP_SHIFT: usize;
+
     /// Returns `true` if the entry is valid (i.e., not an Invalid/Fault entry).
     fn is_valid(self) -> bool;
 
@@ -47,9 +50,6 @@ pub trait TableMapper: PageTableEntry {
 pub trait PaMapper: PageTableEntry {
     /// The memory attribute type for this descriptor's architecture.
     type MemoryType: Copy;
-
-    /// How many bytes this descriptor type maps.
-    const MAP_SHIFT: usize;
 
     /// Constructs a new valid page descriptor that maps a physical address.
     fn new_map_pa(page_address: PA, memory_type: Self::MemoryType, perms: PtePermissions) -> Self;
@@ -97,9 +97,6 @@ pub trait PgTable: Clone + Copy {
     /// Bitmask used to extract the page table index from a shifted virtual address.
     const LEVEL_MASK: usize = Self::DESCRIPTORS_PER_PAGE - 1;
 
-    /// Bit shift used to extract the index for this page table level.
-    const SHIFT: usize;
-
     /// The descriptor (page table entry) type for this level.
     type Descriptor: PageTableEntry;
 
@@ -111,7 +108,7 @@ pub trait PgTable: Clone + Copy {
 
     /// Compute the index into this page table from a virtual address.
     fn pg_index(va: VA) -> usize {
-        (va.value() >> Self::SHIFT) & Self::LEVEL_MASK
+        (va.value() >> Self::Descriptor::MAP_SHIFT) & Self::LEVEL_MASK
     }
 
     /// Get the descriptor for a given virtual address.

@@ -102,7 +102,7 @@ impl Fixmap {
         );
 
         L2Table::from_ptr(TVA::from_ptr(&mut self.l2 as *mut _)).set_desc(
-            VA::from_value(FIXMAP_BASE.value() + (1 << L2Table::SHIFT)),
+            VA::from_value(FIXMAP_BASE.value() + (1 << <L2Table as PgTable>::Descriptor::MAP_SHIFT)),
             L2Descriptor::new_next_table(ksym_pa!(self.l3[1])),
             &invalidator,
         );

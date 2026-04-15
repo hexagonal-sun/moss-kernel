@@ -36,12 +36,12 @@ macro_rules! define_descriptor {
     (
         $(#[$outer:meta])*
         $name:ident,
+        shift: $shift:literal,
         // Optional: Implement TableMapper if this section is present
         $( table: $table_bits:literal, )?
         // Optional: Implement PaMapper if this section is present
         $( map: {
                 bits: $map_bits:literal,
-                shift: $tbl_shift:literal,
                 oa_len: $oa_len:literal,
             },
         )?
@@ -54,6 +54,7 @@ macro_rules! define_descriptor {
         impl PageTableEntry for $name {
             type RawDescriptor = u64;
             const INVALID: u64 = 0;
+            const MAP_SHIFT: usize = $shift;
 
             fn is_valid(self) -> bool { (self.0 & 0b11) != 0 }
             fn as_raw(self) -> Self::RawDescriptor { self.0 }
@@ -91,7 +92,7 @@ macro_rules! define_descriptor {
                             XN OFFSET(54) NUMBITS(1) [ NotExecutable = 1, Executable = 0 ],
                             // Software defined bit
                             COW OFFSET(55) NUMBITS(1) [ CowShared = 1, NotCowShared = 0 ],
-                            OUTPUT_ADDR OFFSET($tbl_shift) NUMBITS($oa_len) []
+                            OUTPUT_ADDR OFFSET($shift) NUMBITS($oa_len) []
                         ]
                     ];
                 }
@@ -163,17 +164,16 @@ macro_rules! define_descriptor {
 
             impl PaMapper for $name {
                 type MemoryType = MemoryType;
-                const MAP_SHIFT: usize = $tbl_shift;
 
                 fn could_map(region: PhysMemoryRegion, va: VA) -> bool {
-                    let is_aligned = |addr: usize| (addr & ((1 << $tbl_shift) - 1)) == 0;
+                    let is_aligned = |addr: usize| (addr & ((1 << Self::MAP_SHIFT) - 1)) == 0;
                     is_aligned(region.start_address().value())
                         && is_aligned(va.value())
-                        && region.size() >= (1 << $tbl_shift)
+                        && region.size() >= (1 << Self::MAP_SHIFT)
                 }
 
                 fn new_map_pa(page_address: PA, memory_type: MemoryType, perms: PtePermissions) -> Self {
-                    let is_aligned = |addr: usize| (addr & ((1 << $tbl_shift) - 1)) == 0;
+                    let is_aligned = |addr: usize| (addr & ((1 << Self::MAP_SHIFT) - 1)) == 0;
                     if !is_aligned(page_address.value()) {
                         panic!("Cannot map non-aligned physical address");
                     }
@@ -181,7 +181,7 @@ macro_rules! define_descriptor {
                     let reg = InMemoryRegister::new(0);
                     use [<$name Fields>]::BlockPageFields;
 
-                    reg.modify(BlockPageFields::OUTPUT_ADDR.val((page_address.value() >> $tbl_shift) as u64)
+                    reg.modify(BlockPageFields::OUTPUT_ADDR.val((page_address.value() >> Self::MAP_SHIFT) as u64)
                         + BlockPageFields::AF::Accessed);
 
                     match memory_type {
@@ -209,7 +209,7 @@ macro_rules! define_descriptor {
 
                     let reg = InMemoryRegister::new(self.0);
                     let addr = reg.read(BlockPageFields::OUTPUT_ADDR);
-                    Some(PA::from_value((addr << $tbl_shift) as usize))
+                    Some(PA::from_value((addr << Self::MAP_SHIFT) as usize))
                 }
             }
             }
@@ -220,16 +220,17 @@ macro_rules! define_descriptor {
 define_descriptor!(
     /// A Level 0 descriptor. Can only be an invalid or table descriptor.
     L0Descriptor,
+    shift: 39,
     table: 0b11,
 );
 
 define_descriptor!(
     /// A Level 1 descriptor. Can be a block, table, or invalid descriptor.
     L1Descriptor,
+    shift: 30,
     table: 0b11,
     map: {
         bits: 0b01,    // L1 Block descriptor has bits[1:0] = 01
-        shift: 30,     // Maps a 1GiB block
         oa_len: 18,    // Output address length for 48-bit PA
     },
 );
@@ -237,10 +238,10 @@ define_descriptor!(
 define_descriptor!(
     /// A Level 2 descriptor. Can be a block, table, or invalid descriptor.
     L2Descriptor,
+    shift: 21,
     table: 0b11,
     map: {
         bits: 0b01,    // L2 Block descriptor has bits[1:0] = 01
-        shift: 21,     // Maps a 2MiB block
         oa_len: 27,    // Output address length for 48-bit PA
     },
 );
@@ -248,10 +249,10 @@ define_descriptor!(
 define_descriptor!(
     /// A Level 3 descriptor. Can be a page or invalid descriptor.
     L3Descriptor,
+    shift: 12,
     // Note: No 'table' capability at L3.
     map: {
         bits: 0b11,    // L3 Page descriptor has bits[1:0] = 11
-        shift: 12,     // Maps a 4KiB page
         oa_len: 36,    // Output address length for 48-bit PA
     },
 );

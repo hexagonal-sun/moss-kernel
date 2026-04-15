@@ -55,13 +55,13 @@ where
         PM: PageTableMapper,
         F: FnMut(VA, L3Descriptor) -> L3Descriptor,
     {
-        let table_coverage = 1 << T::SHIFT;
+        let table_coverage = 1 << T::Descriptor::MAP_SHIFT;
 
         let start_idx = Self::pg_index(region.start_address());
         let end_idx = Self::pg_index(region.end_address_inclusive());
 
         // Calculate the base address of the *entire* table.
-        let table_base_va = region.start_address().align(1 << (T::SHIFT + 9));
+        let table_base_va = region.start_address().align(1 << (T::Descriptor::MAP_SHIFT + 9));
 
         for idx in start_idx..=end_idx {
             let entry_va = table_base_va.add_bytes(idx * table_coverage);
@@ -269,7 +269,7 @@ mod tests {
         // This VA range will cross an L2 entry boundary, forcing a walk over
         // two L3 tables. L2 entry covers 2MiB. Let's map a region around a 2MiB
         // boundary.
-        let l2_boundary = 1 << L2Table::SHIFT; // 2MiB
+        let l2_boundary = 1 << <L2Table as PgTable>::Descriptor::MAP_SHIFT; // 2MiB
         let va_start = VA::from_value(l2_boundary - 5 * PAGE_SIZE);
         let num_pages = 10;
         let region = VirtMemoryRegion::new(va_start, num_pages * PAGE_SIZE);
@@ -302,7 +302,7 @@ mod tests {
     fn walk_region_spanning_l2_tables() {
         let mut harness = TestHarness::new(6);
         // This VA range will cross an L1 entry boundary, forcing a walk over two L2 tables.
-        let l1_boundary = 1 << L1Table::SHIFT; // 1GiB
+        let l1_boundary = 1 << <L1Table as PgTable>::Descriptor::MAP_SHIFT; // 1GiB
         let va_start = VA::from_value(l1_boundary - 5 * PAGE_SIZE);
         let num_pages = 10;
         let region = VirtMemoryRegion::new(va_start, num_pages * PAGE_SIZE);

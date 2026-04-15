@@ -27,11 +27,7 @@ macro_rules! define_descriptor {
     (
         $(#[$outer:meta])*
         $name:ident,
-        // Optional: Implement PaMapper if this section is present
-        $( map: {
-                shift: $tbl_shift:literal,
-            },
-        )?
+        shift: $shift:literal
     ) => {
         #[repr(transparent)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +37,7 @@ macro_rules! define_descriptor {
         impl PageTableEntry for $name {
             type RawDescriptor = u64;
             const INVALID: Self::RawDescriptor = 0;
+            const MAP_SHIFT: usize = $shift;
             fn is_valid(self) -> bool { (self.0 & 0b1) != 0 }
             fn as_raw(self) -> u64 { self.0 }
             fn from_raw(v: u64) -> Self { Self(v) }
@@ -117,12 +114,36 @@ macro_rules! define_descriptor {
                 }
             }
         }
+    }
+}
 
+define_descriptor!(
+    /// A page-map level 4 entry descriptor. Can only be an invalid or table
+    /// descriptor.
+    PML4E, shift: 39
+);
+
+define_descriptor!(
+    /// A page directory pointer entry. Can be a block, table, or invalid descriptor.
+    PDPE, shift: 30
+);
+
+define_descriptor!(
+    /// A page directory entry. Can be a block, table, or invalid descriptor.
+    PDE, shift: 21
+);
+
+define_descriptor!(
+    /// A page table entry. Can be a page or invalid descriptor.
+    PTE, shift: 12
+);
+
+macro_rules! impl_pa_mapper {
+    ($($name:ident),+ $(,)?) => {
         $(
             paste! {
             impl PaMapper for $name {
                 type MemoryType = MemoryType;
-                const MAP_SHIFT: usize = $tbl_shift;
 
                 fn could_map(region: PhysMemoryRegion, va: VA) -> bool {
                     let is_aligned = |addr: usize| (addr & ((1 << Self::MAP_SHIFT) - 1)) == 0;
@@ -175,38 +196,10 @@ macro_rules! define_descriptor {
             }
             }
         )?
-    };
+    }
 }
 
-define_descriptor!(
-    /// A page-map level 4 entry descriptor. Can only be an invalid or table
-    /// descriptor.
-    PML4E,
-);
-
-define_descriptor!(
-    /// A page directory pointer entry. Can be a block, table, or invalid descriptor.
-    PDPE,
-    map: {
-        shift: 30,     // Maps a 1GiB block
-    },
-);
-
-define_descriptor!(
-    /// A page directory entry. Can be a block, table, or invalid descriptor.
-    PDE,
-    map: {
-        shift: 21,     // Maps a 2MiB block
-    },
-);
-
-define_descriptor!(
-    /// A page table entry. Can be a page or invalid descriptor.
-    PTE,
-    map: {
-        shift: 12,     // Maps a 4KiB page
-    },
-);
+impl_pa_mapper!(PDPE, PDE, PTE);
 
 macro_rules! impl_table_mapper {
     ($($name:ident),+ $(,)?) => {
