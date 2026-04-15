@@ -11,7 +11,7 @@ use ringbuf::Arc;
 use crate::{
     fs::syscalls::at::{AtFlags, resolve_at_start_node, resolve_path_flags},
     memory::uaccess::cstr::UserCStr,
-    process::{Task, fd_table::Fd},
+    process::{Task, fd_table::Fd, inotify::notify_attrib},
     sched::syscall_ctx::ProcessCtx,
 };
 
@@ -45,6 +45,7 @@ pub async fn sys_fchmodat(
 
     attr.permissions = mode;
     node.setattr(attr).await?;
+    notify_attrib(node.id()).await;
 
     Ok(0)
 }
