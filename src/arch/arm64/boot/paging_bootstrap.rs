@@ -7,10 +7,9 @@ use libkernel::arch::arm64::memory::pg_tables::{
     L0Table, MapAttributes, MappingContext,
     map_range,
 };
-use libkernel::arch::arm64::memory::tlb::NullTlbInvalidator;
 use libkernel::error::{KernelError, Result};
 use libkernel::memory::address::{AddressTranslator, IdentityTranslator, PA, TPA, TVA};
-use libkernel::memory::paging::{PageAllocator, PageTableMapper, PgTable, PgTableArray};
+use libkernel::memory::paging::{NullTlbInvalidator, PageAllocator, PageTableMapper, PgTable, PgTableArray};
 use libkernel::memory::paging::permissions::PtePermissions;
 use libkernel::memory::region::PhysMemoryRegion;
 use libkernel::memory::{PAGE_MASK, PAGE_SIZE};

@@ -3,7 +3,6 @@
 use super::{
     pg_descriptors::L3Descriptor,
     pg_tables::{L0Table, L3Table, TableMapperTable},
-    tlb::NullTlbInvalidator,
 };
 use crate::{
     error::{MapError, Result},
@@ -11,7 +10,7 @@ use crate::{
         PAGE_SIZE,
         address::{TPA, VA},
         paging::{
-            PageTableEntry, PageTableMapper, PgTable, PgTableArray, TLBInvalidator, TableMapper,
+            NullTlbInvalidator, PageTableEntry, PageTableMapper, PgTable, PgTableArray,
         },
         region::VirtMemoryRegion,
     },
