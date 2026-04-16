@@ -1,3 +1,5 @@
+//! Page-table walking functionality
+
 use crate::{
     error::MapError,
     memory::{
@@ -37,7 +39,7 @@ pub(crate) trait RecursiveWalker<LeafDesc: PageTableEntry>: PgTable + Sized {
 impl<T, LeafDesc: PageTableEntry> RecursiveWalker<LeafDesc> for T
 where
     T: TableMapperTable,
-    T::NextLevel: RecursiveWalker<LeafDesc>,
+    <T::Descriptor as TableMapper>::NextLevel: RecursiveWalker<LeafDesc>,
 {
     fn walk<F, PM>(
         table_pa: TPA<PgTableArray<Self>>,
@@ -72,7 +74,9 @@ where
                     .intersection(region)
                     .expect("Sub region should overlap with parent region");
 
-                T::NextLevel::walk(next_desc.cast(), sub_region, ctx, modifier)?;
+                <T::Descriptor as TableMapper>::NextLevel::walk(
+                    next_desc, sub_region, ctx, modifier,
+                )?;
             } else if desc.is_valid() {
                 Err(MapError::NotL3Mapped)?;
             } else {

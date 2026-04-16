@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 use permissions::PtePermissions;
 
 pub mod permissions;
-pub(crate) mod walk;
+pub mod walk;
 
 #[cfg(test)]
 #[allow(missing_docs)]
@@ -43,12 +43,15 @@ pub trait PageTableEntry: Sized + Copy + Clone {
 
 /// Trait for descriptors that can point to a next-level table.
 pub trait TableMapper: PageTableEntry {
+    /// The type of page table this descriptor contains a PA for.
+    type NextLevel: PgTable;
+
     /// Returns the physical address of the next-level table, if this descriptor
     /// is a table descriptor.
-    fn next_table_address(self) -> Option<PA>;
+    fn next_table_address(self) -> Option<TPA<PgTableArray<Self::NextLevel>>>;
 
     /// Creates a new descriptor that points to the given next-level table.
-    fn new_next_table(pa: PA) -> Self;
+    fn new_next_table(pa: TPA<PgTableArray<Self::NextLevel>>) -> Self;
 }
 
 /// A descriptor that maps a physical address at the page and block level.
@@ -182,16 +185,20 @@ pub trait PageTableMapper {
     ) -> crate::error::Result<R>;
 }
 
-pub(crate) trait TableMapperTable: PgTable<Descriptor: TableMapper> + Clone + Copy {
-    type NextLevel: PgTable;
-
+// Conveneince trait.
+pub(crate) trait TableMapperTable: PgTable<Descriptor: TableMapper> {
     /// Follows a descriptor to the next-level table if it's a valid table descriptor.
+    // Dead code as only used in unit tests.
     #[allow(dead_code)]
-    fn next_table_pa(self, va: VA) -> Option<TPA<PgTableArray<Self::NextLevel>>> {
-        let desc = self.get_desc(va);
-        Some(TPA::from_value(desc.next_table_address()?.value()))
+    fn next_table_pa(
+        self,
+        va: VA,
+    ) -> Option<TPA<PgTableArray<<Self::Descriptor as TableMapper>::NextLevel>>> {
+        self.get_desc(va).next_table_address()
     }
 }
+
+impl<T: PgTable<Descriptor: TableMapper>> TableMapperTable for T {}
 
 /// Trait for allocating new page tables during address space setup.
 ///

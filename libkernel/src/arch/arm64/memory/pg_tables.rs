@@ -58,21 +58,12 @@ macro_rules! impl_pgtable {
 
 impl_pgtable!(/// Level 0 page table (512 GiB per entry).
     L0Table, L0Descriptor);
-impl TableMapperTable for L0Table {
-    type NextLevel = L1Table;
-}
 
 impl_pgtable!(/// Level 1 page table (1 GiB per entry).
     L1Table, L1Descriptor);
-impl TableMapperTable for L1Table {
-    type NextLevel = L2Table;
-}
 
 impl_pgtable!(/// Level 2 page table (2 MiB per entry).
     L2Table, L2Descriptor);
-impl TableMapperTable for L2Table {
-    type NextLevel = L3Table;
-}
 
 impl_pgtable!(/// Level 3 page table (4 KiB per entry).
     L3Table, L3Descriptor);
@@ -279,7 +270,7 @@ pub(super) fn map_at_level<L, PA, PM>(
     table: TPA<PgTableArray<L>>,
     va: VA,
     ctx: &mut MappingContext<PA, PM>,
-) -> Result<TPA<PgTableArray<L::NextLevel>>>
+) -> Result<TPA<PgTableArray<<L::Descriptor as TableMapper>::NextLevel>>>
 where
     L: TableMapperTable,
     PA: PageAllocator,
@@ -304,7 +295,9 @@ where
         }
 
         // The descriptor is invalid (zero). We can create a new table.
-        let new_pa = ctx.allocator.allocate_page_table::<L::NextLevel>()?;
+        let new_pa = ctx
+            .allocator
+            .allocate_page_table::<<L::Descriptor as TableMapper>::NextLevel>()?;
 
         // Zero out the new table before use.
         ctx.mapper.with_page_table(new_pa, |new_pgtable| {
@@ -315,7 +308,7 @@ where
         ctx.mapper.with_page_table(table, |pgtable| {
             L::from_ptr(pgtable).set_desc(
                 va,
-                L::Descriptor::new_next_table(new_pa.to_untyped()),
+                L::Descriptor::new_next_table(new_pa),
                 ctx.invalidator,
             );
         })?;
@@ -333,7 +326,10 @@ pub mod tests {
         error::KernelError,
         memory::{
             address::{PA, VA},
-            paging::{test::{MockPageAllocator, PassthroughMapper}, walk::WalkContext},
+            paging::{
+                test::{MockPageAllocator, PassthroughMapper},
+                walk::WalkContext,
+            },
         },
     };
 

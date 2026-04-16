@@ -62,27 +62,15 @@ impl_pgtable!(
     desc: PML4E
 );
 
-impl TableMapperTable for PML4Table {
-    type NextLevel = PDPTable;
-}
-
 impl_pgtable!(
     /// PDP page table (1 GiB per entry).
     PDPTable, desc: PDPE
 );
 
-impl TableMapperTable for PDPTable {
-    type NextLevel = PDTable;
-}
-
 impl_pgtable!(
     /// PDP page table (2 MiB per entry).
     PDTable, desc: PDE
 );
-
-impl TableMapperTable for PDTable {
-    type NextLevel = PTable;
-}
 
 impl_pgtable!(
     /// page table (4 kiB per entry).
@@ -291,7 +279,7 @@ pub(super) fn map_at_level<L, PA, PM>(
     table: TPA<PgTableArray<L>>,
     va: VA,
     ctx: &mut MappingContext<PA, PM>,
-) -> Result<TPA<PgTableArray<L::NextLevel>>>
+) -> Result<TPA<PgTableArray<<L::Descriptor as TableMapper>::NextLevel>>>
 where
     L: TableMapperTable,
     PA: PageAllocator,
@@ -316,7 +304,9 @@ where
         }
 
         // The descriptor is invalid (zero). We can create a new table.
-        let new_pa = ctx.allocator.allocate_page_table::<L::NextLevel>()?;
+        let new_pa = ctx
+            .allocator
+            .allocate_page_table::<<L::Descriptor as TableMapper>::NextLevel>()?;
 
         // Zero out the new table before use.
         ctx.mapper.with_page_table(new_pa, |new_pgtable| {
@@ -327,7 +317,7 @@ where
         ctx.mapper.with_page_table(table, |pgtable| {
             L::from_ptr(pgtable).set_desc(
                 va,
-                L::Descriptor::new_next_table(new_pa.to_untyped()),
+                L::Descriptor::new_next_table(new_pa),
                 ctx.invalidator,
             );
         })?;

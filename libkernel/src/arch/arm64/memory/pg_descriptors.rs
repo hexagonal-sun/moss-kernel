@@ -5,10 +5,12 @@ use tock_registers::interfaces::{ReadWriteable, Readable};
 use tock_registers::{register_bitfields, registers::InMemoryRegister};
 
 use crate::memory::PAGE_SHIFT;
-use crate::memory::address::{PA, VA};
+use crate::memory::address::{PA, TPA, VA};
 use crate::memory::paging::permissions::PtePermissions;
-use crate::memory::paging::{PaMapper, PageTableEntry, TableMapper};
+use crate::memory::paging::{PaMapper, PageTableEntry, PgTableArray, TableMapper};
 use crate::memory::region::PhysMemoryRegion;
+
+use super::pg_tables::{L1Table, L2Table, L3Table};
 
 #[derive(Clone, Copy)]
 struct TableAddr(PA);
@@ -38,7 +40,11 @@ macro_rules! define_descriptor {
         $name:ident,
         shift: $shift:literal,
         // Optional: Implement TableMapper if this section is present
-        $( table: $table_bits:literal, )?
+        $( table: {
+            bits: $table_bits:literal,
+            next_level: $next_level:ident,
+           },
+        )?
         // Optional: Implement PaMapper if this section is present
         $( map: {
                 bits: $map_bits:literal,
@@ -63,16 +69,18 @@ macro_rules! define_descriptor {
 
         $(
             impl TableMapper for $name {
-                fn next_table_address(self) -> Option<PA> {
+                type NextLevel = $next_level;
+
+                fn next_table_address(self) -> Option<TPA<PgTableArray<Self::NextLevel>>> {
                     if (self.0 & 0b11) == $table_bits {
-                        Some(TableAddr::from_raw_parts(self.0).0)
+                        Some(TableAddr::from_raw_parts(self.0).0.cast())
                     } else {
                         None
                     }
                 }
 
-                fn new_next_table(pa: PA) -> Self {
-                    Self(TableAddr(pa).as_raw_parts() | $table_bits)
+                fn new_next_table(pa: TPA<PgTableArray<Self::NextLevel>>) -> Self {
+                    Self(TableAddr(pa.to_untyped()).as_raw_parts() | $table_bits)
                 }
             }
         )?
@@ -221,14 +229,20 @@ define_descriptor!(
     /// A Level 0 descriptor. Can only be an invalid or table descriptor.
     L0Descriptor,
     shift: 39,
-    table: 0b11,
+    table: {
+        bits: 0b11,
+        next_level: L1Table,
+    },
 );
 
 define_descriptor!(
     /// A Level 1 descriptor. Can be a block, table, or invalid descriptor.
     L1Descriptor,
     shift: 30,
-    table: 0b11,
+    table: {
+        bits: 0b11,
+        next_level: L2Table,
+    },
     map: {
         bits: 0b01,    // L1 Block descriptor has bits[1:0] = 01
         oa_len: 18,    // Output address length for 48-bit PA
@@ -239,7 +253,10 @@ define_descriptor!(
     /// A Level 2 descriptor. Can be a block, table, or invalid descriptor.
     L2Descriptor,
     shift: 21,
-    table: 0b11,
+    table: {
+        bits: 0b11,
+        next_level: L3Table,
+    },
     map: {
         bits: 0b01,    // L2 Block descriptor has bits[1:0] = 01
         oa_len: 27,    // Output address length for 48-bit PA
@@ -309,21 +326,21 @@ mod tests {
     #[test]
     fn test_l0_table_descriptor() {
         let pa = PA::from_value(0x1000_0000);
-        let d = L0Descriptor::new_next_table(pa);
+        let d = L0Descriptor::new_next_table(pa.cast());
 
         assert!(d.is_valid());
         assert_eq!(d.as_raw(), 0x1000_0000 | 0b11);
-        assert_eq!(d.next_table_address(), Some(pa));
+        assert_eq!(d.next_table_address().map(|x| x.to_untyped()), Some(pa));
     }
 
     #[test]
     fn test_l1_table_descriptor() {
         let pa = PA::from_value(0x2000_0000);
-        let d = L1Descriptor::new_next_table(pa);
+        let d = L1Descriptor::new_next_table(pa.cast());
 
         assert!(d.is_valid());
         assert_eq!(d.as_raw(), 0x2000_0000 | 0b11);
-        assert_eq!(d.next_table_address(), Some(pa));
+        assert_eq!(d.next_table_address().map(|x| x.to_untyped()), Some(pa));
         assert!(d.mapped_address().is_none());
         assert!(d.permissions().is_none());
     }

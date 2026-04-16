@@ -25,7 +25,7 @@ trait RecursiveTeardownWalker: PgTable + Sized {
 impl<T> RecursiveTeardownWalker for T
 where
     T: TableMapperTable,
-    T::NextLevel: RecursiveTeardownWalker,
+    <T::Descriptor as TableMapper>::NextLevel: RecursiveTeardownWalker,
 {
     fn tear_down<F, PM>(
         table_pa: TPA<PgTableArray<Self>>,
@@ -57,9 +57,14 @@ where
             match next_item {
                 Some((found_idx, phys_addr)) => {
                     // Recurse first
-                    T::NextLevel::tear_down(phys_addr.cast(), ctx, deallocator)?;
+                    <T::Descriptor as TableMapper>::NextLevel::tear_down(
+                        phys_addr,
+                        ctx,
+                        deallocator,
+                    )?;
+
                     // Free the child table frame
-                    deallocator(phys_addr.cast());
+                    deallocator(phys_addr.to_untyped());
 
                     // Advance cursor to skip this entry next time
                     cursor = found_idx + 1;

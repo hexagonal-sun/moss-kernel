@@ -4,10 +4,12 @@ use paste::paste;
 use tock_registers::interfaces::{ReadWriteable, Readable};
 use tock_registers::{register_bitfields, registers::InMemoryRegister};
 
-use crate::memory::address::{PA, VA};
-use crate::memory::paging::{PaMapper, TableMapper};
+use crate::memory::address::{PA, TPA, VA};
+use crate::memory::paging::{PaMapper, PgTableArray, TableMapper};
 use crate::memory::paging::{PageTableEntry, permissions::PtePermissions};
 use crate::memory::region::PhysMemoryRegion;
+
+use super::pg_tables::{PDPTable, PDTable, PTable};
 
 // bits [51:12]
 const ADDR_MASK: u64 = 0xFFFFFFFFFF000;
@@ -205,23 +207,25 @@ impl_pa_mapper!(PDPE, PDE; marker: (1 << 7) | 1);
 impl_pa_mapper!(PTE; marker: 1);
 
 macro_rules! impl_table_mapper {
-    ($($name:ident),+ $(,)?) => {
+    ($($name:ident, next_level: $next_level:ident),+ $(,)?) => {
         $(
             paste!{
             impl TableMapper for $name {
-                fn next_table_address(self) -> Option<PA> {
+                type NextLevel = $next_level;
+
+                fn next_table_address(self) -> Option<TPA<PgTableArray<Self::NextLevel>>> {
                     use [<$name Fields>]::BlockPageFields;
 
                     let reg = InMemoryRegister::new(self.0);
 
                     if reg.matches_all(BlockPageFields::P::Present + BlockPageFields::PS::MapTable) {
-                        Some(self.address())
+                        Some(self.address().cast())
                     } else {
                         None
                     }
                 }
 
-                fn new_next_table(pa: PA) -> Self {
+                fn new_next_table(pa: TPA<PgTableArray<Self::NextLevel>>) -> Self {
                     use [<$name Fields>]::BlockPageFields;
 
                     let reg = InMemoryRegister::new(pa.value() as u64 & ADDR_MASK);
@@ -245,7 +249,11 @@ macro_rules! impl_table_mapper {
     };
 }
 
-impl_table_mapper!(PML4E, PDPE, PDE);
+impl_table_mapper!(
+    PML4E, next_level: PDPTable,
+    PDPE, next_level: PDTable,
+    PDE, next_level: PTable,
+);
 
 #[cfg(test)]
 mod tests {
@@ -266,23 +274,23 @@ mod tests {
     #[test]
     fn test_pml4e_table_descriptor() {
         let pa = PA::from_value(0x1000_0000);
-        let d = PML4E::new_next_table(pa);
+        let d = PML4E::new_next_table(pa.cast());
 
         assert!(d.is_valid());
         // P=1, RW=1, US=1 → low bits = 0b111
         assert_eq!(d.as_raw(), 0x1000_0000 | 0b111);
-        assert_eq!(d.next_table_address(), Some(pa));
+        assert_eq!(d.next_table_address().map(|x| x.to_untyped()), Some(pa));
     }
 
     #[test]
     fn test_pdpe_table_descriptor() {
         let pa = PA::from_value(0x2000_0000);
-        let d = PDPE::new_next_table(pa);
+        let d = PDPE::new_next_table(pa.cast());
 
         assert!(d.is_valid());
         // P=1, RW=1, US=1 → low bits = 0b111
         assert_eq!(d.as_raw(), 0x2000_0000 | 0b111);
-        assert_eq!(d.next_table_address(), Some(pa));
+        assert_eq!(d.next_table_address().map(|x| x.to_untyped()), Some(pa));
         assert!(d.mapped_address().is_none());
     }
 
@@ -493,9 +501,9 @@ mod tests {
         let pa = PA::from_value(0x1000_0000);
 
         for d in [
-            PML4E::new_next_table(pa).as_raw(),
-            PDPE::new_next_table(pa).as_raw(),
-            PDE::new_next_table(pa).as_raw(),
+            PML4E::new_next_table(pa.cast()).as_raw(),
+            PDPE::new_next_table(pa.cast()).as_raw(),
+            PDE::new_next_table(pa.cast()).as_raw(),
         ] {
             // R/W must be set so the subtree can contain writable leaves.
             assert_ne!(d & (1 << 1), 0, "R/W bit must be set on table entry");
