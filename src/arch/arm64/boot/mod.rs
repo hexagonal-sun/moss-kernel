@@ -31,7 +31,8 @@ use libkernel::{
     error::Result,
     memory::{
         address::{PA, TPA, VA},
-        allocators::{phys::FrameAllocator, slab::allocator::SlabAllocator}, paging::PgTableArray,
+        allocators::{phys::FrameAllocator, slab::allocator::SlabAllocator},
+        paging::PgTableArray,
     },
     sync::per_cpu::setup_percpu,
 };

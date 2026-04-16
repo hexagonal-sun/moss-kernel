@@ -8,10 +8,7 @@ use super::super::memory::{
 use libkernel::{
     arch::arm64::memory::{
         pg_descriptors::MemoryType,
-        pg_tables::{
-            L0Table, MapAttributes, MappingContext,
-            map_range,
-        },
+        pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
     },
     error::Result,
     memory::{

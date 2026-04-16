@@ -4,13 +4,14 @@ use aarch64_cpu::asm::barrier;
 use aarch64_cpu::registers::{MAIR_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1};
 use libkernel::arch::arm64::memory::pg_descriptors::MemoryType;
 use libkernel::arch::arm64::memory::pg_tables::{
-    L0Table, MapAttributes, MappingContext,
-    map_range,
+    L0Table, MapAttributes, MappingContext, map_range,
 };
 use libkernel::error::{KernelError, Result};
 use libkernel::memory::address::{AddressTranslator, IdentityTranslator, PA, TPA, TVA};
-use libkernel::memory::paging::{NullTlbInvalidator, PageAllocator, PageTableMapper, PgTable, PgTableArray};
 use libkernel::memory::paging::permissions::PtePermissions;
+use libkernel::memory::paging::{
+    NullTlbInvalidator, PageAllocator, PageTableMapper, PgTable, PgTableArray,
+};
 use libkernel::memory::region::PhysMemoryRegion;
 use libkernel::memory::{PAGE_MASK, PAGE_SIZE};
 use tock_registers::interfaces::{ReadWriteable, Writeable};

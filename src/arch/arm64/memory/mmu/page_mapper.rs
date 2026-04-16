@@ -1,7 +1,7 @@
 use libkernel::{
-    memory::paging::{PageTableMapper, PgTable, PgTableArray},
     error::Result,
     memory::address::{TPA, TVA},
+    memory::paging::{PageTableMapper, PgTable, PgTableArray},
 };
 
 use crate::memory::PageOffsetTranslator;

@@ -1,7 +1,7 @@
 use crate::memory::PageOffsetTranslator;
 use libkernel::{
-    memory::paging::{PageAllocator, PgTable, PgTableArray},
     error::Result,
+    memory::paging::{PageAllocator, PgTable, PgTableArray},
     memory::{PAGE_SIZE, address::TPA, allocators::smalloc::Smalloc},
 };
 

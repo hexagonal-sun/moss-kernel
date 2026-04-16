@@ -12,9 +12,7 @@ use alloc::vec::Vec;
 use libkernel::{
     arch::arm64::memory::{
         pg_descriptors::{L3Descriptor, MemoryType},
-        pg_tables::{
-            L0Table, MapAttributes, MappingContext, map_range,
-        },
+        pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
         pg_tear_down::tear_down_address_space,
         pg_walk::{get_pte, walk_and_modify_region},
     },
@@ -23,7 +21,10 @@ use libkernel::{
         PAGE_SIZE,
         address::{TPA, VA},
         page::PageFrame,
-        paging::{PaMapper, PageAllocator, PageTableEntry, PgTableArray, permissions::PtePermissions, walk::WalkContext},
+        paging::{
+            PaMapper, PageAllocator, PageTableEntry, PgTableArray, permissions::PtePermissions,
+            walk::WalkContext,
+        },
         proc_vm::address_space::{PageInfo, UserAddressSpace},
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },

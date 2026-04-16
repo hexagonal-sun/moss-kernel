@@ -11,7 +11,9 @@ use libkernel::{
     arch::arm64::memory::pg_tables::L0Table,
     error::Result,
     memory::{
-        address::{UA, VA}, paging::PgTableArray, proc_vm::address_space::VirtualMemory
+        address::{UA, VA},
+        paging::PgTableArray,
+        proc_vm::address_space::VirtualMemory,
     },
 };
 use memory::{
