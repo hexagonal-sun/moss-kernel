@@ -331,6 +331,7 @@ where
 pub mod tests {
     use super::*;
     use crate::{
+        arch::x86_64::memory::pg_walk::walk_and_modify_region,
         error::KernelError,
         memory::{
             address::{PA, VA},
@@ -378,6 +379,22 @@ pub mod tests {
                 },
                 &mut self.create_map_ctx(),
             )
+        }
+
+        /// Helper to verify the permissions of a single 4K page
+        pub fn verify_perms(&mut self, va: VA, expected_perms: PtePermissions) {
+            let mut perms_found = None;
+            walk_and_modify_region(
+                self.inner.root_table,
+                VirtMemoryRegion::new(va, PAGE_SIZE),
+                &mut self.inner.create_walk_ctx(),
+                &mut |_va, desc: PTE| {
+                    perms_found = Some(desc.permissions());
+                    desc // Don't modify
+                },
+            )
+            .unwrap();
+            assert_eq!(perms_found, Some(expected_perms));
         }
     }
 

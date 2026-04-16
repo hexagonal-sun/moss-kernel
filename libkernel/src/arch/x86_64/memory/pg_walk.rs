@@ -1,9 +1,5 @@
 //! Page table walking and per-entry modification.
 
-use super::{
-    pg_descriptors::L3Descriptor,
-    pg_tables::{L0Table, L3Table},
-};
 use crate::{
     error::{MapError, Result},
     memory::{
@@ -17,7 +13,12 @@ use crate::{
     },
 };
 
-impl RecursiveWalker<L3Descriptor> for L3Table {
+use super::{
+    pg_descriptors::PTE,
+    pg_tables::{PML4Table, PTable},
+};
+
+impl RecursiveWalker<PTE> for PTable {
     fn walk<F, PM>(
         table_pa: TPA<PgTableArray<Self>>,
         region: VirtMemoryRegion,
@@ -26,11 +27,11 @@ impl RecursiveWalker<L3Descriptor> for L3Table {
     ) -> Result<()>
     where
         PM: PageTableMapper,
-        F: FnMut(VA, L3Descriptor) -> L3Descriptor,
+        F: FnMut(VA, PTE) -> PTE,
     {
         unsafe {
             ctx.mapper.with_page_table(table_pa, |pgtable| {
-                let table = L3Table::from_ptr(pgtable);
+                let table = Self::from_ptr(pgtable);
                 for va in region.iter_pages() {
                     let desc = table.get_desc(va);
                     if desc.is_valid() {
@@ -64,14 +65,14 @@ impl RecursiveWalker<L3Descriptor> for L3Table {
 /// - `MapError::NotAnL3Mapping`: Part of the `region` is covered by a larger
 ///   block mapping (1GiB or 2MiB), which cannot be modified at the L3 level.
 pub fn walk_and_modify_region<F, PM>(
-    l0_table: TPA<PgTableArray<L0Table>>,
+    pml4_table: TPA<PgTableArray<PML4Table>>,
     region: VirtMemoryRegion,
     ctx: &mut WalkContext<PM>,
     mut modifier: F, // Pass closure as a mutable ref to be used across recursive calls
 ) -> Result<()>
 where
     PM: PageTableMapper,
-    F: FnMut(VA, L3Descriptor) -> L3Descriptor,
+    F: FnMut(VA, PTE) -> PTE,
 {
     if !region.is_page_aligned() {
         Err(MapError::VirtNotAligned)?;
@@ -81,15 +82,15 @@ where
         return Ok(()); // Nothing to do for an empty region.
     }
 
-    L0Table::walk(l0_table, region, ctx, &mut modifier)
+    PML4Table::walk(pml4_table, region, ctx, &mut modifier)
 }
 
 /// Obtain the PTE that mapps the VA into the current address space.
 pub fn get_pte<PM: PageTableMapper>(
-    l0_table: TPA<PgTableArray<L0Table>>,
+    pml4_table: TPA<PgTableArray<PML4Table>>,
     va: VA,
     mapper: &mut PM,
-) -> Result<Option<L3Descriptor>> {
+) -> Result<Option<PTE>> {
     let mut descriptor = None;
 
     let mut walk_ctx = WalkContext {
@@ -99,7 +100,7 @@ pub fn get_pte<PM: PageTableMapper>(
     };
 
     walk_and_modify_region(
-        l0_table,
+        pml4_table,
         VirtMemoryRegion::new(va.page_aligned(), PAGE_SIZE),
         &mut walk_ctx,
         |_, pte| {
@@ -114,14 +115,16 @@ pub fn get_pte<PM: PageTableMapper>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::arm64::memory::pg_descriptors::{L2Descriptor, MemoryType};
-    use crate::arch::arm64::memory::pg_tables::tests::TestHarness;
-    use crate::arch::arm64::memory::pg_tables::{L1Table, L2Table, map_at_level};
-    use crate::error::KernelError;
-    use crate::memory::PAGE_SIZE;
-    use crate::memory::address::{PA, VA};
-    use crate::memory::paging::PaMapper;
-    use crate::memory::paging::permissions::PtePermissions;
+    use crate::{
+        arch::x86_64::memory::{
+            pg_descriptors::{MemoryType, PDE},
+            pg_tables::{PDPTable, PDTable, map_at_level, tests::TestHarness},
+        }, error::KernelError, memory::{
+            PAGE_SIZE,
+            address::{PA, VA},
+            paging::{PaMapper, permissions::PtePermissions},
+        }
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
@@ -142,12 +145,12 @@ mod tests {
             harness.inner.root_table,
             VirtMemoryRegion::new(va, PAGE_SIZE),
             &mut harness.inner.create_walk_ctx(),
-            &mut |_va, desc: L3Descriptor| {
+            &mut |_va, desc: PTE| {
                 modifier_was_called = true;
                 // Create a new descriptor with new permissions
-                L3Descriptor::new_map_pa(
+                PTE::new_map_pa(
                     desc.mapped_address().unwrap(),
-                    MemoryType::Normal,
+                    MemoryType::WB,
                     PtePermissions::rw(false),
                 )
             },
@@ -159,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn walk_contiguous_region_in_one_l3_table() {
+    fn walk_contiguous_region_in_one_ptable() {
         let mut harness = TestHarness::new(4);
         let num_pages = 10;
         let va_start = VA::from_value(0x2_0000_0000);
@@ -192,13 +195,13 @@ mod tests {
     }
 
     #[test]
-    fn walk_region_spanning_l3_tables() {
+    fn walk_region_spanning_multiple_ptables() {
         let mut harness = TestHarness::new(5);
-        // This VA range will cross an L2 entry boundary, forcing a walk over
-        // two L3 tables. L2 entry covers 2MiB. Let's map a region around a 2MiB
+        // This VA range will cross an PD entry boundary, forcing a walk over
+        // two PTables. PD entries covers 2MiB. Let's map a region around a 2MiB
         // boundary.
-        let l2_boundary = 1 << <L2Table as PgTable>::Descriptor::MAP_SHIFT; // 2MiB
-        let va_start = VA::from_value(l2_boundary - 5 * PAGE_SIZE);
+        let pd_boundary = 1 << <PDTable as PgTable>::Descriptor::MAP_SHIFT; // 2MiB
+        let va_start = VA::from_value(pd_boundary - 5 * PAGE_SIZE);
         let num_pages = 10;
         let region = VirtMemoryRegion::new(va_start, num_pages * PAGE_SIZE);
 
@@ -227,11 +230,12 @@ mod tests {
     }
 
     #[test]
-    fn walk_region_spanning_l2_tables() {
+    fn walk_region_spanning_pd_tables() {
         let mut harness = TestHarness::new(6);
-        // This VA range will cross an L1 entry boundary, forcing a walk over two L2 tables.
-        let l1_boundary = 1 << <L1Table as PgTable>::Descriptor::MAP_SHIFT; // 1GiB
-        let va_start = VA::from_value(l1_boundary - 5 * PAGE_SIZE);
+        // This VA range will cross an PDP entry boundary, forcing a walk over
+        // two PD tables.
+        let pdp_boundary = 1 << <PDPTable as PgTable>::Descriptor::MAP_SHIFT; // 1GiB
+        let va_start = VA::from_value(pdp_boundary - 5 * PAGE_SIZE);
         let num_pages = 10;
         let region = VirtMemoryRegion::new(va_start, num_pages * PAGE_SIZE);
 
@@ -302,16 +306,17 @@ mod tests {
         let pa = PA::from_value(0x80_0000); // 2MiB aligned
 
         // Manually create a 2MiB block mapping
-        let l1 = map_at_level(harness.inner.root_table, va, &mut harness.create_map_ctx()).unwrap();
-        let l2 = map_at_level(l1, va, &mut harness.create_map_ctx()).unwrap();
-        let l2_desc = L2Descriptor::new_map_pa(pa, MemoryType::Normal, PtePermissions::rw(false));
+        let pdp =
+            map_at_level(harness.inner.root_table, va, &mut harness.create_map_ctx()).unwrap();
+        let pd = map_at_level(pdp, va, &mut harness.create_map_ctx()).unwrap();
+        let pd_desc = PDE::new_map_pa(pa, MemoryType::WB, PtePermissions::rw(false));
         unsafe {
             harness
                 .inner
                 .mapper
-                .with_page_table(l2, |l2_tbl| {
-                    let table = L2Table::from_ptr(l2_tbl);
-                    table.set_desc(va, l2_desc, &harness.inner.invalidator);
+                .with_page_table(pd, |pd_tbl| {
+                    let table = PDTable::from_ptr(pd_tbl);
+                    table.set_desc(va, pd_desc, &harness.inner.invalidator);
                 })
                 .unwrap();
         }

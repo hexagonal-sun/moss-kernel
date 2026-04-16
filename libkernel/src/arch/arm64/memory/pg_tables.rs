@@ -326,10 +326,7 @@ pub mod tests {
         error::KernelError,
         memory::{
             address::{PA, VA},
-            paging::{
-                test::{MockPageAllocator, PassthroughMapper},
-                walk::WalkContext,
-            },
+            paging::test::{MockPageAllocator, PassthroughMapper},
         },
     };
 
@@ -349,13 +346,6 @@ pub mod tests {
         ) -> MappingContext<'_, MockPageAllocator, PassthroughMapper> {
             MappingContext {
                 allocator: &mut self.inner.allocator,
-                mapper: &mut self.inner.mapper,
-                invalidator: &self.inner.invalidator,
-            }
-        }
-
-        pub fn create_walk_ctx(&mut self) -> WalkContext<'_, PassthroughMapper> {
-            WalkContext {
                 mapper: &mut self.inner.mapper,
                 invalidator: &self.inner.invalidator,
             }
@@ -388,7 +378,7 @@ pub mod tests {
             walk_and_modify_region(
                 self.inner.root_table,
                 VirtMemoryRegion::new(va, PAGE_SIZE),
-                &mut self.create_walk_ctx(),
+                &mut self.inner.create_walk_ctx(),
                 &mut |_va, desc: L3Descriptor| {
                     perms_found = desc.permissions();
                     desc // Don't modify

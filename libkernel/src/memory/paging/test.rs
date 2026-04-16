@@ -5,7 +5,9 @@ use crate::{
     memory::address::{IdentityTranslator, TPA, TVA},
 };
 
-use super::{PageAllocator, PageTableMapper, PgTable, PgTableArray, TLBInvalidator};
+use super::{
+    PageAllocator, PageTableMapper, PgTable, PgTableArray, TLBInvalidator, walk::WalkContext,
+};
 
 /// A mock TLB invalidator that does nothing for unit testing.
 pub struct MockTLBInvalidator;
@@ -82,6 +84,13 @@ impl<R: PgTable> TestHarness<R> {
             mapper: PassthroughMapper,
             invalidator: MockTLBInvalidator,
             root_table,
+        }
+    }
+
+    pub fn create_walk_ctx(&mut self) -> WalkContext<'_, PassthroughMapper> {
+        WalkContext {
+            mapper: &mut self.mapper,
+            invalidator: &self.invalidator,
         }
     }
 }
