@@ -25,6 +25,7 @@ use libkernel::{
         address::{TUA, VA},
         proc_vm::{ProcessVM, address_space::VirtualMemory, vmarea::VMArea},
     },
+    sync::waker_set::WakerSet,
 };
 
 /// Task state which is exclusively owned by this CPU/runqueue, it is not shared
@@ -76,6 +77,7 @@ impl OwnedTask {
             stime: AtomicUsize::new(0),
             last_account: AtomicUsize::new(0),
             pending_signals: AtomicSigSet::empty(),
+            signal_notifier: SpinLock::new(WakerSet::new()),
             sig_mask: AtomicSigSet::empty(),
         };
 
@@ -106,6 +108,7 @@ impl OwnedTask {
             utime: AtomicUsize::new(0),
             stime: AtomicUsize::new(0),
             pending_signals: AtomicSigSet::empty(),
+            signal_notifier: SpinLock::new(WakerSet::new()),
             sig_mask: AtomicSigSet::empty(),
         };
 

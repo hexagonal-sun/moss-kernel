@@ -71,11 +71,7 @@ pub fn sys_tkill(ctx: &ProcessCtx, tid: PidT, signal: UserSigId) -> Result<usize
 
     // The fast-path case.
     if current_task.tid == target_tid {
-        current_task
-            .process
-            .pending_signals
-            .lock_save_irq()
-            .set_signal(signal);
+        current_task.process.queue_signal(signal);
     } else {
         let task = current_task
             .process
@@ -85,10 +81,7 @@ pub fn sys_tkill(ctx: &ProcessCtx, tid: PidT, signal: UserSigId) -> Result<usize
             .and_then(|t| t.upgrade())
             .ok_or(KernelError::NoProcess)?;
 
-        task.process
-            .pending_signals
-            .lock_save_irq()
-            .set_signal(signal);
+        task.process.queue_signal(signal);
     }
 
     Ok(0)

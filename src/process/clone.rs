@@ -20,6 +20,7 @@ use libkernel::memory::address::TUA;
 use libkernel::{
     error::{KernelError, Result},
     memory::address::UA,
+    sync::waker_set::WakerSet,
 };
 use ringbuf::Arc;
 
@@ -184,6 +185,7 @@ pub async fn sys_clone(
                 ptrace: SpinLock::new(ptrace),
                 sig_mask: new_sigmask,
                 pending_signals: initial_signals,
+                signal_notifier: SpinLock::new(WakerSet::new()),
                 utime: AtomicUsize::new(0),
                 stime: AtomicUsize::new(0),
                 last_account: AtomicUsize::new(0),
