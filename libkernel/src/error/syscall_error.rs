@@ -44,6 +44,7 @@ pub const ERANGE: isize = -34;
 pub const EWOULDBLOCK: isize = -EAGAIN;
 pub const ENAMETOOLONG: isize = -36;
 pub const ENOSYS: isize = -38;
+pub const ELOOP: isize = -40;
 pub const EAFNOSUPPORT: isize = -97;
 pub const EOPNOTSUPP: isize = -95;
 pub const ETIMEDOUT: isize = -110;
@@ -66,6 +67,7 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::Fs(FsError::PermissionDenied) => EACCES,
         KernelError::Fs(FsError::TooManyFiles) => EMFILE,
         KernelError::Fs(FsError::NoDevice) => ENODEV,
+        KernelError::Fs(FsError::Loop) => ELOOP,
         KernelError::NotATty => ENOTTY,
         KernelError::SeekPipe => ESPIPE,
         KernelError::NotSupported => ENOSYS,

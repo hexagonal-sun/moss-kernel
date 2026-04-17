@@ -205,4 +205,29 @@ impl FileDescriptorTable {
     pub fn len(&self) -> usize {
         self.entries.iter().filter(|e| e.is_some()).count()
     }
+
+    /// Returns all currently-open file descriptors in the inclusive range.
+    ///
+    /// If `last` is negative, it is treated as "all currently allocated slots",
+    /// matching common `close_range(2)` usage with `UINT_MAX`.
+    pub fn open_fds_in_range(&self, first: i32, last: i32) -> Vec<Fd> {
+        let first = first.max(0) as usize;
+        let last = if last < 0 {
+            self.entries.len().saturating_sub(1)
+        } else {
+            last as usize
+        };
+
+        if first > last {
+            return Vec::new();
+        }
+
+        self.entries
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(last.saturating_sub(first).saturating_add(1))
+            .filter_map(|(i, entry)| entry.as_ref().map(|_| Fd(i as i32)))
+            .collect()
+    }
 }

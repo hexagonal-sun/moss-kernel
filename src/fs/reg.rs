@@ -44,8 +44,6 @@ impl FileOps for RegFile {
 
         while count > 0 {
             let chunk_sz = min(PAGE_SIZE, count);
-            copy_from_user_slice(user_buf, &mut kbuf[..chunk_sz]).await?;
-
             let bytes_read = self.inode.read_at(offset, &mut kbuf[..chunk_sz]).await?;
 
             if bytes_read == 0 {

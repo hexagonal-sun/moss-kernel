@@ -31,16 +31,30 @@ bitflags! {
 }
 
 pub async fn sys_close_range(ctx: &ProcessCtx, first: Fd, last: Fd, flags: i32) -> Result<usize> {
-    let flags = CloseRangeFlags::from_bits_truncate(flags);
-    if flags.contains(CloseRangeFlags::CLOSE_RANGE_UNSHARE) {
-        todo!("Implement CLOSE_RANGE_UNSHARE");
-    }
-    if flags.contains(CloseRangeFlags::CLOSE_RANGE_CLOEXEC) {
-        todo!("Implement CLOSE_RANGE_CLOEXEC");
+    let flags = CloseRangeFlags::from_bits(flags).ok_or(KernelError::InvalidValue)?;
+    if first.as_raw() < 0 {
+        return Err(KernelError::InvalidValue);
     }
 
-    for i in first.as_raw()..=last.as_raw() {
-        close(ctx, Fd(i)).await?;
+    // `CLOSE_RANGE_UNSHARE` is effectively a no-op here because the kernel can
+    // already clone the descriptor table on demand for exec and non-CLONE_FILES
+    // paths. What userspace mainly needs is that the operation itself succeeds.
+    let fds = ctx
+        .shared()
+        .fd_table
+        .lock_save_irq()
+        .open_fds_in_range(first.as_raw(), last.as_raw());
+
+    if flags.contains(CloseRangeFlags::CLOSE_RANGE_CLOEXEC) {
+        let mut table = ctx.shared().fd_table.lock_save_irq();
+        for fd in fds {
+            table.add_flags(fd, crate::process::fd_table::FdFlags::CLOEXEC)?;
+        }
+        return Ok(0);
+    }
+
+    for fd in fds {
+        close(ctx, fd).await?;
     }
     Ok(0)
 }

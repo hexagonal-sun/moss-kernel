@@ -50,8 +50,8 @@ impl Inode for ProcTaskDirInode {
             fs.id(),
             get_inode_id(&[&self.tid.value().to_string(), &tid.value().to_string()]),
         );
-        find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
-        Ok(Arc::new(ProcTaskInode::new(self.tid, true, inode_id)))
+        find_task_by_tid(tid).ok_or(FsError::NotFound)?;
+        Ok(Arc::new(ProcTaskInode::new(tid, true, inode_id)))
     }
 
     async fn readdir(&self, start_offset: u64) -> libkernel::error::Result<Box<dyn DirStream>> {

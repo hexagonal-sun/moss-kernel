@@ -82,7 +82,7 @@ pub async fn sys_newfstatat(
 
     let start_node = match resolve_at_start_node(ctx, dirfd, path, flags).await {
         Ok(node) => node,
-        Err(err) if err != KernelError::NotSupported => panic!("{err}"),
+        Err(err) if err == KernelError::NotSupported => panic!("{err}"),
         Err(err) => return Err(err),
     };
     let node = resolve_path_flags(dirfd, path, start_node, &task, flags).await?;

@@ -21,11 +21,13 @@ use libkernel::{
     proc::caps::CapabilitiesFlags,
 };
 use open_file::OpenFile;
+use path_file::PathOnlyFile;
 use reg::RegFile;
 
 pub mod dir;
 pub mod fops;
 pub mod open_file;
+pub mod path_file;
 pub mod pipe;
 pub mod reg;
 pub mod syscalls;
@@ -345,8 +347,12 @@ impl VFS {
         mode: FilePermissions,
         task: &Arc<Task>,
     ) -> Result<Arc<OpenFile>> {
-        // Attempt to resolve the full path first.
-        let resolve_result = self.resolve_path(path, root.clone(), task).await;
+        // `O_NOFOLLOW` only suppresses following the final symlink component.
+        let resolve_result = if flags.contains(OpenFlags::O_NOFOLLOW) {
+            self.resolve_path_nofollow(path, root.clone(), task).await
+        } else {
+            self.resolve_path(path, root.clone(), task).await
+        };
 
         let target_inode = match resolve_result {
             // The file/directory exists.
@@ -402,6 +408,19 @@ impl VFS {
             return Err(FsError::NotADirectory.into());
         }
 
+        if flags.contains(OpenFlags::O_NOFOLLOW)
+            && !flags.contains(OpenFlags::O_PATH)
+            && attr.file_type == FileType::Symlink
+        {
+            return Err(FsError::Loop.into());
+        }
+
+        if flags.contains(OpenFlags::O_PATH) {
+            let mut open_file = OpenFile::new(Box::new(PathOnlyFile), flags);
+            open_file.update(target_inode, path.to_owned());
+            return Ok(Arc::new(open_file));
+        }
+
         if attr.file_type == FileType::Directory
             && (flags.contains(OpenFlags::O_WRONLY) || flags.contains(OpenFlags::O_RDWR))
         {
@@ -432,7 +451,7 @@ impl VFS {
 
                 Ok(Arc::new(open_file))
             }
-            FileType::Symlink => unimplemented!(), // this is implemented at resolve_path_internal
+            FileType::Symlink => unimplemented!(), // this is implemented at resolve_path_internal unless opened via O_PATH|O_NOFOLLOW
             FileType::BlockDevice(_) => todo!(),
             FileType::CharDevice(char_dev_descriptor) => {
                 let char_driver = DM
