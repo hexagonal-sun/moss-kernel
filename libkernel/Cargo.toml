@@ -35,7 +35,7 @@ tock-registers = { version = "0.10.1", optional = true }
 
 # fs
 async-trait = { workspace = true, optional = true }
-ext4plus = { version = "0.1.0-alpha.7", optional = true }
+ext4plus = { version = "0.1.0-beta.1", optional = true }
 
 # proc_vm
 object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"], optional = true }

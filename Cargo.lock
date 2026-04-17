@@ -307,9 +307,9 @@ dependencies = [
 
 [[package]]
 name = "ext4plus"
-version = "0.1.0-alpha.7"
+version = "0.1.0-beta.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9dc277b4b40b9c396d5519685fa08c9feada784011646ce7f40fa8ec68baf8e5"
+checksum = "a25bd6af4472ec54e136bc5bf6e3f9556d35df5c5e554cc4092d40a57372530b"
 dependencies = [
  "async-lock",
  "async-trait",

@@ -371,8 +371,8 @@ where
     }
 
     async fn link(&self, name: &str, inode: Arc<dyn Inode>) -> Result<()> {
-        let inner = self.inner.lock().await;
-        let inner_dir = match &*inner {
+        let mut inner = self.inner.lock().await;
+        let inner_dir = match &mut *inner {
             InodeInner::Directory(d) => d,
             _ => return Err(KernelError::NotSupported),
         };
@@ -400,8 +400,8 @@ where
     }
 
     async fn unlink(&self, name: &str) -> Result<()> {
-        let inner = self.inner.lock().await;
-        let inner_dir = match &*inner {
+        let mut inner = self.inner.lock().await;
+        let inner_dir = match &mut *inner {
             InodeInner::Directory(d) => d,
             _ => return Err(KernelError::NotSupported),
         };
@@ -462,10 +462,10 @@ where
             .lock()
             .await
             .clone();
-        let old_parent_dir = Dir::open_inode(&fs.inner, old_parent_inode)?;
+        let mut old_parent_dir = Dir::open_inode(&fs.inner, old_parent_inode)?;
 
-        let inner = self.inner.lock().await;
-        let inner_dir = match &*inner {
+        let mut inner = self.inner.lock().await;
+        let inner_dir = match &mut *inner {
             InodeInner::Directory(d) => d,
             _ => return Err(KernelError::NotSupported),
         };
@@ -554,14 +554,11 @@ where
     }
 
     async fn symlink(&self, name: &str, target: &Path) -> Result<()> {
-        let inner = self.inner.lock().await;
-        let inner_dir = match &*inner {
+        let mut inner = self.inner.lock().await;
+        let inner_dir = match &mut *inner {
             InodeInner::Directory(d) => d,
             _ => return Err(KernelError::NotSupported),
         };
-        if inner.file_type() != ext4plus::FileType::Directory {
-            return Err(KernelError::NotSupported);
-        }
         let fs = self.fs_ref.upgrade().unwrap();
         fs.inner
             .symlink(
