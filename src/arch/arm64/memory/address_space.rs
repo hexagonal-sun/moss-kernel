@@ -209,11 +209,8 @@ impl Drop for Arm64ProcessAddressSpace {
             invalidator: &AllEl0TlbInvalidator::new(),
         };
 
-        if tear_down_address_space(self.l0_table, &mut walk_ctx, |addr| unsafe {
-            PAGE_ALLOC
-                .get()
-                .unwrap()
-                .alloc_from_region(addr.to_pfn().as_phys_range());
+        if tear_down_address_space(self.l0_table, &mut walk_ctx, |region| unsafe {
+            PAGE_ALLOC.get().unwrap().alloc_from_region(region);
         })
         .is_err()
         {

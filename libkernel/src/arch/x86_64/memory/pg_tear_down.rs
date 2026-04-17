@@ -3,8 +3,10 @@
 use super::pg_tables::{PDPTable, PML4Table, PTable};
 use crate::error::Result;
 use crate::memory::paging::TableMapper;
+use crate::memory::region::PhysMemoryRegion;
 use crate::memory::{
-    address::{PA, TPA},
+    PAGE_SIZE,
+    address::TPA,
     paging::{
         PaMapper, PageTableMapper, PgTable, PgTableArray, tear_down::RecursiveTeardownWalker,
         walk::WalkContext,
@@ -20,7 +22,7 @@ impl RecursiveTeardownWalker for PTable {
     ) -> Result<()>
     where
         PM: PageTableMapper,
-        F: FnMut(PA),
+        F: FnMut(PhysMemoryRegion),
     {
         unsafe {
             ctx.mapper.with_page_table(table_pa, |pgtable| {
@@ -30,7 +32,7 @@ impl RecursiveTeardownWalker for PTable {
                     let desc = table.get_idx(idx);
 
                     if let Some(addr) = desc.mapped_address() {
-                        deallocator(addr);
+                        deallocator(PhysMemoryRegion::new(addr, PAGE_SIZE));
                     }
                 }
             })?;
@@ -52,8 +54,10 @@ impl RecursiveTeardownWalker for PTable {
 ///     2. The PDP, PD, and PTable Page Table frames.
 ///     3. The PML4 Root Table frame.
 ///     
-///  *Note* PDPTables which are pointed to by PML4 indexes [256-511] are not
-///  free'd.
+/// Block mappings (2MiB / 1GiB) are freed with their actual size.
+///
+/// *Note* PDPTables which are pointed to by PML4 indexes [256-511] are not
+/// free'd.
 pub fn tear_down_address_space<F, PM>(
     pml4_table: TPA<PgTableArray<PML4Table>>,
     ctx: &mut WalkContext<PM>,
@@ -61,7 +65,7 @@ pub fn tear_down_address_space<F, PM>(
 ) -> Result<()>
 where
     PM: PageTableMapper,
-    F: FnMut(PA),
+    F: FnMut(PhysMemoryRegion),
 {
     let mut cursor = 0;
 
@@ -81,40 +85,50 @@ where
         match next_item {
             Some((idx, pdp_addr)) => {
                 PDPTable::tear_down(pdp_addr, ctx, &mut deallocator)?;
-                deallocator(pdp_addr.to_untyped());
+                deallocator(PhysMemoryRegion::new(pdp_addr.to_untyped(), PAGE_SIZE));
                 cursor = idx + 1;
             }
             None => break,
         }
     }
 
-    deallocator(pml4_table.to_untyped());
+    deallocator(PhysMemoryRegion::new(pml4_table.to_untyped(), PAGE_SIZE));
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arch::x86_64::memory::pg_tables::tests::TestHarness;
-    use crate::memory::address::VA;
-    use crate::memory::paging::permissions::PtePermissions;
-    use std::collections::HashSet;
+    use crate::arch::x86_64::memory::{
+        pg_descriptors::MemoryType,
+        pg_tables::{MapAttributes, map_range, tests::TestHarness},
+    };
+    use crate::memory::{
+        PAGE_SIZE,
+        address::{PA, VA},
+        paging::permissions::PtePermissions,
+        region::{PhysMemoryRegion, VirtMemoryRegion},
+    };
+    use std::collections::HashMap;
 
     fn capture_freed_pages<PM: PageTableMapper>(
         root_table: TPA<PgTableArray<PML4Table>>,
         ctx: &mut WalkContext<PM>,
-    ) -> HashSet<usize> {
-        let mut freed_set = HashSet::new();
-        tear_down_address_space(root_table, ctx, |pa| {
-            if !freed_set.insert(pa.value()) {
+    ) -> HashMap<usize, usize> {
+        let mut freed_map = HashMap::new();
+        tear_down_address_space(root_table, ctx, |region| {
+            if freed_map
+                .insert(region.start_address().value(), region.size())
+                .is_some()
+            {
                 panic!(
                     "Double free detected! Physical Address {:?} was freed twice.",
-                    pa
+                    region
                 );
             }
         })
         .expect("Teardown failed");
-        freed_set
+        freed_map
     }
 
     #[test]
@@ -128,7 +142,7 @@ mod tests {
 
         // Only the Root L0 table itself is freed.
         assert_eq!(freed.len(), 1);
-        assert!(freed.contains(&harness.inner.root_table.value()));
+        assert!(freed.contains_key(&harness.inner.root_table.value()));
     }
 
     #[test]
@@ -153,8 +167,8 @@ mod tests {
         // 1 PDP Table
         // 1 PML4 Table (Root)
         assert_eq!(freed.len(), 5);
-        assert!(freed.contains(&pa)); // The payload
-        assert!(freed.contains(&harness.inner.root_table.value())); // The root
+        assert!(freed.contains_key(&pa)); // The payload
+        assert!(freed.contains_key(&harness.inner.root_table.value())); // The root
     }
 
     #[test]
@@ -188,8 +202,8 @@ mod tests {
         // 1 PDP Table
         // 1 PML4 Table
         assert_eq!(freed.len(), 6);
-        assert!(freed.contains(&pa1));
-        assert!(freed.contains(&pa2));
+        assert!(freed.contains_key(&pa1));
+        assert!(freed.contains_key(&pa2));
     }
 
     #[test]
@@ -278,10 +292,76 @@ mod tests {
         //   1 PDP table (userspace branch)
         //   1 PML4 root
         assert_eq!(freed.len(), 5);
-        assert!(freed.contains(&user_pa));
+        assert!(freed.contains_key(&user_pa));
 
         // The kernel payload and its intermediate tables (PML4 index >= 256) must
         // not be freed — they belong to the kernel and outlive this address space.
-        assert!(!freed.contains(&kernel_pa));
+        assert!(!freed.contains_key(&kernel_pa));
+    }
+
+    #[test]
+    fn teardown_2mb_block_mapping() {
+        const BLOCK_SIZE: usize = 1 << 21; // 2MiB
+
+        // Root + PDP + PD = 3 allocations; no PT needed for a block mapping.
+        let mut harness = TestHarness::new(3);
+
+        // Both PA and VA are 2MiB-aligned, so map_range will create a PDE block.
+        let block_pa = 0x0020_0000usize; // 2MiB
+        let block_va = 0x0020_0000usize; // 2MiB
+        harness
+            .map_4k_pages(block_pa, block_va, 512, PtePermissions::rw(false))
+            .unwrap();
+
+        let freed = capture_freed_pages(
+            harness.inner.root_table,
+            &mut harness.inner.create_walk_ctx(),
+        );
+
+        // Block frame freed with its actual 2MiB size.
+        assert_eq!(freed.get(&block_pa), Some(&BLOCK_SIZE));
+        // Intermediate table frames freed with PAGE_SIZE.
+        assert_eq!(
+            freed.get(&harness.inner.root_table.value()),
+            Some(&PAGE_SIZE)
+        );
+        // Total: block + PD + PDP + PML4 = 4 entries.
+        assert_eq!(freed.len(), 4);
+    }
+
+    #[test]
+    fn teardown_1gb_block_mapping() {
+        const BLOCK_SIZE: usize = 1 << 30; // 1GiB
+
+        // Root + PDP = 2 allocations; 1GiB block sits in a PDPE, no PD or PT needed.
+        let mut harness = TestHarness::new(2);
+
+        let block_pa = 0x4000_0000usize; // 1GiB-aligned
+        let block_va = 0x4000_0000usize; // 1GiB-aligned
+        map_range(
+            harness.inner.root_table,
+            MapAttributes {
+                phys: PhysMemoryRegion::new(PA::from_value(block_pa), BLOCK_SIZE),
+                virt: VirtMemoryRegion::new(VA::from_value(block_va), BLOCK_SIZE),
+                mem_type: MemoryType::WB,
+                perms: PtePermissions::rw(false),
+            },
+            &mut harness.create_map_ctx(),
+        )
+        .unwrap();
+
+        let freed = capture_freed_pages(
+            harness.inner.root_table,
+            &mut harness.inner.create_walk_ctx(),
+        );
+
+        // Block frame freed with its actual 1GiB size.
+        assert_eq!(freed.get(&block_pa), Some(&BLOCK_SIZE));
+        assert_eq!(
+            freed.get(&harness.inner.root_table.value()),
+            Some(&PAGE_SIZE)
+        );
+        // Total: block + PDP + PML4 = 3 entries.
+        assert_eq!(freed.len(), 3);
     }
 }
