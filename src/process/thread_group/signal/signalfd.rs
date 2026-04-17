@@ -121,7 +121,7 @@ impl SignalFd {
                     ..Default::default()
                 };
 
-                let sig_tua = TUA::<SignalfdSiginfo>::from_value(ptr.value());
+                let sig_tua = ptr.cast();
                 copy_to_user(sig_tua, info).await?;
 
                 ptr = ptr.add_bytes(siginfo_size);

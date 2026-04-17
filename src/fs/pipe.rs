@@ -21,6 +21,7 @@ use core::{
     task::Poll,
     time::Duration,
 };
+use futures::FutureExt;
 use libkernel::{
     error::{KernelError, Result},
     fs::{
@@ -125,21 +126,18 @@ impl FileOps for PipeReader {
     fn poll_read_ready(&self) -> Pin<Box<dyn Future<Output = Result<()>> + 'static + Send>> {
         let inner = self.inner.clone();
         Box::pin(async move {
-            let mut read_fut = Box::pin(inner.buf.read_ready());
+            let mut read_fut = Box::pin(inner.buf.read_ready().fuse());
             let mut gone_cond = Box::pin(
                 inner
                     .other_side_gone
-                    .wait_until(|gone| if *gone { Some(()) } else { None }),
+                    .wait_until(|gone| if *gone { Some(()) } else { None })
+                    .fuse(),
             );
 
-            future::poll_fn(move |cx| {
-                if read_fut.as_mut().poll(cx).is_ready() || gone_cond.as_mut().poll(cx).is_ready() {
-                    Poll::Ready(Ok(()))
-                } else {
-                    Poll::Pending
-                }
-            })
-            .await
+            futures::select_biased! {
+                _ = read_fut => Ok(()),
+                _ = gone_cond => Ok(()),
+            }
         })
     }
 
