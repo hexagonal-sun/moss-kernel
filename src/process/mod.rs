@@ -27,6 +27,7 @@ use libkernel::{
         allocators::phys::PageAllocation,
         proc_vm::{ProcessVM, vmarea::AccessKind},
     },
+    sync::waker_set::WakerSet,
 };
 use ptrace::PTrace;
 use thread_group::pid::PidT;
@@ -173,6 +174,7 @@ pub struct Task {
     pub ptrace: SpinLock<PTrace>,
     pub sig_mask: AtomicSigSet,
     pub pending_signals: AtomicSigSet,
+    pub signal_notifier: SpinLock<WakerSet>,
     pub utime: AtomicUsize,
     pub stime: AtomicUsize,
     pub last_account: AtomicUsize,
@@ -194,6 +196,11 @@ impl Task {
     /// Raise a signal on this specific task (thread-directed).
     pub fn raise_task_signal(&self, signal: SigId) {
         self.pending_signals.insert(signal.into());
+        self.notify_signal_waiters();
+    }
+
+    pub fn notify_signal_waiters(&self) {
+        self.signal_notifier.lock_save_irq().wake_all();
     }
 
     /// Check for a pending signal on this task or its process, respecting the

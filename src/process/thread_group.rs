@@ -10,6 +10,7 @@ use crate::{
 use alloc::{
     collections::btree_map::BTreeMap,
     sync::{Arc, Weak},
+    vec::Vec,
 };
 use builder::ThreadGroupBuilder;
 use core::sync::atomic::AtomicUsize;
@@ -149,12 +150,35 @@ impl ThreadGroup {
         TG_LIST.lock_save_irq().get(&id).and_then(|x| x.upgrade())
     }
 
+    pub fn notify_signal_waiters(&self) {
+        let tasks: Vec<_> = self
+            .tasks
+            .lock_save_irq()
+            .values()
+            .filter_map(|task| task.upgrade())
+            .collect();
+
+        for task in tasks {
+            task.notify_signal_waiters();
+        }
+    }
+
+    pub fn queue_signal(&self, signal: SigId) {
+        self.pending_signals.lock_save_irq().set_signal(signal);
+        self.notify_signal_waiters();
+    }
+
+    pub fn set_pending_signals(&self, signals: SigSet) {
+        *self.pending_signals.lock_save_irq() = signals;
+        self.notify_signal_waiters();
+    }
+
     pub fn deliver_signal(&self, signal: SigId) {
         match signal {
             SigId::SIGKILL => {
                 // Set the sigkill marker in the pending signals and wake up all
                 // tasks in this group.
-                *self.pending_signals.lock_save_irq() = SigSet::SIGKILL;
+                self.set_pending_signals(SigSet::SIGKILL);
 
                 for task in self.tasks.lock_save_irq().values() {
                     if let Some(task) = task.upgrade() {
@@ -165,7 +189,7 @@ impl ThreadGroup {
                 }
             }
             _ => {
-                self.pending_signals.lock_save_irq().set_signal(signal);
+                self.queue_signal(signal);
 
                 // See whether there is a task that can action the signal.
                 for task in self.tasks.lock_save_irq().values() {

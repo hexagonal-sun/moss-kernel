@@ -3,11 +3,12 @@ use crate::fs::fops::FileOps;
 use crate::fs::open_file::{FileCtx, OpenFile};
 use crate::memory::uaccess::{copy_from_user, copy_to_user};
 use crate::process::fd_table::{Fd, FdFlags};
-use crate::sched::{current_work, syscall_ctx::ProcessCtx};
+use crate::sched::{current_work, sched_task::Work, syscall_ctx::ProcessCtx};
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::future::Future;
 use core::pin::Pin;
+use core::task::{Context, Poll};
 use libkernel::error::{KernelError, Result};
 use libkernel::fs::OpenFlags;
 use libkernel::memory::address::{TUA, UA};
@@ -80,10 +81,7 @@ impl SignalFd {
         SigSet::from_bits_truncate(!self.mask.bits())
     }
 
-    fn take_pending_signal(&self) -> Option<SigId> {
-        let task = current_work();
-        let blocked = self.blocked_mask();
-
+    fn take_pending_signal_for(task: &Work, blocked: SigSet) -> Option<SigId> {
         task.pending_signals.take_signal(blocked).or_else(|| {
             task.process
                 .pending_signals
@@ -92,10 +90,11 @@ impl SignalFd {
         })
     }
 
-    fn has_pending_signal(&self) -> bool {
-        let task = current_work();
-        let blocked = self.blocked_mask();
+    fn take_pending_signal(&self) -> Option<SigId> {
+        Self::take_pending_signal_for(&current_work(), self.blocked_mask())
+    }
 
+    fn has_pending_signal_for(task: &Work, blocked: SigSet) -> bool {
         task.pending_signals.peek_signal(blocked).is_some()
             || task
                 .process
@@ -103,6 +102,10 @@ impl SignalFd {
                 .lock_save_irq()
                 .peek_signal(blocked)
                 .is_some()
+    }
+
+    async fn wait_for_pending_signal(&self) {
+        SignalFdWait::new(current_work(), self.blocked_mask()).await;
     }
 
     async fn read_impl(&mut self, buf: UA, count: usize, nonblock: bool) -> Result<usize> {
@@ -135,7 +138,7 @@ impl SignalFd {
             } else if nonblock {
                 return Err(KernelError::TryAgain);
             } else {
-                crate::drivers::timer::sleep(core::time::Duration::from_millis(10)).await;
+                self.wait_for_pending_signal().await;
             }
         }
 
@@ -146,6 +149,53 @@ impl SignalFd {
 fn sanitize_mask(mut mask: SigSet) -> SigSet {
     mask.remove(SigSet::UNMASKABLE_SIGNALS);
     mask
+}
+
+struct SignalFdWait {
+    task: Arc<Work>,
+    blocked: SigSet,
+    token: Option<u64>,
+}
+
+impl SignalFdWait {
+    fn new(task: Arc<Work>, blocked: SigSet) -> Self {
+        Self {
+            task,
+            blocked,
+            token: None,
+        }
+    }
+}
+
+impl Drop for SignalFdWait {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            self.task.signal_notifier.lock_save_irq().remove(token);
+        }
+    }
+}
+
+impl Future for SignalFdWait {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = unsafe { self.as_mut().get_unchecked_mut() };
+        let mut notifier = this.task.signal_notifier.lock_save_irq();
+
+        if SignalFd::has_pending_signal_for(&this.task, this.blocked) {
+            if let Some(token) = this.token.take() {
+                notifier.remove(token);
+            }
+            return Poll::Ready(());
+        }
+
+        if let Some(token) = this.token.take() {
+            notifier.remove(token);
+        }
+        this.token = Some(notifier.register(cx.waker()));
+
+        Poll::Pending
+    }
 }
 
 #[async_trait::async_trait]
@@ -167,12 +217,8 @@ impl FileOps for SignalFd {
         let mask = self.mask;
         Box::pin(async move {
             let signalfd = SignalFd { mask };
-            loop {
-                if signalfd.has_pending_signal() {
-                    return Ok(());
-                }
-                crate::drivers::timer::sleep(core::time::Duration::from_millis(10)).await;
-            }
+            signalfd.wait_for_pending_signal().await;
+            Ok(())
         })
     }
 

@@ -170,10 +170,7 @@ impl PTrace {
                 TraceTrap::new(trap_signal, self.calc_trace_point_mask()),
             );
 
-            tracer
-                .pending_signals
-                .lock_save_irq()
-                .set_signal(SigId::SIGCHLD);
+            tracer.queue_signal(SigId::SIGCHLD);
         }
     }
 

@@ -83,10 +83,7 @@ pub fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
         .child_notifiers
         .child_update(task.descriptor().tgid(), exit_code);
 
-    parent
-        .pending_signals
-        .lock_save_irq()
-        .set_signal(SigId::SIGCHLD);
+    parent.queue_signal(SigId::SIGCHLD);
 
     // 5. This thread is now finished.
     sched::current_work().state.finish();
