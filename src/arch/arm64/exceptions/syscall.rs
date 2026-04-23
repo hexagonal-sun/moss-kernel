@@ -8,6 +8,7 @@ use crate::{
     },
     fs::{
         dir::sys_getdents64,
+        memfd::sys_memfd_create,
         pipe::sys_pipe2,
         syscalls::{
             at::{
@@ -755,6 +756,8 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             .await
         }
         0x116 => sys_getrandom(TUA::from_value(arg1 as _), arg2 as _, arg3 as _).await,
+        0x117 => sys_memfd_create(&ctx, TUA::from_value(arg1 as _), arg2 as _).await,
+        0x118 => Err(KernelError::NotSupported),
         0x11d => {
             sys_copy_file_range(
                 &ctx,
