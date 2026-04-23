@@ -151,4 +151,8 @@ pub trait FileOps: Send + Sync {
     ) -> Option<&mut crate::process::thread_group::signal::signalfd::SignalFd> {
         None
     }
+
+    fn as_inotify(&mut self) -> Option<&mut crate::process::inotify::Inotify> {
+        None
+    }
 }

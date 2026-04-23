@@ -133,12 +133,18 @@ impl Inode for ProcTaskInode {
             FileType::File,
             9,
         ));
+        entries.push(Dirent::new(
+            "cgroup".to_string(),
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "cgroup"])),
+            FileType::File,
+            10,
+        ));
         if !self.is_task_dir {
             entries.push(Dirent::new(
                 "task".to_string(),
                 InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "task"])),
                 FileType::Directory,
-                10,
+                11,
             ));
         }
 

@@ -1,7 +1,7 @@
 use crate::drivers::fs::proc::{get_inode_id, procfs};
 use crate::process::fd_table::Fd;
 use crate::process::{Tid, find_task_by_tid};
-use crate::sched::current_work;
+
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::format;
@@ -55,9 +55,14 @@ impl Inode for ProcFdInode {
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         let fd: i32 = name.parse().map_err(|_| FsError::NotFound)?;
-        let task = current_work();
+        let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
         let fd_table = task.fd_table.lock_save_irq();
         if fd_table.get(Fd(fd)).is_none() {
+            log::warn!(
+                "/proc/{}/fd/{} lookup failed: fd not present",
+                self.tid.value(),
+                fd
+            );
             return Err(FsError::NotFound.into());
         }
         let fs = procfs();
@@ -77,11 +82,8 @@ impl Inode for ProcFdInode {
         let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
         let fd_table = task.fd_table.lock_save_irq();
         let mut entries = Vec::new();
-        for fd in 0..fd_table.len() {
-            if fd_table.get(Fd(fd as i32)).is_none() {
-                continue;
-            }
-            let fd_str = fd.to_string();
+        for fd in fd_table.open_fds_in_range(0, -1) {
+            let fd_str = fd.as_raw().to_string();
             let next_offset = (entries.len() + 1) as u64;
             entries.push(Dirent {
                 id: InodeId::from_fsid_and_inodeid(
@@ -89,7 +91,11 @@ impl Inode for ProcFdInode {
                     get_inode_id(&[&self.tid.value().to_string(), self.dir_name(), &fd_str]),
                 ),
                 offset: next_offset,
-                file_type: FileType::File,
+                file_type: if self.fd_info {
+                    FileType::File
+                } else {
+                    FileType::Symlink
+                },
                 name: fd_str,
             });
         }
