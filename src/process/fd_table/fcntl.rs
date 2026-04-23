@@ -10,12 +10,21 @@ const F_GETFD: u32 = 1; // Get file descriptor flags.
 const F_SETFD: u32 = 2; // Set file descriptor flags.
 const F_GETFL: u32 = 3; // Get file status flags.
 const F_SETFL: u32 = 4; // Set file status flags.
+const F_LINUX_SPECIFIC_BASE: u32 = 1024;
+const F_DUPFD_CLOEXEC: u32 = F_LINUX_SPECIFIC_BASE + 6; // Duplicate file descriptor with FD_CLOEXEC.
 
 pub async fn sys_fcntl(ctx: &ProcessCtx, fd: Fd, op: u32, arg: usize) -> Result<usize> {
     let task = ctx.shared();
 
     match op {
         F_DUPFD => dup_fd(ctx, fd, Some(Fd(arg as i32))).map(|new_fd| new_fd.as_raw() as _),
+        F_DUPFD_CLOEXEC => {
+            let new_fd = dup_fd(ctx, fd, Some(Fd(arg as i32)))?;
+            task.fd_table
+                .lock_save_irq()
+                .add_flags(new_fd, FdFlags::CLOEXEC)?;
+            Ok(new_fd.as_raw() as _)
+        }
         F_GETFD => {
             let fds = task.fd_table.lock_save_irq();
             let fd = fds
