@@ -1,6 +1,6 @@
 [package]
 name = "libkernel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Architecture-independent kernel building blocks for operating systems"
 license = "MIT"

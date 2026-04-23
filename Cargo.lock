@@ -529,7 +529,7 @@ checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
 name = "libkernel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bitflags 2.11.0",
