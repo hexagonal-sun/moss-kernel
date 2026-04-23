@@ -19,11 +19,12 @@ use crate::{
         blk::buffer::BlockBuffer,
     },
 };
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::{
     boxed::Box,
     sync::{Arc, Weak},
+    vec,
 };
 use async_trait::async_trait;
 use core::any::Any;
@@ -582,6 +583,49 @@ where
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    async fn getxattr(&self, name: &str) -> Result<Vec<u8>> {
+        let inner = self.inner.lock().await;
+        let fs = self.fs_ref.upgrade().ok_or(FsError::InvalidFs)?;
+        Ok(inner
+            .get_xattr(&fs.inner, name)
+            .await?
+            .ok_or(FsError::NotFound)?)
+    }
+
+    async fn listxattr(&self) -> Result<Vec<String>> {
+        let inner = self.inner.lock().await;
+        let fs = self.fs_ref.upgrade().ok_or(FsError::InvalidFs)?;
+        let mut xattrs = vec![];
+        for attr in inner.list_xattrs(&fs.inner).await? {
+            let str_attr = String::from_utf8_lossy(&attr).to_string();
+            xattrs.push(str_attr);
+        }
+        Ok(xattrs)
+    }
+
+    async fn setxattr(&self, name: &str, buf: &[u8], create: bool, replace: bool) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        let fs = self.fs_ref.upgrade().ok_or(FsError::InvalidFs)?;
+        if inner.get_xattr(&fs.inner, name).await?.is_some() {
+            if create {
+                return Err(KernelError::Fs(FsError::AlreadyExists));
+            }
+        } else {
+            if replace {
+                return Err(KernelError::Fs(FsError::NotFound));
+            }
+        }
+        inner.set_xattr(&fs.inner, name, buf).await?;
+        Ok(())
+    }
+
+    async fn removexattr(&self, name: &str) -> Result<()> {
+        let mut inner = self.inner.lock().await;
+        let fs = self.fs_ref.upgrade().ok_or(FsError::InvalidFs)?;
+        inner.remove_xattr(&fs.inner, name).await?;
+        Ok(())
     }
 }
 
