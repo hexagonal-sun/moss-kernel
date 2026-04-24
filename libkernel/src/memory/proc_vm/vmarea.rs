@@ -186,6 +186,7 @@ pub struct VMArea {
     pub(super) name: String,
     pub(super) kind: VMAreaKind,
     pub(super) permissions: VMAPermissions,
+    pub(super) shared: bool,
 }
 
 impl VMArea {
@@ -201,12 +202,18 @@ impl VMArea {
             kind,
             permissions,
             name: String::new(),
+            shared: false,
         }
     }
 
     /// Sets a human-readable name for this VMA (e.g. `[stack]`, `[heap]`).
     pub fn set_name<S: AsRef<str>>(&mut self, s: S) {
         self.name = s.as_ref().to_string();
+    }
+
+    /// Marks this VMA as a shared mapping.
+    pub fn set_shared(&mut self, shared: bool) {
+        self.shared = shared;
     }
 
     /// Creates a file-backed `VMArea` directly from an ELF program header.
@@ -264,6 +271,7 @@ impl VMArea {
             }),
             permissions,
             name: String::new(),
+            shared: false,
         }
     }
 
@@ -397,7 +405,7 @@ impl VMArea {
     /// Merging is possible if permissions are identical and the backing storage
     /// is of a compatible and contiguous nature.
     pub(super) fn can_merge_with(&self, other: &VMArea) -> bool {
-        if self.permissions != other.permissions {
+        if self.permissions != other.permissions || self.shared != other.shared {
             return false;
         }
 
@@ -433,6 +441,11 @@ impl VMArea {
     /// mapping.
     pub fn is_file_backed(&self) -> bool {
         matches!(self.kind, VMAreaKind::File(_))
+    }
+
+    /// Returns whether this VMA was created as a shared mapping.
+    pub fn is_shared(&self) -> bool {
+        self.shared
     }
 
     /// Shrink this VMA's region to `new_region`, recalculating file offsets,
