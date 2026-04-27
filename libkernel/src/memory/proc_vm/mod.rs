@@ -15,10 +15,35 @@ pub mod vmarea;
 
 const BRK_PERMISSIONS: VMAPermissions = VMAPermissions::rw();
 
+/// Address bounds for the argv and environment strings in a process image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArgsEnvBounds {
+    /// First byte of the argument strings.
+    pub arg_start: VA,
+    /// One byte past the argument strings.
+    pub arg_end: VA,
+    /// First byte of the environment strings.
+    pub env_start: VA,
+    /// One byte past the environment strings.
+    pub env_end: VA,
+}
+
+impl Default for ArgsEnvBounds {
+    fn default() -> Self {
+        Self {
+            arg_start: VA::null(),
+            arg_end: VA::null(),
+            env_start: VA::null(),
+            env_end: VA::null(),
+        }
+    }
+}
+
 /// The virtual memory state of a user-space process.
 pub struct ProcessVM<AS: UserAddressSpace> {
     mm: MemoryMap<AS>,
     brk: VirtMemoryRegion,
+    args_env_bounds: ArgsEnvBounds,
 }
 
 impl<AS: UserAddressSpace> ProcessVM<AS> {
@@ -35,7 +60,11 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
 
         let brk = VirtMemoryRegion::new(vma.region.end_address().align_up(PAGE_SIZE), 0);
 
-        Self { mm, brk }
+        Self {
+            mm,
+            brk,
+            args_env_bounds: ArgsEnvBounds::default(),
+        }
     }
 
     /// Constructs a new Process VM structure from the given VMA. The heap is
@@ -47,7 +76,11 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
 
         let brk = VirtMemoryRegion::new(vma.region.end_address().align_up(PAGE_SIZE), 0);
 
-        Ok(Self { mm, brk })
+        Ok(Self {
+            mm,
+            brk,
+            args_env_bounds: ArgsEnvBounds::default(),
+        })
     }
 
     /// Constructs a `ProcessVM` from an existing memory map.
@@ -66,6 +99,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         Self {
             mm: map,
             brk: VirtMemoryRegion::new(brk, 0),
+            args_env_bounds: ArgsEnvBounds::default(),
         }
     }
 
@@ -74,6 +108,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         Ok(Self {
             mm: MemoryMap::new()?,
             brk: VirtMemoryRegion::empty(),
+            args_env_bounds: ArgsEnvBounds::default(),
         })
     }
 
@@ -101,6 +136,36 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
     /// Returns the current start address of the program break (heap).
     pub fn start_brk(&self) -> VA {
         self.brk.start_address()
+    }
+
+    /// Returns the argv/environment address bounds for this process image.
+    pub fn args_env_bounds(&self) -> ArgsEnvBounds {
+        self.args_env_bounds
+    }
+
+    /// Sets the argv/environment address bounds for this process image.
+    pub fn set_args_env_bounds(&mut self, bounds: ArgsEnvBounds) {
+        self.args_env_bounds = bounds;
+    }
+
+    /// Sets the first byte of the argument strings.
+    pub fn set_arg_start(&mut self, addr: VA) {
+        self.args_env_bounds.arg_start = addr;
+    }
+
+    /// Sets one byte past the argument strings.
+    pub fn set_arg_end(&mut self, addr: VA) {
+        self.args_env_bounds.arg_end = addr;
+    }
+
+    /// Sets the first byte of the environment strings.
+    pub fn set_env_start(&mut self, addr: VA) {
+        self.args_env_bounds.env_start = addr;
+    }
+
+    /// Sets one byte past the environment strings.
+    pub fn set_env_end(&mut self, addr: VA) {
+        self.args_env_bounds.env_end = addr;
     }
 
     /// Returns the current end address of the program break (heap).
@@ -178,6 +243,7 @@ impl<AS: UserAddressSpace> ProcessVM<AS> {
         Ok(Self {
             mm: self.mm.clone_as_cow()?,
             brk: self.brk,
+            args_env_bounds: self.args_env_bounds,
         })
     }
 }
@@ -207,6 +273,7 @@ mod tests {
         let initial_brk_start = VA::from_value(0x1000 + PAGE_SIZE);
         assert_eq!(vm.brk.start_address(), initial_brk_start);
         assert_eq!(vm.brk.size(), 0);
+        assert_eq!(vm.args_env_bounds(), ArgsEnvBounds::default());
         assert_eq!(vm.current_brk(), initial_brk_start);
 
         // And the break region itself should not be mapped

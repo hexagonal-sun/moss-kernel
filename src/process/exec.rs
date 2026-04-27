@@ -25,7 +25,7 @@ use libkernel::{
         address::{TUA, VA},
         paging::permissions::PtePermissions,
         proc_vm::{
-            ProcessVM,
+            ArgsEnvBounds, ProcessVM,
             memory_map::MemoryMap,
             vmarea::{VMAPermissions, VMArea, VMAreaKind},
         },
@@ -181,13 +181,14 @@ async fn exec_elf(
     vmas.push(stack_vma);
 
     let mut mem_map = MemoryMap::from_vmas(vmas)?;
-    let stack_ptr = setup_user_stack(&mut mem_map, &argv, &envp, auxv)?;
+    let (stack_ptr, args_env_bounds) = setup_user_stack(&mut mem_map, &argv, &envp, auxv)?;
 
     // We are now committed to the exec.  Inform ptrace.
     ptrace_stop(ctx, TracePoint::Exec).await;
 
     let user_ctx = ArchImpl::new_user_context(entry_addr, stack_ptr);
     let mut vm = ProcessVM::from_map(mem_map);
+    vm.set_args_env_bounds(args_env_bounds);
 
     // We don't have to worry about actually calling for a full context switch
     // here. Parts of the old process that are replaced will go out of scope and
@@ -292,7 +293,7 @@ fn setup_user_stack(
     argv: &[String],
     envp: &[String],
     mut auxv: Vec<u64>,
-) -> Result<VA> {
+) -> Result<(VA, ArgsEnvBounds)> {
     // Calculate the space needed and the virtual addresses for all strings and
     // pointers.
     let mut string_addrs = Vec::new();
@@ -313,6 +314,33 @@ fn setup_user_stack(
     }
 
     let (envp_addrs, argv_addrs) = string_addrs.split_at(envp.len());
+
+    let arg_start = argv_addrs
+        .first()
+        .copied()
+        .map(VA::from_value)
+        .unwrap_or_else(VA::null);
+    let arg_end = argv_addrs
+        .last()
+        .zip(argv.last())
+        .map(|(&addr, s)| VA::from_value(addr + s.len() + 1))
+        .unwrap_or_else(VA::null);
+    let env_start = envp_addrs
+        .first()
+        .copied()
+        .map(VA::from_value)
+        .unwrap_or_else(VA::null);
+    let env_end = envp_addrs
+        .last()
+        .zip(envp.last())
+        .map(|(&addr, s)| VA::from_value(addr + s.len() + 1))
+        .unwrap_or_else(VA::null);
+    let args_env_bounds = ArgsEnvBounds {
+        arg_start,
+        arg_end,
+        env_start,
+        env_end,
+    };
 
     let mut info_block = Vec::<u64>::new();
     info_block.push(argv.len() as u64); // argc
@@ -384,7 +412,7 @@ fn setup_user_stack(
             .map_page(page.leak(), page_va, PtePermissions::rw(true))?;
     }
 
-    Ok(VA::from_value(final_sp_val))
+    Ok((VA::from_value(final_sp_val), args_env_bounds))
 }
 
 // Dynamic linker path: map PT_INTERP interpreter and return start address of

@@ -143,6 +143,7 @@ Threads:\t{tasks}\n",
                     }
 
                     let start_brk = vm.start_brk().value();
+                    let args_env_bounds = vm.args_env_bounds();
 
                     let mut output = String::new();
                     output.push_str(&format!("{} ", task.process.tgid.value())); // pid
@@ -205,10 +206,10 @@ Threads:\t{tasks}\n",
                     output.push_str(&format!("{start_data} ")); // start_data
                     output.push_str(&format!("{end_data} ")); // end_data
                     output.push_str(&format!("{start_brk} ")); // start_brk
-                    output.push_str(&format!("{} ", 0)); // arg_start
-                    output.push_str(&format!("{} ", 0)); // arg_end
-                    output.push_str(&format!("{} ", 0)); // env_start
-                    output.push_str(&format!("{} ", 0)); // env_end
+                    output.push_str(&format!("{} ", args_env_bounds.arg_start.value())); // arg_start
+                    output.push_str(&format!("{} ", args_env_bounds.arg_end.value())); // arg_end
+                    output.push_str(&format!("{} ", args_env_bounds.env_start.value())); // env_start
+                    output.push_str(&format!("{} ", args_env_bounds.env_end.value())); // env_end
                     output.push_str(&format!("{} ", 0)); // exit_code
                     output.push('\n');
                     output

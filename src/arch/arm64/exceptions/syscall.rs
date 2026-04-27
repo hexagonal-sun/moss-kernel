@@ -620,7 +620,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0xa1 => sys_sethostname(&ctx, TUA::from_value(arg1 as _), arg2 as _).await,
         0xa3 => Err(KernelError::InvalidValue),
         0xa6 => sys_umask(&ctx, arg1 as _).map_err(|e| match e {}),
-        0xa7 => sys_prctl(&ctx, arg1 as _, arg2, arg3).await,
+        0xa7 => sys_prctl(&ctx, arg1 as _, arg2, arg3, arg4, arg5).await,
         0xa8 => sys_getcpu(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xa9 => sys_gettimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xaa => sys_settimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
