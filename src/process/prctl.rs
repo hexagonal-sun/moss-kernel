@@ -10,6 +10,8 @@ use libkernel::proc::caps::CapabilitiesFlags;
 
 const PR_SET_PDEATHSIG: i32 = 1;
 const PR_GET_PDEATHSIG: i32 = 2;
+const PR_GET_DUMPABLE: i32 = 3;
+const PR_SET_DUMPABLE: i32 = 4;
 const PR_CAPBSET_READ: i32 = 23;
 const PR_CAPBSET_DROP: i32 = 24;
 const PR_SET_NAME: i32 = 15;
@@ -246,6 +248,11 @@ pub async fn sys_prctl(
     match op {
         PR_SET_PDEATHSIG => pr_set_pdeath_sig(ctx, arg1 as i64),
         PR_GET_PDEATHSIG => pr_get_pdeath_sig(ctx),
+        PR_GET_DUMPABLE => Ok(1),
+        PR_SET_DUMPABLE => match arg1 {
+            0 | 1 => Ok(0),
+            _ => Err(KernelError::InvalidValue),
+        },
         PR_SET_NAME => pr_set_name(ctx, TUA::from_value(arg1 as usize)).await,
         PR_GET_NAME => pr_get_name(ctx, TUA::from_value(arg1 as usize)).await,
         PR_CAPBSET_READ => pr_read_capbset(ctx, arg1 as usize),
