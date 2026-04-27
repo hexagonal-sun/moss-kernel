@@ -13,8 +13,53 @@ const PR_CAPBSET_DROP: i32 = 24;
 const PR_SET_NAME: i32 = 15;
 const PR_GET_NAME: i32 = 16;
 const PR_GET_SECUREBITS: i32 = 27;
+const PR_SET_MM: i32 = 35;
 const PR_GET_NO_NEW_PRIVS: i32 = 39;
 const PR_CAP_AMBIENT: i32 = 47;
+
+#[derive(Debug)]
+enum SetMMOp {
+    StartCode = 1,
+    EndCode = 2,
+    StartData = 3,
+    EndData = 4,
+    StartStack = 5,
+    StartBrk = 6,
+    Brk = 7,
+    ArgStart = 8,
+    ArgEnd = 9,
+    EnvStart = 10,
+    EnvEnd = 11,
+    AUX = 12,
+    ExeFile = 13,
+    Map = 14,
+    MapSize = 15,
+}
+
+impl TryFrom<u64> for SetMMOp {
+    type Error = KernelError;
+
+    fn try_from(value: u64) -> Result<Self> {
+        match value {
+            1 => Ok(SetMMOp::StartCode),
+            2 => Ok(SetMMOp::EndCode),
+            3 => Ok(SetMMOp::StartData),
+            4 => Ok(SetMMOp::EndData),
+            5 => Ok(SetMMOp::StartStack),
+            6 => Ok(SetMMOp::StartBrk),
+            7 => Ok(SetMMOp::Brk),
+            8 => Ok(SetMMOp::ArgStart),
+            9 => Ok(SetMMOp::ArgEnd),
+            10 => Ok(SetMMOp::EnvStart),
+            11 => Ok(SetMMOp::EnvEnd),
+            12 => Ok(SetMMOp::AUX),
+            13 => Ok(SetMMOp::ExeFile),
+            14 => Ok(SetMMOp::Map),
+            15 => Ok(SetMMOp::MapSize),
+            _ => Err(KernelError::InvalidValue),
+        }
+    }
+}
 
 #[derive(Debug)]
 enum AmbientCapOp {
@@ -68,6 +113,14 @@ async fn pr_set_name(ctx: &ProcessCtx, str: TUA<c_char>) -> Result<usize> {
     Ok(0)
 }
 
+async fn pr_set_mm(ctx: &ProcessCtx, op: u64) -> Result<usize> {
+    let op = SetMMOp::try_from(op)?;
+    let task = ctx.shared();
+    match op {
+        op => todo!("unsupported set_mm op: {op:?}")
+    }
+}
+
 async fn pr_cap_ambient(ctx: &ProcessCtx, op: u64, arg1: u64) -> Result<usize> {
     let op = AmbientCapOp::try_from(op)?;
     let task = ctx.shared();
@@ -114,6 +167,7 @@ pub async fn sys_prctl(ctx: &ProcessCtx, op: i32, arg1: u64, arg2: u64) -> Resul
         PR_CAPBSET_READ => pr_read_capbset(ctx, arg1 as usize),
         PR_CAPBSET_DROP => pr_drop_capbset(ctx, arg1 as usize).await,
         PR_GET_SECUREBITS => Ok(0),
+        PR_SET_MM => pr_set_mm(ctx, arg1).await,
         PR_GET_NO_NEW_PRIVS => Ok(0),
         PR_CAP_AMBIENT => pr_cap_ambient(ctx, arg1, arg2).await,
         _ => todo!("prctl op: {}", op),
