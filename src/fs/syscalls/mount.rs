@@ -76,21 +76,21 @@ pub async fn sys_mount(
         .resolve_path(Path::new(dir_name), VFS.root_inode(), ctx.shared())
         .await?;
     let mut buf = [0u8; 1024];
-    let _type = if type_.is_null() {
+    let fs_type = if type_.is_null() {
         None
     } else {
         Some(UserCStr::from_ptr(type_).copy_from_user(&mut buf).await?)
     };
-    if let Some(dev_name) = dev_name {
-        let dev_name = match dev_name {
-            "proc" => "procfs",
-            "devtmpfs" => "devfs",
-            "cgroup2" => "cgroupfs",
-            s => s,
-        };
-        VFS.mount(mount_point, dev_name, None).await?;
-        Ok(0)
-    } else {
-        Err(KernelError::NotSupported)
-    }
+
+    let fs_name = fs_type.or(dev_name).ok_or(KernelError::NotSupported)?;
+    let fs_name = match fs_name {
+        "proc" => "procfs",
+        "devtmpfs" => "devfs",
+        "sysfs" => "sysfs",
+        "cgroup2" => "cgroupfs",
+        s => s,
+    };
+
+    VFS.mount(mount_point, fs_name, None).await?;
+    Ok(0)
 }
