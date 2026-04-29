@@ -2,7 +2,7 @@ use core::arch::asm;
 
 /// Returns the current state of the interrupt flags (DAIF register) and disables IRQs.
 #[inline(always)]
-pub fn local_irq_save() -> usize {
+pub fn local_irq_save() -> u64 {
     let flags: u64;
     unsafe {
         asm!(
@@ -12,16 +12,16 @@ pub fn local_irq_save() -> usize {
             options(nomem, nostack)
         );
     }
-    flags as _
+    flags
 }
 
 /// Restores the interrupt flags to a previously saved state.
 #[inline(always)]
-pub fn local_irq_restore(flags: usize) {
+pub fn local_irq_restore(flags: u64) {
     unsafe {
         asm!(
             "msr daif, {0}",    // Write flags back to DAIF
-            in(reg) flags as u64,
+            in(reg) flags,
             options(nomem, nostack)
         );
     }

@@ -22,12 +22,12 @@ use crate::CpuOps;
 /// A wrapper for a RefCell guard (G) that restores interrupts on drop.
 pub struct IrqGuard<G, CPU: CpuOps> {
     guard: ManuallyDrop<G>,
-    flags: usize,
+    flags: CPU::InterruptFlags,
     _phantom: PhantomData<CPU>,
 }
 
 impl<G, CPU: CpuOps> IrqGuard<G, CPU> {
-    fn new(guard: G, flags: usize) -> Self {
+    fn new(guard: G, flags: CPU::InterruptFlags) -> Self {
         Self {
             guard: ManuallyDrop::new(guard),
             flags,
@@ -68,7 +68,7 @@ where
 /// A mutable borrow of per-CPU data that restores interrupts on drop.
 pub struct IrqSafeRefMut<'a, T, CPU: CpuOps> {
     borrow: ManuallyDrop<RefMut<'a, T>>,
-    flags: usize,
+    flags: CPU::InterruptFlags,
     _phantom: PhantomData<CPU>,
 }
 
@@ -316,6 +316,8 @@ mod tests {
     struct MockArch;
 
     impl CpuOps for MockArch {
+        type InterruptFlags = usize;
+
         fn id() -> usize {
             MOCK_CPU_ID.with(|id| id.get())
         }

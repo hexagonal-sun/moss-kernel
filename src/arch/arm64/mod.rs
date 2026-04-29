@@ -48,6 +48,8 @@ pub mod ptrace;
 pub struct Aarch64 {}
 
 impl CpuOps for Aarch64 {
+    type InterruptFlags = u64;
+
     fn id() -> usize {
         MPIDR_EL1.read(MPIDR_EL1::Aff0) as _
     }
@@ -58,11 +60,11 @@ impl CpuOps for Aarch64 {
         }
     }
 
-    fn disable_interrupts() -> usize {
+    fn disable_interrupts() -> Self::InterruptFlags {
         local_irq_save()
     }
 
-    fn restore_interrupt_state(state: usize) {
+    fn restore_interrupt_state(state: Self::InterruptFlags) {
         local_irq_restore(state);
     }
 

@@ -66,7 +66,7 @@ impl<T: ?Sized, CPU: CpuOps> SpinLockIrq<T, CPU> {
 #[must_use]
 pub struct SpinLockIrqGuard<'a, T: ?Sized + 'a, CPU: CpuOps> {
     lock: &'a SpinLockIrq<T, CPU>,
-    irq_flags: usize,                // The saved DAIF register state
+    irq_flags: CPU::InterruptFlags,
     _marker: PhantomData<*const ()>, // !Send
 }
 

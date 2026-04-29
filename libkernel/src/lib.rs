@@ -83,6 +83,7 @@ extern crate alloc;
 /// struct MockCpu;
 ///
 /// impl CpuOps for MockCpu {
+///     type InterruptFlags = usize;
 ///     fn id() -> usize { 0 }
 ///     fn halt() -> ! { loop { core::hint::spin_loop() } }
 ///     fn disable_interrupts() -> usize { 0 }
@@ -91,6 +92,9 @@ extern crate alloc;
 /// }
 /// ```
 pub trait CpuOps: 'static {
+    /// The type of the register that contains the interrupt flag enable state.
+    type InterruptFlags: Clone + Copy;
+
     /// Returns the ID of the currently executing core.
     fn id() -> usize;
 
@@ -99,10 +103,10 @@ pub trait CpuOps: 'static {
 
     /// Disables all maskable interrupts on the current CPU core, returning the
     /// previous state prior to masking.
-    fn disable_interrupts() -> usize;
+    fn disable_interrupts() -> Self::InterruptFlags;
 
     /// Restore the previous interrupt state obtained from `disable_interrupts`.
-    fn restore_interrupt_state(flags: usize);
+    fn restore_interrupt_state(flags: Self::InterruptFlags);
 
     /// Explicitly enables maskable interrupts on the current CPU core.
     fn enable_interrupts();
@@ -119,6 +123,8 @@ pub mod test {
     pub struct MockCpuOps {}
 
     impl CpuOps for MockCpuOps {
+        type InterruptFlags = usize;
+
         fn id() -> usize {
             0
         }

@@ -30,7 +30,7 @@ impl SlabGetter<ArchImpl, PgAllocGetter, PageOffsetTranslator> for StaticSlabGet
 }
 
 pub struct PerCpuCache {
-    flags: usize,
+    flags: u64,
 }
 
 impl PerCpuCache {
