@@ -1,22 +1,18 @@
 //! Page-offset arithmetic helpers.
 
-use super::address_space::VirtualMemory;
-use crate::memory::address::{AddressTranslator, TPA, TVA};
-use core::marker::PhantomData;
+pub(crate) use crate::memory::address::{AddressTranslator, TPA, TVA};
 
 /// Translates between physical and virtual addresses using a fixed page-offset mapping.
-pub struct PageOffsetTranslator<VM: VirtualMemory> {
-    _phantom: PhantomData<VM>,
-}
+pub struct PageOffsetTranslator<const OFFSET: usize>;
 
-unsafe impl<VM: VirtualMemory> Send for PageOffsetTranslator<VM> {}
-unsafe impl<VM: VirtualMemory> Sync for PageOffsetTranslator<VM> {}
+unsafe impl<const OFFSET: usize> Send for PageOffsetTranslator<OFFSET> {}
+unsafe impl<const OFFSET: usize> Sync for PageOffsetTranslator<OFFSET> {}
 
-impl<T, VM: VirtualMemory> AddressTranslator<T> for PageOffsetTranslator<VM> {
+impl<T, const OFFSET: usize> AddressTranslator<T> for PageOffsetTranslator<OFFSET> {
     fn virt_to_phys(va: TVA<T>) -> TPA<T> {
         let mut v = va.value();
 
-        v -= VM::PAGE_OFFSET;
+        v -= OFFSET;
 
         TPA::from_value(v)
     }
@@ -24,7 +20,7 @@ impl<T, VM: VirtualMemory> AddressTranslator<T> for PageOffsetTranslator<VM> {
     fn phys_to_virt(pa: TPA<T>) -> TVA<T> {
         let mut v = pa.value();
 
-        v += VM::PAGE_OFFSET;
+        v += OFFSET;
 
         TVA::from_value(v)
     }

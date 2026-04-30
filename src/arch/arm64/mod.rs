@@ -78,8 +78,6 @@ impl VirtualMemory for Aarch64 {
     type ProcessAddressSpace = Arm64ProcessAddressSpace;
     type KernelAddressSpace = Arm64KernelAddressSpace;
 
-    const PAGE_OFFSET: usize = PAGE_OFFSET;
-
     fn kern_address_space() -> &'static SpinLock<Self::KernelAddressSpace> {
         KERN_ADDR_SPC.get().unwrap()
     }
@@ -88,6 +86,8 @@ impl VirtualMemory for Aarch64 {
 impl Arch for Aarch64 {
     type UserContext = ExceptionState;
     type PTraceGpRegs = Arm64PtraceGPRegs;
+
+    const PAGE_OFFSET: usize = PAGE_OFFSET;
 
     fn new_user_context(entry_point: VA, stack_top: VA) -> Self::UserContext {
         ExceptionState {

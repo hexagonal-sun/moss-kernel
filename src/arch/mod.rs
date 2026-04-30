@@ -37,6 +37,9 @@ pub trait Arch: CpuOps + VirtualMemory {
     /// The type for GP regs copied via `PTRACE_GETREGSET`.
     type PTraceGpRegs: UserCopyable + for<'a> From<&'a Self::UserContext>;
 
+    /// The starting address for the logical mapping of all physical ram.
+    const PAGE_OFFSET: usize;
+
     fn name() -> &'static str;
 
     fn cpu_count() -> usize;

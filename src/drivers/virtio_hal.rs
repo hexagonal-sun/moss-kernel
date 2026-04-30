@@ -1,9 +1,8 @@
-use crate::arch::ArchImpl;
+use crate::arch::{Arch, ArchImpl};
 use crate::memory::PageOffsetTranslator;
 use core::ptr::NonNull;
 use libkernel::memory::PAGE_SIZE;
 use libkernel::memory::address::{PA, TPA};
-use libkernel::memory::proc_vm::address_space::VirtualMemory;
 use libkernel::memory::region::PhysMemoryRegion;
 use log::trace;
 use virtio_drivers::{BufferDirection, Hal, PhysAddr};

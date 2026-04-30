@@ -208,9 +208,6 @@ pub trait VirtualMemory: CpuOps + Sized {
     /// The address space type used for the kernel.
     type KernelAddressSpace: KernAddressSpace;
 
-    /// The starting address for the logical mapping of all physical ram.
-    const PAGE_OFFSET: usize;
-
     /// Obtain a reference to the kernel's address space.
     fn kern_address_space() -> &'static SpinLockIrq<Self::KernelAddressSpace, Self>;
 }
