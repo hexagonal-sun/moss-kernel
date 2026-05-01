@@ -10,7 +10,7 @@ use permissions::PtePermissions;
 
 pub mod permissions;
 pub mod smalloc_page_allocator;
-pub(crate) mod tear_down;
+pub mod tear_down;
 pub mod walk;
 
 #[cfg(test)]

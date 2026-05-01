@@ -23,7 +23,7 @@ use libkernel::{
         page::PageFrame,
         paging::{
             PaMapper, PageAllocator, PageTableEntry, PgTableArray, permissions::PtePermissions,
-            walk::WalkContext,
+            tear_down::TeardownAction, walk::WalkContext,
         },
         proc_vm::address_space::{PageInfo, UserAddressSpace},
         region::{PhysMemoryRegion, VirtMemoryRegion},
@@ -209,9 +209,14 @@ impl Drop for Arm64ProcessAddressSpace {
             invalidator: &AllEl0TlbInvalidator::new(),
         };
 
-        if tear_down_address_space(self.l0_table, &mut walk_ctx, |region| unsafe {
-            PAGE_ALLOC.get().unwrap().alloc_from_region(region);
-        })
+        if tear_down_address_space(
+            self.l0_table,
+            &mut walk_ctx,
+            |_| TeardownAction::Free,
+            |region| unsafe {
+                PAGE_ALLOC.get().unwrap().alloc_from_region(region);
+            },
+        )
         .is_err()
         {
             warn!("Address space tear down failed.  Probable memory leakage!");
