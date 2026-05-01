@@ -155,6 +155,37 @@ impl FrameAllocatorInner {
         // Mark the removed frame as uninitialized to prevent dangling pointers.
         self.get_frame_mut(pfn).state = FrameState::Uninitialized;
     }
+
+    // Adds the MAX_ORDER-aligned blocks within `region` to the free lists.
+    // The start address is aligned up to the next naturally aligned MAX_ORDER
+    // boundary; any tail smaller than a single MAX_ORDER block is ignored.
+    // Blocks whose head frame is already `Kernel` (e.g. due to a reservation
+    // that overlaps the managed region) are left untouched and excluded from
+    // the free lists.
+    fn populate_free_region(&mut self, region: PhysMemoryRegion) {
+        let aligned_start = region
+            .start_address()
+            .align_up(1 << (MAX_ORDER + PAGE_SHIFT));
+        let end = region.end_address();
+
+        if aligned_start >= end {
+            return;
+        }
+
+        let mut current_pfn = aligned_start.to_pfn();
+        let end_pfn = end.to_pfn();
+
+        while current_pfn.value() + (1 << MAX_ORDER) <= end_pfn.value() {
+            if !matches!(self.get_frame(current_pfn).state, FrameState::Kernel) {
+                self.get_frame_mut(current_pfn).state = FrameState::Free {
+                    order: MAX_ORDER as _,
+                };
+                self.add_to_free_list(current_pfn, MAX_ORDER);
+                self.free_pages += 1 << MAX_ORDER;
+            }
+            current_pfn = PageFrame::from_pfn(current_pfn.value() + (1 << MAX_ORDER));
+        }
+    }
 }
 
 /// Thread-safe wrapper around the buddy frame allocator.
@@ -344,24 +375,70 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
     }
 
     /// Initializes the frame allocator. This is the main bootstrap function.
+    /// Use the entire span of all memory regions as the memory pool. This
+    /// function takes ownership of `smalloc` since the buddy allocator will
+    /// become the primary allocator for all memory.
     ///
     /// # Safety
     /// It's unsafe because it deals with raw pointers and takes ownership of
     /// the metadata memory. It should only be called once.
     pub unsafe fn init<T: AddressTranslator<()>>(mut smalloc: Smalloc<T>) -> (Self, FrameList) {
-        let highest_addr = smalloc
-            .iter_memory()
-            .map(|r| r.end_address())
-            .max()
-            .unwrap();
+        // Find the entire memory span.
+        let start = smalloc
+            .base_ram_base_address()
+            .expect("No memory regions in smalloc");
 
-        let lowest_addr = smalloc
+        let end = smalloc
             .iter_memory()
-            .map(|r| r.start_address())
-            .min()
-            .unwrap();
+            .last()
+            .expect("No memory regions in smalloc")
+            .end_address();
 
-        let total_pages = (highest_addr.value() - lowest_addr.value()) >> PAGE_SHIFT;
+        let (mut inner, frame_list) = Self::setup(
+            &mut smalloc,
+            PhysMemoryRegion::from_start_end_address(start, end),
+        );
+
+        for region in smalloc.iter_free() {
+            inner.populate_free_region(region);
+        }
+
+        Self::finalize(inner, frame_list)
+    }
+
+    /// Initializes the frame allocator over a specific sub-region of physical
+    /// memory. `region` must be a free, memory-backed region known to
+    /// `smalloc`.
+    ///
+    /// Pre-existing reservations within `region` (e.g. the kernel image) are
+    /// preserved and surface as `Kernel` frames in the resulting allocator.
+    ///
+    /// # Safety
+    ///
+    /// It's unsafe because it deals with raw pointers and takes ownership of
+    /// the metadata memory. It should only be called once for the given region.
+    pub unsafe fn init_from_region<T: AddressTranslator<()>>(
+        smalloc: &mut Smalloc<T>,
+        region: PhysMemoryRegion,
+    ) -> (Self, FrameList) {
+        smalloc
+            .claim_region(region)
+            .expect("init_from_region: region must be a free, memory-backed region");
+        let (mut inner, frame_list) = Self::setup(smalloc, region);
+        inner.populate_free_region(region);
+        Self::finalize(inner, frame_list)
+    }
+
+    // Allocates the frame metadata out of `smalloc`, builds the inner allocator
+    // state for `managed_region`, and marks any reserved regions overlapping it
+    // as `Kernel` frames. The caller is responsible for populating the free
+    // lists and finalizing.
+    fn setup<T: AddressTranslator<()>>(
+        smalloc: &mut Smalloc<T>,
+        managed_region: PhysMemoryRegion,
+    ) -> (FrameAllocatorInner, FrameList) {
+        let lowest_addr = managed_region.start_address();
+        let total_pages = managed_region.size() >> PAGE_SHIFT;
         let metadata_size = total_pages * size_of::<Frame>();
 
         let metadata_addr = smalloc
@@ -400,33 +477,24 @@ impl<CPU: CpuOps> FrameAllocator<CPU> {
             free_lists: core::array::from_fn(|_| LinkedList::new(FrameAdapter::new())),
         };
 
-        for region in smalloc.res.iter() {
-            for pfn in region.iter_pfns() {
-                if pfn >= base_page && pfn.value() < base_page.value() + frame_list.total_pages() {
-                    allocator.get_frame_mut(pfn).state = FrameState::Kernel;
+        for res_region in smalloc.res.iter() {
+            if res_region.overlaps(managed_region) {
+                for pfn in res_region.iter_pfns() {
+                    if pfn >= base_page
+                        && pfn.value() < base_page.value() + frame_list.total_pages()
+                    {
+                        allocator.get_frame_mut(pfn).state = FrameState::Kernel;
+                    }
                 }
             }
         }
 
-        for region in smalloc.iter_free() {
-            // Align the start address to the first naturally aligned MAX_ORDER
-            // block.
-            let region =
-                region.with_start_address(region.start_address().align_up(1 << (MAX_ORDER + 12)));
+        (allocator, frame_list)
+    }
 
-            let mut current_pfn = region.start_address().to_pfn();
-            let end_pfn = region.end_address().to_pfn();
-
-            while current_pfn.value() + (1 << MAX_ORDER) <= end_pfn.value() {
-                allocator.get_frame_mut(current_pfn).state = FrameState::Free {
-                    order: MAX_ORDER as _,
-                };
-                allocator.add_to_free_list(current_pfn, MAX_ORDER);
-                allocator.free_pages += 1 << MAX_ORDER;
-                current_pfn = PageFrame::from_pfn(current_pfn.value() + (1 << MAX_ORDER));
-            }
-        }
-
+    // Wraps a fully-populated `FrameAllocatorInner` into a `FrameAllocator`,
+    // emitting a log line summarising the resulting state.
+    fn finalize(allocator: FrameAllocatorInner, frame_list: FrameList) -> (Self, FrameList) {
         info!(
             "Buddy allocator initialized. Managing {} pages, {} free.",
             frame_list.total_pages(),
@@ -561,6 +629,65 @@ pub mod tests {
 
         fn free_pages(&self) -> usize {
             self.allocator.inner.lock_save_irq().free_pages
+        }
+
+        pub fn from_region(
+            mem_regions: &[(usize, usize)],
+            res_regions: &[(usize, usize)],
+            managed: (usize, usize),
+        ) -> Self {
+            let total_size = mem_regions
+                .iter()
+                .map(|(start, size)| start + size)
+                .max()
+                .unwrap_or(16 * MIB);
+            let layout =
+                Layout::from_size_align(total_size, 1 << (MAX_ORDER + PAGE_SHIFT)).unwrap();
+            let base_ptr = unsafe { std::alloc::alloc(layout) };
+            assert!(!base_ptr.is_null(), "Test memory allocation failed");
+
+            let mem_region_list: &mut [MaybeUninit<PhysMemoryRegion>] =
+                Vec::from([MaybeUninit::uninit(); 16]).leak();
+            let res_region_list: &mut [MaybeUninit<PhysMemoryRegion>] =
+                Vec::from([MaybeUninit::uninit(); 16]).leak();
+
+            let mut smalloc: Smalloc<IdentityTranslator> = Smalloc::new(
+                RegionList::new(16, mem_region_list.as_mut_ptr().cast()),
+                RegionList::new(16, res_region_list.as_mut_ptr().cast()),
+            );
+
+            let base_addr = base_ptr as usize;
+
+            for &(start, size) in mem_regions {
+                smalloc
+                    .add_memory(PhysMemoryRegion::new(
+                        PA::from_value(base_addr + start),
+                        size,
+                    ))
+                    .unwrap();
+            }
+            for &(start, size) in res_regions {
+                smalloc
+                    .add_reservation(PhysMemoryRegion::new(
+                        PA::from_value(base_addr + start),
+                        size,
+                    ))
+                    .unwrap();
+            }
+
+            let managed_region =
+                PhysMemoryRegion::new(PA::from_value(base_addr + managed.0), managed.1);
+            // smalloc is dropped after this call; the frame metadata lives in the
+            // backing allocation (base_ptr) which we retain until Drop.
+            let (allocator, frame_list) =
+                unsafe { FrameAllocator::init_from_region(&mut smalloc, managed_region) };
+
+            Self {
+                allocator,
+                frame_list,
+                base_ptr,
+                layout,
+            }
         }
 
         pub fn leak_allocator(self) -> FrameAllocator<MockCpuOps> {
@@ -783,6 +910,171 @@ pub mod tests {
         let fixture = TestFixture::new(&[(0, (1 << (MAX_ORDER + PAGE_SHIFT)) * 2)], &[]);
         let result = fixture.allocator.alloc_frames((MAX_ORDER + 1) as u8);
         assert!(matches!(result, Err(KernelError::InvalidValue)));
+    }
+
+    #[test]
+    fn init_from_region_basic() {
+        let block_size = (1 << MAX_ORDER) * PAGE_SIZE;
+        // Four blocks of memory; manage only the last two.
+        let total_mem = 4 * block_size;
+        let managed_offset = 2 * block_size;
+        let managed_size = 2 * block_size;
+
+        let fixture =
+            TestFixture::from_region(&[(0, total_mem)], &[], (managed_offset, managed_size));
+
+        let pages_in_two_blocks = 2 * (1 << MAX_ORDER);
+        assert_eq!(fixture.frame_list.total_pages(), pages_in_two_blocks);
+        assert_eq!(fixture.free_pages(), pages_in_two_blocks);
+
+        // Only the MAX_ORDER free list should be populated, with two blocks.
+        let mut expected_counts = [0usize; MAX_ORDER + 1];
+        expected_counts[MAX_ORDER] = 2;
+        fixture.assert_free_list_counts(&expected_counts);
+    }
+
+    #[test]
+    fn init_from_region_base_page() {
+        let block_size = (1 << MAX_ORDER) * PAGE_SIZE;
+        let managed_offset = block_size;
+        let managed_size = block_size;
+
+        let fixture =
+            TestFixture::from_region(&[(0, 2 * block_size)], &[], (managed_offset, managed_size));
+
+        let backing_base = fixture.base_ptr as usize;
+        let expected_base_pfn = (backing_base + managed_offset) / PAGE_SIZE;
+
+        assert_eq!(
+            fixture.frame_list.base_page().value(),
+            expected_base_pfn,
+            "base_page should be the start of the managed region"
+        );
+    }
+
+    #[test]
+    fn init_from_region_reservation_inside() {
+        let block_size = (1 << MAX_ORDER) * PAGE_SIZE;
+        // Manage the 2nd and 3rd blocks; reserve the head of the 3rd block.
+        let managed_offset = block_size;
+        let managed_size = 2 * block_size;
+        let reserved_offset = managed_offset + block_size; // head of 2nd managed block
+
+        let fixture = TestFixture::from_region(
+            &[(0, 3 * block_size)],
+            &[(reserved_offset, PAGE_SIZE)],
+            (managed_offset, managed_size),
+        );
+
+        // The reserved frame at the block head should be Kernel.
+        let backing_base = fixture.base_ptr as usize;
+        let reserved_pfn = PageFrame::from_pfn((backing_base + reserved_offset) / PAGE_SIZE);
+        assert!(
+            matches!(fixture.frame_state(reserved_pfn), FrameState::Kernel),
+            "reserved frame inside managed region should be Kernel"
+        );
+
+        // Only the non-reserved block should be free.
+        let pages_per_block = 1 << MAX_ORDER;
+        assert_eq!(
+            fixture.free_pages(),
+            pages_per_block,
+            "block whose head is Kernel must be excluded from the free lists"
+        );
+
+        let mut expected_counts = [0usize; MAX_ORDER + 1];
+        expected_counts[MAX_ORDER] = 1;
+        fixture.assert_free_list_counts(&expected_counts);
+    }
+
+    #[test]
+    fn init_from_region_reservation_outside() {
+        let block_size = (1 << MAX_ORDER) * PAGE_SIZE;
+        // Reserve something in the first block; manage only the second block.
+        let reserved_offset = PAGE_SIZE; // in the first block
+        let managed_offset = block_size;
+        let managed_size = block_size;
+
+        let fixture = TestFixture::from_region(
+            &[(0, 2 * block_size)],
+            &[(reserved_offset, PAGE_SIZE)],
+            (managed_offset, managed_size),
+        );
+
+        // All managed pages should be free — the reservation is irrelevant.
+        let pages_per_block = 1 << MAX_ORDER;
+        assert_eq!(
+            fixture.free_pages(),
+            pages_per_block,
+            "reservation outside the managed region must not reduce free pages"
+        );
+
+        let mut expected_counts = [0usize; MAX_ORDER + 1];
+        expected_counts[MAX_ORDER] = 1;
+        fixture.assert_free_list_counts(&expected_counts);
+    }
+
+    #[test]
+    fn init_from_region_alloc_and_free() {
+        let block_size = (1 << MAX_ORDER) * PAGE_SIZE;
+        let fixture =
+            TestFixture::from_region(&[(0, 2 * block_size)], &[], (block_size, block_size));
+
+        let initial_free = fixture.free_pages();
+
+        let alloc = fixture
+            .allocator
+            .alloc_frames(0)
+            .expect("allocation within managed region should succeed");
+        assert_eq!(fixture.free_pages(), initial_free - 1);
+
+        drop(alloc);
+        assert_eq!(
+            fixture.free_pages(),
+            initial_free,
+            "memory should be fully recovered after free"
+        );
+
+        // And frames outside the managed region should be unreachable.
+        let mut allocs = std::vec::Vec::new();
+        while let Ok(a) = fixture.allocator.alloc_frames(0) {
+            allocs.push(a);
+        }
+        assert_eq!(fixture.free_pages(), 0);
+        assert_eq!(allocs.len(), initial_free);
+    }
+
+    #[test]
+    fn init_from_region_unaligned_does_not_overshoot() {
+        let block_size = (1 << MAX_ORDER) * PAGE_SIZE;
+        // Backing memory: 4 MAX_ORDER blocks, all aligned.
+        let total_mem = 4 * block_size;
+
+        // Manage a region that starts one page into the 2nd block and extends
+        // one page past the end of the 3rd block. After aligning the start
+        // up to the 3rd block boundary, exactly one MAX_ORDER block fits.
+        //
+        // Without the fix, with_start_address would keep the original size
+        // and extend end_address into block 4, erroneously populating a
+        // second block that falls outside the managed region.
+        let managed_offset = block_size + PAGE_SIZE;
+        let managed_size = 2 * block_size;
+
+        let fixture =
+            TestFixture::from_region(&[(0, total_mem)], &[], (managed_offset, managed_size));
+
+        // Only one MAX_ORDER block should be free (block 3). Block 2's head
+        // is before managed_region.start, block 4 is past managed_region.end.
+        let pages_per_block = 1 << MAX_ORDER;
+        assert_eq!(
+            fixture.free_pages(),
+            pages_per_block,
+            "only one full block fits after alignment; must not overshoot into block 4"
+        );
+
+        let mut expected_counts = [0usize; MAX_ORDER + 1];
+        expected_counts[MAX_ORDER] = 1;
+        fixture.assert_free_list_counts(&expected_counts);
     }
 
     /// Tests the reference counting mechanism in `free_frames`.
