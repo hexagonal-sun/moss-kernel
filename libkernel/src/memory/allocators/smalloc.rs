@@ -385,6 +385,48 @@ impl<T: AddressTranslator<()>> Smalloc<T> {
         Ok(())
     }
 
+    /// Removes `region` from the free memory pool, allowing it to be used by a
+    /// downstream allocator.
+    ///
+    /// `region` is *not* added to the reservation list, so any pre-existing
+    /// reservations within it (e.g. the kernel image, or metadata that smalloc
+    /// allocated for the downstream allocator) remain visible via `self.res`
+    /// and can still be consulted by the downstream allocator.
+    ///
+    /// Returns [`KernelError::InvalidValue`] if `region` is not entirely
+    /// covered by a single known memory region.
+    pub fn claim_region(&mut self, region: PhysMemoryRegion) -> Result<()> {
+        // Ensure `region` is completely covered by a memory-backed region.
+        if !self.memory.iter().any(|m| m.contains(region)) {
+            return Err(KernelError::InvalidValue);
+        }
+
+        // Punching may turn one entry into two!
+        if self.memory.requires_reallocation() {
+            self.grow_region_list(RegionListType::Mem)?;
+        }
+
+        // Resolve the index after the potential grow above.
+        let containing_idx = self
+            .memory
+            .iter()
+            .position(|m| m.contains(region))
+            .expect("memory region disappeared after grow");
+
+        let containing = self.memory[containing_idx];
+        self.memory.remove_at(containing_idx);
+
+        let (left, right) = containing.punch_hole(region);
+        if let Some(l) = left {
+            self.memory.insert_region(l);
+        }
+        if let Some(r) = right {
+            self.memory.insert_region(r);
+        }
+
+        Ok(())
+    }
+
     /// Allocates a single page-aligned page and returns its frame number.
     pub fn alloc_page(&mut self) -> Result<PageFrame> {
         let pa = self.alloc(PAGE_SIZE, PAGE_SIZE)?;
@@ -1309,5 +1351,161 @@ mod tests {
             .unwrap();
 
         assert_eq!(smalloc.iter_free().count(), 0);
+    }
+
+    #[test]
+    fn claim_region_middle_splits_into_two() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000)) // 0x1000-0x2000
+            .unwrap();
+
+        smalloc
+            .claim_region(PhysMemoryRegion::new(PA::from_value(0x1400), 0x400)) // 0x1400-0x1800
+            .unwrap();
+
+        let regions: std::vec::Vec<_> = smalloc.iter_memory().collect();
+        assert_eq!(regions.len(), 2);
+        check_region(&regions[0], 0x1000, 0x400);
+        check_region(&regions[1], 0x1800, 0x800);
+
+        // The claimed region must not appear in iter_free either.
+        let free: std::vec::Vec<_> = smalloc.iter_free().collect();
+        assert_eq!(free.len(), 2);
+        check_region(&free[0], 0x1000, 0x400);
+        check_region(&free[1], 0x1800, 0x800);
+    }
+
+    #[test]
+    fn claim_region_prefix_leaves_suffix() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000)) // 0x1000-0x2000
+            .unwrap();
+
+        smalloc
+            .claim_region(PhysMemoryRegion::new(PA::from_value(0x1000), 0x400)) // 0x1000-0x1400
+            .unwrap();
+
+        let regions: std::vec::Vec<_> = smalloc.iter_memory().collect();
+        assert_eq!(regions.len(), 1);
+        check_region(&regions[0], 0x1400, 0xc00);
+    }
+
+    #[test]
+    fn claim_region_suffix_leaves_prefix() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000)) // 0x1000-0x2000
+            .unwrap();
+
+        smalloc
+            .claim_region(PhysMemoryRegion::new(PA::from_value(0x1c00), 0x400)) // 0x1c00-0x2000
+            .unwrap();
+
+        let regions: std::vec::Vec<_> = smalloc.iter_memory().collect();
+        assert_eq!(regions.len(), 1);
+        check_region(&regions[0], 0x1000, 0xc00);
+    }
+
+    #[test]
+    fn claim_region_exact_match_removes() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000))
+            .unwrap();
+
+        smalloc
+            .claim_region(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000))
+            .unwrap();
+
+        assert_eq!(smalloc.iter_memory().count(), 0);
+        assert_eq!(smalloc.iter_free().count(), 0);
+    }
+
+    #[test]
+    fn claim_region_preserves_inner_reservation() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000))
+            .unwrap();
+        // A pre-existing reservation inside the to-be-claimed region (e.g.
+        // the kernel image) must remain in the reservation list so a
+        // downstream allocator can still observe it.
+        smalloc
+            .add_reservation(PhysMemoryRegion::new(PA::from_value(0x1400), 0x100))
+            .unwrap();
+
+        smalloc
+            .claim_region(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000))
+            .unwrap();
+
+        let res: std::vec::Vec<_> = smalloc.res.iter().collect();
+        assert_eq!(res.len(), 1);
+        check_region(&res[0], 0x1400, 0x100);
+    }
+
+    #[test]
+    fn claim_region_unknown_fails() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000))
+            .unwrap();
+
+        // Region wholly outside any known memory.
+        let result = smalloc.claim_region(PhysMemoryRegion::new(PA::from_value(0x5000), 0x100));
+        assert!(matches!(result, Err(KernelError::InvalidValue)));
+    }
+
+    #[test]
+    fn claim_region_partial_coverage_fails() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000)) // 0x1000-0x2000
+            .unwrap();
+
+        // Spans the end of the known region.
+        let result = smalloc.claim_region(PhysMemoryRegion::new(PA::from_value(0x1f00), 0x200));
+        assert!(matches!(result, Err(KernelError::InvalidValue)));
+    }
+
+    #[test]
+    fn claim_region_does_not_straddle_two_memory_regions() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x500))
+            .unwrap();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x2000), 0x500))
+            .unwrap();
+
+        // Spans the gap between the two regions; not contained in either.
+        let result = smalloc.claim_region(PhysMemoryRegion::new(PA::from_value(0x1400), 0x800));
+        assert!(matches!(result, Err(KernelError::InvalidValue)));
+    }
+
+    #[test]
+    fn claim_region_subsequent_alloc_avoids_claim() {
+        let mut smalloc = get_smalloc();
+        smalloc
+            .add_memory(PhysMemoryRegion::new(PA::from_value(0x1000), 0x1000))
+            .unwrap();
+
+        smalloc
+            .claim_region(PhysMemoryRegion::new(PA::from_value(0x1400), 0x400))
+            .unwrap();
+
+        // Subsequent allocations must not land inside the claimed region.
+        for _ in 0..16 {
+            let pa = match smalloc.alloc(0x100, 0x100) {
+                Ok(pa) => pa,
+                Err(_) => break,
+            };
+            assert!(
+                pa.value() + 0x100 <= 0x1400 || pa.value() >= 0x1800,
+                "allocation at {:#x} overlaps claimed region",
+                pa.value()
+            );
+        }
     }
 }
