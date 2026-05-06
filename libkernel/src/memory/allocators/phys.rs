@@ -28,9 +28,9 @@ use super::{
     smalloc::Smalloc,
 };
 
-// The maximum order for the buddy system. This corresponds to blocks of size
-// 2^MAX_ORDER pages.
-const MAX_ORDER: usize = 10;
+/// The maximum order for the buddy system. This corresponds to blocks of size
+/// 2^MAX_ORDER pages.
+pub const MAX_ORDER: usize = 10;
 
 pub(super) struct FrameAllocatorInner {
     frame_list: FrameList,
