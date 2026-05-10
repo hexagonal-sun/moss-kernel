@@ -10,7 +10,7 @@ use alloc::{
 };
 use libkernel::{
     error::{KernelError, Result},
-    fs::OpenFlags,
+    fs::{BlockDevice, OpenFlags},
 };
 use probe::DeviceDescriptor;
 
@@ -20,6 +20,7 @@ use crate::{
     sync::SpinLock,
 };
 
+pub mod block;
 pub mod chrdev;
 pub mod display;
 pub mod fdt_prober;
@@ -52,6 +53,10 @@ pub trait Driver: Send + Sync + Any {
     }
 
     fn as_filesystem_driver(self: Arc<Self>) -> Option<Arc<dyn FilesystemDriver>> {
+        None
+    }
+
+    fn as_block_device(self: Arc<Self>) -> Option<Arc<dyn BlockDevice>> {
         None
     }
 }
