@@ -52,11 +52,13 @@ impl DevFs {
         })
     }
 
-    pub fn mknod(
+    fn insert_device(
         &self,
         name: String,
-        device_id: CharDevDescriptor,
+        file_type: FileType,
+        kind: InodeKind,
         permissions: FilePermissions,
+        block_size: u32,
     ) -> Result<()> {
         let InodeKind::Directory(ref children) = self.root.kind else {
             // This should be impossible as the root is always a directory.
@@ -77,16 +79,47 @@ impl DevFs {
             id,
             attr: SpinLock::new(FileAttr {
                 id,
-                file_type: FileType::CharDevice(device_id),
+                file_type,
                 permissions,
+                block_size,
                 ..FileAttr::default()
             }),
-            // This is the crucial part: we store the device handle.
-            kind: InodeKind::CharDevice { device_id },
+            kind,
         });
 
-        children.insert(name.to_string(), new_inode);
+        children.insert(name, new_inode);
         Ok(())
+    }
+
+    pub fn mknod(
+        &self,
+        name: String,
+        device_id: CharDevDescriptor,
+        permissions: FilePermissions,
+    ) -> Result<()> {
+        self.insert_device(
+            name,
+            FileType::CharDevice(device_id),
+            InodeKind::CharDevice { device_id },
+            permissions,
+            0,
+        )
+    }
+
+    pub fn mknod_block(
+        &self,
+        name: String,
+        device_id: CharDevDescriptor,
+        permissions: FilePermissions,
+        block_size: u32,
+    ) -> Result<()> {
+        self.insert_device(
+            name,
+            FileType::BlockDevice(device_id),
+            InodeKind::BlockDevice { device_id },
+            permissions,
+            block_size,
+        )
     }
 }
 
@@ -112,6 +145,8 @@ enum InodeKind {
     Directory(SpinLock<BTreeMap<String, Arc<DevFsINode>>>),
     /// A character device, which stores its major/minor handle (`dev_t`).
     CharDevice { device_id: CharDevDescriptor },
+    /// A block device, which stores its major/minor handle (`dev_t`).
+    BlockDevice { device_id: CharDevDescriptor },
 }
 
 struct DevDirStreamer {
@@ -159,14 +194,20 @@ impl Inode for DevFsINode {
                     .map(|inode| inode.clone() as Arc<dyn Inode>)
                     .ok_or_else(|| FsError::NotFound.into())
             }
-            InodeKind::CharDevice { .. } => Err(FsError::NotADirectory.into()),
+            InodeKind::CharDevice { .. } | InodeKind::BlockDevice { .. } => {
+                Err(FsError::NotADirectory.into())
+            }
         }
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
         let mut attr = self.attr.lock_save_irq().clone();
-        if let InodeKind::CharDevice { device_id } = self.kind {
-            attr.file_type = FileType::CharDevice(device_id);
+        match self.kind {
+            InodeKind::CharDevice { device_id } => attr.file_type = FileType::CharDevice(device_id),
+            InodeKind::BlockDevice { device_id } => {
+                attr.file_type = FileType::BlockDevice(device_id);
+            }
+            InodeKind::Directory(..) => {}
         }
         Ok(attr)
     }
@@ -180,7 +221,9 @@ impl Inode for DevFsINode {
                     idx: start_offset as usize,
                 }))
             }
-            InodeKind::CharDevice { .. } => Err(FsError::NotADirectory.into()),
+            InodeKind::CharDevice { .. } | InodeKind::BlockDevice { .. } => {
+                Err(FsError::NotADirectory.into())
+            }
         }
     }
 

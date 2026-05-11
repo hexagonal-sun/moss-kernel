@@ -1,10 +1,13 @@
+use alloc::boxed::Box;
+
+use crate::drivers::block::get_block_device_by_descriptor;
 use crate::fs::VFS;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::sched::syscall_ctx::ProcessCtx;
 use bitflags::bitflags;
 use core::ffi::c_char;
-use libkernel::error::{KernelError, Result};
-use libkernel::fs::path::Path;
+use libkernel::error::{FsError, KernelError, Result};
+use libkernel::fs::{BlockDevice, FileType, path::Path};
 use libkernel::memory::address::{TUA, UA};
 
 bitflags! {
@@ -45,6 +48,61 @@ bitflags! {
     }
 }
 
+fn mount_filesystem_type(name: &str) -> &str {
+    match name {
+        "proc" | "procfs" => "procfs",
+        "devtmpfs" | "devfs" => "devfs",
+        "cgroup2" | "cgroupfs" => "cgroupfs",
+        "sysfs" => "sysfs",
+        "tmpfs" => "tmpfs",
+        "ext4" | "ext4fs" => "ext4fs",
+        "fat" | "fat32" | "fat32fs" | "msdos" | "vfat" => "fat32fs",
+        other => other,
+    }
+}
+
+fn fallback_mount_filesystem_type(source: &str) -> Option<&str> {
+    match source {
+        "proc" | "procfs" => Some("procfs"),
+        "devtmpfs" | "devfs" => Some("devfs"),
+        "cgroup2" | "cgroupfs" => Some("cgroupfs"),
+        "sysfs" => Some("sysfs"),
+        "tmpfs" => Some("tmpfs"),
+        _ => None,
+    }
+}
+
+fn source_is_non_device(source: &str, fs_type: &str) -> bool {
+    matches!(source, "" | "none")
+        || matches!(
+            (source, fs_type),
+            ("proc", "procfs")
+                | ("procfs", "procfs")
+                | ("devtmpfs", "devfs")
+                | ("devfs", "devfs")
+                | ("cgroup2", "cgroupfs")
+                | ("cgroupfs", "cgroupfs")
+                | ("sysfs", "sysfs")
+                | ("tmpfs", "tmpfs")
+        )
+}
+
+async fn resolve_mount_block_device(
+    ctx: &ProcessCtx,
+    source: &str,
+) -> Result<Box<dyn BlockDevice>> {
+    let task = ctx.shared().clone();
+    let cwd = task.cwd.lock_save_irq().0.clone();
+    let inode = VFS.resolve_path(Path::new(source), cwd, &task).await?;
+
+    match inode.getattr().await?.file_type {
+        FileType::BlockDevice(device_id) => get_block_device_by_descriptor(device_id)
+            .map(|(_, device)| device)
+            .ok_or(FsError::NoDevice.into()),
+        _ => Err(FsError::NoDevice.into()),
+    }
+}
+
 pub async fn sys_mount(
     ctx: &ProcessCtx,
     dev_name: TUA<c_char>,
@@ -58,6 +116,7 @@ pub async fn sys_mount(
         // TODO: Handle later
         return Ok(0);
     }
+
     let mut buf = [0u8; 1024];
     let dev_name = if dev_name.is_null() {
         None
@@ -68,29 +127,41 @@ pub async fn sys_mount(
                 .await?,
         )
     };
+
     let mut buf = [0u8; 1024];
     let dir_name = UserCStr::from_ptr(dir_name)
         .copy_from_user(&mut buf)
         .await?;
-    let mount_point = VFS
-        .resolve_path(Path::new(dir_name), VFS.root_inode(), ctx.shared())
-        .await?;
+
     let mut buf = [0u8; 1024];
-    let fs_type = if type_.is_null() {
+    let mount_type = if type_.is_null() {
         None
     } else {
         Some(UserCStr::from_ptr(type_).copy_from_user(&mut buf).await?)
     };
 
-    let fs_name = fs_type.or(dev_name).ok_or(KernelError::NotSupported)?;
-    let fs_name = match fs_name {
-        "proc" => "procfs",
-        "devtmpfs" => "devfs",
-        "sysfs" => "sysfs",
-        "cgroup2" => "cgroupfs",
-        s => s,
+    let task = ctx.shared().clone();
+    let cwd = task.cwd.lock_save_irq().0.clone();
+    let mount_point = VFS.resolve_path(Path::new(dir_name), cwd, &task).await?;
+
+    let fs_type = if let Some(mount_type) = mount_type {
+        mount_filesystem_type(mount_type)
+    } else if let Some(source) = dev_name {
+        fallback_mount_filesystem_type(source).ok_or(KernelError::NotSupported)?
+    } else {
+        return Err(KernelError::NotSupported);
     };
 
-    VFS.mount(mount_point, fs_name, None).await?;
+    let blkdev = if let Some(source) = dev_name {
+        if source_is_non_device(source, fs_type) {
+            None
+        } else {
+            Some(resolve_mount_block_device(ctx, source).await?)
+        }
+    } else {
+        None
+    };
+
+    VFS.mount(mount_point, fs_type, blkdev).await?;
     Ok(0)
 }
