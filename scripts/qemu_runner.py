@@ -21,6 +21,7 @@ parser.add_argument("--smp", default=4, help="Number of CPU cores to use")
 parser.add_argument("--memory", default="2G")
 parser.add_argument("--debug", action="store_true", help="Enable QEMU debugging")
 parser.add_argument("--display", action="store_true", help="Add a display device to the VM")
+parser.add_argument("--disk", action="store_true", help="Add a disk device to the VM")
 
 
 
@@ -51,11 +52,10 @@ default_args = {
     "-snapshot": None,
     "-kernel": bin_executable_location,
     "-append": f"{append_args} --rootfs=ext4fs --automount=/dev,devfs --automount=/tmp,tmpfs --automount=/proc,procfs --automount=/sys,sysfs",
-    "-drive": "file=ubuntu-noble-arm64.img,format=raw,if=none,cache=none,id=x0",
 }
 
 # Arguments that can appear multiple times (e.g. -device)
-extra_args = ["-device", "virtio-rng-device", "-device", "virtio-blk-device,drive=x0"]
+extra_args = ["-device", "virtio-rng-device"]
 
 if args.debug:
     default_args["-S"] = None
@@ -67,6 +67,10 @@ if args.display:
     # Add uart
     default_args["-serial"] = "stdio"
     extra_args += ["-device", "virtio-gpu-device"]
+
+if args.disk:
+    default_args["-drive"] = "file=rootfs.img,format=raw,if=none,cache=none,id=x0"
+    extra_args += ["-device", "virtio-blk-device,drive=x0"]
 
 qemu_command = ["qemu-system-aarch64"]
 
