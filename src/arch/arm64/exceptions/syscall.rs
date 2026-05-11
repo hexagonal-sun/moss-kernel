@@ -47,6 +47,7 @@ use crate::{
             statfs::{sys_fstatfs, sys_statfs},
             sync::{sys_fdatasync, sys_fsync, sys_sync, sys_syncfs},
             trunc::{sys_ftruncate, sys_truncate},
+            umount::sys_umount2,
         },
     },
     kernel::{
@@ -296,6 +297,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             )
             .await
         }
+        0x27 => sys_umount2(&ctx, TUA::from_value(arg1 as _), arg2 as _).await,
         0x28 => {
             sys_mount(
                 &ctx,

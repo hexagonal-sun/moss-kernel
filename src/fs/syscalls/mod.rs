@@ -20,3 +20,4 @@ pub mod stat;
 pub mod statfs;
 pub mod sync;
 pub mod trunc;
+pub mod umount;

@@ -2,7 +2,7 @@ use crate::clock::realtime::date;
 use crate::{
     drivers::{DM, Driver, block::get_block_device_by_descriptor},
     process::{
-        Task,
+        TASK_LIST, Task,
         inotify::{notify_create, notify_delete, notify_delete_self, notify_modify, notify_move},
     },
     sync::SpinLock,
@@ -49,6 +49,7 @@ impl Inode for DummyInode {
 }
 
 /// Represents a mounted filesystem.
+#[derive(Clone)]
 struct Mount {
     fs: Arc<dyn Filesystem>,
     root_inode: Arc<dyn Inode>,
@@ -92,10 +93,40 @@ impl VfsState {
     }
 
     /// Removes a mount point by its inode ID.
-    fn remove_mount(&mut self, mount_point_id: &InodeId) -> Option<()> {
+    fn remove_mount(&mut self, mount_point_id: &InodeId) -> Option<Mount> {
         let mount = self.mounts.remove(mount_point_id)?;
         self.filesystems.remove(&mount.fs.id())?;
-        Some(())
+        Some(mount)
+    }
+
+    /// Collects the mount identified by `mount_point_id` and every nested mount
+    /// reachable beneath it.
+    fn collect_mount_subtree(&self, mount_point_id: InodeId) -> Option<Vec<(InodeId, Mount)>> {
+        let mut pending = Vec::new();
+        let mut subtree = Vec::new();
+
+        pending.push(mount_point_id);
+
+        while let Some(current_mount_point_id) = pending.pop() {
+            let mount = self.mounts.get(&current_mount_point_id)?.clone();
+            let current_fs_id = mount.fs.id();
+
+            subtree.push((current_mount_point_id, mount));
+
+            for child_mount_point_id in self.mounts.keys().copied() {
+                if child_mount_point_id != current_mount_point_id
+                    && child_mount_point_id.fs_id() == current_fs_id
+                    && !subtree
+                        .iter()
+                        .any(|(seen, _)| *seen == child_mount_point_id)
+                    && !pending.contains(&child_mount_point_id)
+                {
+                    pending.push(child_mount_point_id);
+                }
+            }
+        }
+
+        Some(subtree)
     }
 
     /// Checks if an inode is a mount point and returns the root inode of the
@@ -196,15 +227,68 @@ impl VFS {
         Ok(())
     }
 
-    #[expect(unused)]
-    pub async fn umount(&self, mount_point: Arc<dyn Inode>) -> Result<()> {
-        let mount_point_id = mount_point.id();
+    pub async fn umount(&self, mount_point: Arc<dyn Inode>, detach: bool) -> Result<()> {
+        let mount_point_id = self
+            .mount_point_for_root(mount_point.id())
+            .unwrap_or(mount_point.id());
 
-        // Lock the state and remove the mount.
-        self.state
-            .lock_save_irq()
-            .remove_mount(&mount_point_id)
-            .ok_or(FsError::NotFound)?;
+        if mount_point_id
+            == self
+                .root_inode
+                .lock_save_irq()
+                .as_ref()
+                .ok_or(FsError::NotFound)?
+                .id()
+        {
+            return Err(KernelError::InUse);
+        }
+
+        let subtree = {
+            let state = self.state.lock_save_irq();
+            state
+                .collect_mount_subtree(mount_point_id)
+                .ok_or(KernelError::InvalidValue)?
+        };
+
+        if !detach && subtree.len() > 1 {
+            return Err(KernelError::InUse);
+        }
+
+        let target_fs_id = subtree
+            .first()
+            .map(|(_, mount)| mount.fs.id())
+            .ok_or(KernelError::InvalidValue)?;
+
+        if !detach {
+            let tasks: Vec<_> = TASK_LIST
+                .lock_save_irq()
+                .values()
+                .filter_map(|work| work.upgrade())
+                .collect();
+
+            for work in tasks {
+                let task = work.task.t_shared.clone();
+
+                if task.root.lock_save_irq().0.id().fs_id() == target_fs_id
+                    || task.cwd.lock_save_irq().0.id().fs_id() == target_fs_id
+                    || task.fd_table.lock_save_irq().any_inode_on_fs(target_fs_id)
+                {
+                    return Err(KernelError::InUse);
+                }
+            }
+        }
+
+        let filesystems: Vec<_> = subtree.iter().map(|(_, mount)| mount.fs.clone()).collect();
+        for fs in filesystems {
+            fs.sync().await?;
+        }
+
+        let mut state = self.state.lock_save_irq();
+        for (mount_point_id, _) in subtree {
+            state
+                .remove_mount(&mount_point_id)
+                .ok_or(KernelError::InvalidValue)?;
+        }
 
         Ok(())
     }
