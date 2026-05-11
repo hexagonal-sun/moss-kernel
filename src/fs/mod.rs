@@ -662,6 +662,60 @@ impl VFS {
             .values()
             .any(|mount| mount.root_inode.id() == id)
     }
+
+    pub fn is_mount_point(&self, id: InodeId) -> bool {
+        self.state.lock_save_irq().mounts.contains_key(&id)
+    }
+
+    pub fn mount_point_for_root(&self, id: InodeId) -> Option<InodeId> {
+        self.state
+            .lock_save_irq()
+            .mounts
+            .iter()
+            .find_map(|(mount_point, mount)| (mount.root_inode.id() == id).then_some(*mount_point))
+    }
+
+    pub fn pivot_root(
+        &self,
+        new_root_mount_point: InodeId,
+        put_old_mount_point: InodeId,
+    ) -> Result<(Arc<dyn Inode>, Arc<dyn Inode>)> {
+        let old_root_inode = self
+            .root_inode
+            .lock_save_irq()
+            .as_ref()
+            .cloned()
+            .ok_or(FsError::NotFound)?;
+
+        let (old_root_root, new_root_root) = {
+            let mut state = self.state.lock_save_irq();
+
+            if state.mounts.contains_key(&put_old_mount_point) {
+                return Err(KernelError::InUse);
+            }
+
+            let old_root_mount = state
+                .mounts
+                .remove(&old_root_inode.id())
+                .ok_or(FsError::NotFound)?;
+            let new_root_mount = state
+                .mounts
+                .remove(&new_root_mount_point)
+                .ok_or(FsError::InvalidInput)?;
+
+            let old_root_root = old_root_mount.root_inode.clone();
+            let new_root_root = new_root_mount.root_inode.clone();
+
+            state.mounts.insert(new_root_root.id(), new_root_mount);
+            state.mounts.insert(put_old_mount_point, old_root_mount);
+
+            (old_root_root, new_root_root)
+        };
+
+        *self.root_inode.lock_save_irq() = Some(new_root_root.clone());
+
+        Ok((old_root_root, new_root_root))
+    }
 }
 
 pub static VFS: VFS = VFS::new();
