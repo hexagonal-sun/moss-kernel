@@ -197,7 +197,7 @@ impl VFS {
     }
 
     #[expect(unused)]
-    pub async fn unmount(&self, mount_point: Arc<dyn Inode>) -> Result<()> {
+    pub async fn umount(&self, mount_point: Arc<dyn Inode>) -> Result<()> {
         let mount_point_id = mount_point.id();
 
         // Lock the state and remove the mount.
