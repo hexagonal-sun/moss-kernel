@@ -48,9 +48,10 @@ default_args = {
     "-rtc": "base=utc,clock=host",
     "-nographic": None,
     "-s": None,
+    "-snapshot": None,
     "-kernel": bin_executable_location,
     "-append": f"{append_args} --rootfs=ext4fs --automount=/dev,devfs --automount=/tmp,tmpfs --automount=/proc,procfs --automount=/sys,sysfs",
-    "-drive": "file=ubuntu-noble-arm64.img,format=raw,if=none,readonly=on,cache=none,id=x0",
+    "-drive": "file=ubuntu-noble-arm64.img,format=raw,if=none,cache=none,id=x0",
 }
 
 # Arguments that can appear multiple times (e.g. -device)
