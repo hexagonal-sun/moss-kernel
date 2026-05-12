@@ -37,6 +37,17 @@ pub enum AddressRequest {
     },
 }
 
+/// Describes where an `mremap` operation may place the remapped VMA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemapDestination {
+    /// Resize in place only.
+    InPlaceOnly,
+    /// Resize in place if possible, otherwise move to any free region.
+    MayMove,
+    /// Move the mapping to exactly this address.
+    Fixed(VA),
+}
+
 impl<AS: UserAddressSpace> MemoryMap<AS> {
     /// Creates a new, empty address space.
     pub fn new() -> Result<Self> {
@@ -243,6 +254,257 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
         Err(KernelError::NoMemory)
     }
 
+    /// Remaps an existing mapping
+    pub fn mremap(
+        &mut self,
+        old_addr: VA,
+        old_len: usize,
+        new_len: usize,
+        destination: RemapDestination,
+    ) -> Result<(VA, Vec<PageFrame>)> {
+        if !old_addr.is_page_aligned() || old_len == 0 || new_len == 0 {
+            return Err(KernelError::InvalidValue);
+        }
+
+        let old_len = Self::align_len(old_len);
+        let new_len = Self::align_len(new_len);
+        let old_region = VirtMemoryRegion::new(old_addr, old_len);
+
+        let source_vma = self.find_vma(old_addr).cloned().ok_or(KernelError::Fault)?;
+
+        if old_region.end_address() > source_vma.region.end_address() {
+            return Err(KernelError::Fault);
+        }
+
+        if let RemapDestination::Fixed(new_addr) = destination {
+            if !new_addr.is_page_aligned() {
+                return Err(KernelError::InvalidValue);
+            }
+
+            let new_region = VirtMemoryRegion::new(new_addr, new_len);
+
+            if new_region.overlaps(old_region) || new_region.overlaps(source_vma.region) {
+                return Err(KernelError::InvalidValue);
+            }
+        }
+
+        if old_len == new_len && !matches!(destination, RemapDestination::Fixed(_)) {
+            return Ok((old_addr, Vec::new()));
+        }
+
+        if let RemapDestination::Fixed(new_addr) = destination {
+            return self.move_selected_mapping(
+                source_vma,
+                old_region,
+                VirtMemoryRegion::new(new_addr, new_len),
+                true,
+            );
+        }
+
+        if new_len <= old_len {
+            return self.shrink_in_place(source_vma, old_region, new_len);
+        }
+
+        if self.can_expand_in_place(&source_vma, old_region, new_len) {
+            return self.expand_in_place(source_vma, old_region, new_len);
+        }
+
+        let new_region = match destination {
+            RemapDestination::InPlaceOnly => return Err(KernelError::NoMemory),
+            RemapDestination::MayMove => self
+                .find_free_region(new_len)
+                .ok_or(KernelError::NoMemory)?,
+            RemapDestination::Fixed(_) => unreachable!(),
+        };
+
+        self.move_selected_mapping(
+            source_vma,
+            old_region,
+            new_region,
+            matches!(destination, RemapDestination::Fixed(_)),
+        )
+    }
+
+    fn align_len(len: usize) -> usize {
+        if len & PAGE_MASK != 0 {
+            (len & !PAGE_MASK) + PAGE_SIZE
+        } else {
+            len
+        }
+    }
+
+    fn can_expand_in_place(
+        &self,
+        source_vma: &VMArea,
+        old_region: VirtMemoryRegion,
+        new_len: usize,
+    ) -> bool {
+        let new_end = old_region.start_address().add_bytes(new_len);
+
+        if new_end <= source_vma.region.end_address() {
+            return true;
+        }
+
+        self.is_region_free(VirtMemoryRegion::from_start_end_address(
+            source_vma.region.end_address(),
+            new_end,
+        ))
+    }
+
+    fn expand_in_place(
+        &mut self,
+        source_vma: VMArea,
+        old_region: VirtMemoryRegion,
+        new_len: usize,
+    ) -> Result<(VA, Vec<PageFrame>)> {
+        let new_end = old_region.start_address().add_bytes(new_len);
+
+        if new_end <= source_vma.region.end_address() {
+            return Ok((old_region.start_address(), Vec::new()));
+        }
+
+        self.vmas
+            .remove(&source_vma.region.start_address())
+            .unwrap();
+
+        let mut expanded_vma = source_vma;
+        expanded_vma.region =
+            VirtMemoryRegion::from_start_end_address(expanded_vma.region.start_address(), new_end);
+
+        self.merge_vma(expanded_vma);
+
+        Ok((old_region.start_address(), Vec::new()))
+    }
+
+    fn shrink_in_place(
+        &mut self,
+        source_vma: VMArea,
+        old_region: VirtMemoryRegion,
+        new_len: usize,
+    ) -> Result<(VA, Vec<PageFrame>)> {
+        let new_region = VirtMemoryRegion::new(old_region.start_address(), new_len);
+        let removed_region = VirtMemoryRegion::from_start_end_address(
+            new_region.end_address(),
+            old_region.end_address(),
+        );
+
+        let freed_pages = self.address_space.unmap_range(removed_region)?;
+
+        self.vmas
+            .remove(&source_vma.region.start_address())
+            .unwrap();
+
+        if source_vma.region.start_address() < old_region.start_address() {
+            self.merge_vma(
+                source_vma.shrink_to(VirtMemoryRegion::from_start_end_address(
+                    source_vma.region.start_address(),
+                    old_region.start_address(),
+                )),
+            );
+        }
+
+        self.merge_vma(source_vma.shrink_to(new_region));
+
+        if old_region.end_address() < source_vma.region.end_address() {
+            self.merge_vma(
+                source_vma.shrink_to(VirtMemoryRegion::from_start_end_address(
+                    old_region.end_address(),
+                    source_vma.region.end_address(),
+                )),
+            );
+        }
+
+        Ok((old_region.start_address(), freed_pages))
+    }
+
+    fn relocate_vma(vma: VMArea, new_region: VirtMemoryRegion) -> VMArea {
+        let mut moved_vma = vma;
+        moved_vma.region = new_region;
+
+        if let VMAreaKind::File(mapping) = &mut moved_vma.kind {
+            mapping.len = core::cmp::min(mapping.len, new_region.size() as u64);
+        }
+
+        moved_vma
+    }
+
+    fn move_selected_mapping(
+        &mut self,
+        source_vma: VMArea,
+        old_region: VirtMemoryRegion,
+        new_region: VirtMemoryRegion,
+        clobber_target: bool,
+    ) -> Result<(VA, Vec<PageFrame>)> {
+        let mut freed_pages = Vec::new();
+
+        if clobber_target {
+            freed_pages.append(&mut self.unmap_region(new_region, None)?);
+        }
+
+        let preserved_len = core::cmp::min(old_region.size(), new_region.size());
+        let mut newly_mapped = Vec::new();
+
+        if preserved_len != 0 {
+            let preserved_old = VirtMemoryRegion::new(old_region.start_address(), preserved_len);
+            let preserved_new = VirtMemoryRegion::new(new_region.start_address(), preserved_len);
+
+            for (old_page, new_page) in preserved_old.iter_pages().zip(preserved_new.iter_pages()) {
+                if let Some(page_info) = self.address_space.translate(old_page) {
+                    if let Err(err) =
+                        self.address_space
+                            .map_page(page_info.pfn, new_page, page_info.perms)
+                    {
+                        for mapped_page in newly_mapped {
+                            let _ = self.address_space.unmap(mapped_page);
+                        }
+
+                        return Err(err);
+                    }
+
+                    newly_mapped.push(new_page);
+                }
+            }
+
+            let _ = self.address_space.unmap_range(preserved_old)?;
+        }
+
+        if old_region.size() > preserved_len {
+            freed_pages.append(&mut self.address_space.unmap_range(
+                VirtMemoryRegion::from_start_end_address(
+                    old_region.start_address().add_bytes(preserved_len),
+                    old_region.end_address(),
+                ),
+            )?);
+        }
+
+        self.vmas
+            .remove(&source_vma.region.start_address())
+            .unwrap();
+
+        if source_vma.region.start_address() < old_region.start_address() {
+            self.merge_vma(
+                source_vma.shrink_to(VirtMemoryRegion::from_start_end_address(
+                    source_vma.region.start_address(),
+                    old_region.start_address(),
+                )),
+            );
+        }
+
+        if old_region.end_address() < source_vma.region.end_address() {
+            self.merge_vma(
+                source_vma.shrink_to(VirtMemoryRegion::from_start_end_address(
+                    old_region.end_address(),
+                    source_vma.region.end_address(),
+                )),
+            );
+        }
+
+        let selected_vma = source_vma.shrink_to(old_region);
+        self.merge_vma(Self::relocate_vma(selected_vma, new_region));
+
+        Ok((new_region.start_address(), freed_pages))
+    }
+
     /// Checks if a given virtual memory region is completely free.
     fn is_region_free(&self, region: VirtMemoryRegion) -> bool {
         // Find the VMA that might overlap with the start of our desired region.
@@ -304,9 +566,12 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
 
     /// Inserts a new VMA, handling overlaps and merging it with neighbors if
     /// possible.
-    pub(super) fn insert_and_merge(&mut self, mut vma: VMArea) {
+    pub(super) fn insert_and_merge(&mut self, vma: VMArea) {
         let _ = self.unmap_region(vma.region, Some(vma.clone()));
+        self.merge_vma(vma);
+    }
 
+    fn merge_vma(&mut self, mut vma: VMArea) {
         // Try to merge with next VMA.
         if let Some(next_vma) = self.vmas.get(&vma.region.end_address())
             && vma.can_merge_with(next_vma)
@@ -320,7 +585,6 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
                 .unwrap() // Should not fail, as we just got this VMA.
                 .region;
             vma.region.expand_by(next_vma_region.size());
-            // `vma` now represents the merged region of [new, next].
         }
 
         // Try to merge with the previous VMA.
@@ -328,16 +592,14 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
             .vmas
             .range_mut(..vma.region.start_address())
             .next_back()
-        {
             // Check if it's contiguous and compatible.
-            if prev_vma.region.end_address() == vma.region.start_address()
-                && prev_vma.can_merge_with(&vma)
-            {
-                // The VMAs are mergeable. Expand the previous VMA to absorb the
-                // new one's region.
-                prev_vma.region.expand_by(vma.region.size());
-                return;
-            }
+            && prev_vma.region.end_address() == vma.region.start_address()
+            && prev_vma.can_merge_with(&vma)
+        {
+            // The VMAs are mergeable. Expand the previous VMA to absorb the
+            // new one's region.
+            prev_vma.region.expand_by(vma.region.size());
+            return;
         }
 
         // If we didn't merge into a previous VMA, insert the new (and possibly
