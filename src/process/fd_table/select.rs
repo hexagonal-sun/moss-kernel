@@ -24,8 +24,8 @@ pub struct FdSet {
 }
 
 impl FdSet {
-    fn iter_fds(&self, max: i32) -> impl Iterator<Item = Fd> {
-        let mut candidate_fd = 0;
+    fn iter_fds(&self, max: usize) -> impl Iterator<Item = Fd> {
+        let mut candidate_fd = 0usize;
 
         iter::from_fn(move || {
             loop {
@@ -33,8 +33,8 @@ impl FdSet {
                     return None;
                 }
 
-                if self.set[candidate_fd as usize / 64] & (1 << (candidate_fd % 64)) != 0 {
-                    let ret = Fd(candidate_fd);
+                if self.set[candidate_fd / 64] & (1 << (candidate_fd % 64)) != 0 {
+                    let ret = Fd(candidate_fd as i32);
                     candidate_fd += 1;
 
                     return Some(ret);
@@ -58,25 +58,53 @@ impl FdSet {
 
 unsafe impl UserCopyable for FdSet {}
 
-// TODO: handle exceptfds
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PSelect6SigMask {
+    sigmask: TUA<SigSet>,
+    sigsetsize: usize,
+}
+
+unsafe impl UserCopyable for PSelect6SigMask {}
+
+// TODO: handle exceptfds readiness semantics.
 pub async fn sys_pselect6(
     ctx: &ProcessCtx,
     max: i32,
     readfds: TUA<FdSet>,
     writefds: TUA<FdSet>,
-    _exceptfds: TUA<FdSet>,
+    exceptfds: TUA<FdSet>,
     timeout: TUA<TimeSpec>,
-    mask: TUA<SigSet>,
+    mask: TUA<PSelect6SigMask>,
 ) -> Result<usize> {
+    if max < 0 || max as usize > SET_SIZE {
+        return Err(KernelError::InvalidValue);
+    }
+
+    let max = max as usize;
     let task = ctx.shared();
 
-    let mut read_fd_set = copy_from_user(readfds).await?;
+    let mut read_fd_set = if readfds.is_null() {
+        None
+    } else {
+        Some(copy_from_user(readfds).await?)
+    };
 
     let mut read_fds = Vec::new();
 
-    let mut write_fd_set = copy_from_user(writefds).await?;
+    let mut write_fd_set = if writefds.is_null() {
+        None
+    } else {
+        Some(copy_from_user(writefds).await?)
+    };
 
     let mut write_fds = Vec::new();
+
+    let mut except_fd_set = if exceptfds.is_null() {
+        None
+    } else {
+        Some(copy_from_user(exceptfds).await?)
+    };
 
     let mut timeout_fut = if timeout.is_null() {
         None
@@ -85,44 +113,58 @@ pub async fn sys_pselect6(
         Some(pin!(sleep(duration)))
     };
 
-    for fd in read_fd_set.iter_fds(max) {
-        let file = task
-            .fd_table
-            .lock_save_irq()
-            .get(fd)
-            .ok_or(KernelError::BadFd)?;
+    if let Some(ref read_fd_set) = read_fd_set {
+        for fd in read_fd_set.iter_fds(max) {
+            let file = task
+                .fd_table
+                .lock_save_irq()
+                .get(fd)
+                .ok_or(KernelError::BadFd)?;
 
-        read_fds.push((
-            Box::pin(async move {
-                let (ops, _) = &mut *file.lock().await;
+            read_fds.push((
+                Box::pin(async move {
+                    let (ops, _) = &mut *file.lock().await;
 
-                ops.poll_read_ready().await
-            }),
-            fd,
-        ));
+                    ops.poll_read_ready().await
+                }),
+                fd,
+            ));
+        }
     }
 
-    for fd in write_fd_set.iter_fds(max) {
-        let file = task
-            .fd_table
-            .lock_save_irq()
-            .get(fd)
-            .ok_or(KernelError::BadFd)?;
+    if let Some(ref write_fd_set) = write_fd_set {
+        for fd in write_fd_set.iter_fds(max) {
+            let file = task
+                .fd_table
+                .lock_save_irq()
+                .get(fd)
+                .ok_or(KernelError::BadFd)?;
 
-        write_fds.push((
-            Box::pin(async move {
-                let (ops, _) = &mut *file.lock().await;
+            write_fds.push((
+                Box::pin(async move {
+                    let (ops, _) = &mut *file.lock().await;
 
-                ops.poll_write_ready().await
-            }),
-            fd,
-        ));
+                    ops.poll_write_ready().await
+                }),
+                fd,
+            ));
+        }
     }
 
     let mask = if mask.is_null() {
         None
     } else {
-        Some(copy_from_user(mask).await?)
+        let args: PSelect6SigMask = copy_from_user(mask).await?;
+
+        if args.sigsetsize != core::mem::size_of::<SigSet>() {
+            return Err(KernelError::InvalidValue);
+        }
+
+        if args.sigmask.is_null() {
+            None
+        } else {
+            Some(copy_from_user(args.sigmask).await?)
+        }
     };
     let old_sigmask = task.sig_mask.load();
     if let Some(mask) = mask {
@@ -131,8 +173,15 @@ pub async fn sys_pselect6(
         task.sig_mask.store(new_sigmask);
     }
 
-    read_fd_set.zero();
-    write_fd_set.zero();
+    if let Some(ref mut read_fd_set) = read_fd_set {
+        read_fd_set.zero();
+    }
+    if let Some(ref mut write_fd_set) = write_fd_set {
+        write_fd_set.zero();
+    }
+    if let Some(ref mut except_fd_set) = except_fd_set {
+        except_fd_set.zero();
+    }
 
     let n = poll_fn(|cx| {
         let mut num_ready: usize = 0;
@@ -140,15 +189,19 @@ pub async fn sys_pselect6(
         for (fut, fd) in read_fds.iter_mut() {
             if fut.as_mut().poll(cx).is_ready() {
                 // Mark the is_ready bool. Don't break out of the loop just
-                // yet, we may aswell check all fds while we're here.
-                read_fd_set.set_fd(*fd);
+                // yet, we may as well check all fds while we're here.
+                if let Some(ref mut read_fd_set) = read_fd_set {
+                    read_fd_set.set_fd(*fd);
+                }
                 num_ready += 1;
             }
         }
 
         for (fut, fd) in write_fds.iter_mut() {
             if fut.as_mut().poll(cx).is_ready() {
-                write_fd_set.set_fd(*fd);
+                if let Some(ref mut write_fd_set) = write_fd_set {
+                    write_fd_set.set_fd(*fd);
+                }
                 num_ready += 1;
             }
         }
@@ -166,11 +219,29 @@ pub async fn sys_pselect6(
     })
     .await;
 
-    copy_to_user(readfds, read_fd_set).await?;
-    copy_to_user(writefds, write_fd_set).await?;
+    let readfds_copy_result = if let Some(read_fd_set) = read_fd_set {
+        copy_to_user(readfds, read_fd_set).await
+    } else {
+        Ok(())
+    };
+    let writefds_copy_result = if let Some(write_fd_set) = write_fd_set {
+        copy_to_user(writefds, write_fd_set).await
+    } else {
+        Ok(())
+    };
+    let exceptfds_copy_result = if let Some(except_fd_set) = except_fd_set {
+        copy_to_user(exceptfds, except_fd_set).await
+    } else {
+        Ok(())
+    };
+
     if mask.is_some() {
         task.sig_mask.store(old_sigmask);
     }
+
+    readfds_copy_result?;
+    writefds_copy_result?;
+    exceptfds_copy_result?;
 
     Ok(n)
 }
