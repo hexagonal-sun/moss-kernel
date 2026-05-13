@@ -1,6 +1,4 @@
-use crate::{
-    fs::VFS, memory::uaccess::cstr::UserCStr, process::TASK_LIST, sched::syscall_ctx::ProcessCtx,
-};
+use crate::{fs::VFS, memory::uaccess::cstr::UserCStr, sched::syscall_ctx::ProcessCtx};
 use alloc::sync::Arc;
 use core::ffi::c_char;
 use libkernel::{
@@ -110,29 +108,7 @@ pub async fn sys_pivot_root(
         return Err(KernelError::InUse);
     }
 
-    let (old_root_inode, new_root_inode) =
-        VFS.pivot_root(new_root_attachment, put_old_attachment)?;
-
-    let tasks: alloc::vec::Vec<_> = TASK_LIST
-        .lock_save_irq()
-        .values()
-        .filter_map(|work| work.upgrade())
-        .collect();
-
-    for work in tasks {
-        let task = work.task.t_shared.clone();
-
-        let mut root = task.root.lock_save_irq();
-        if root.0.id() == old_root_inode.id() {
-            *root = (new_root_inode.clone(), "/".into());
-        }
-        drop(root);
-
-        let mut cwd = task.cwd.lock_save_irq();
-        if cwd.0.id() == old_root_inode.id() {
-            *cwd = (new_root_inode.clone(), "/".into());
-        }
-    }
+    let _ = VFS.pivot_root(new_root_attachment, put_old_attachment)?;
 
     Ok(0)
 }

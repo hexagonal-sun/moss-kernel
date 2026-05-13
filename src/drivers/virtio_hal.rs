@@ -26,39 +26,36 @@ impl VirtioHal {
         rounded.ilog2() as u8
     }
 
-    fn translated_phys_addr(vaddr: VA) -> Option<PhysAddr> {
-        ArchImpl::kern_address_space()
-            .lock_save_irq()
-            .translate(vaddr)
-            .map(|pa| pa.value() as PhysAddr)
-    }
-
     fn translate_buffer(vaddr: VA, len: usize) -> Option<PhysAddr> {
         debug_assert!(len > 0);
 
-        let first_page_va = vaddr.page_aligned();
-        let last_byte_va = vaddr.add_bytes(len - 1);
-        let last_page_va = last_byte_va.page_aligned();
+        let addr_space = ArchImpl::kern_address_space().lock_save_irq();
+        let mut next_va = vaddr;
+        let mut remaining = len;
+        let mut start_pa = None;
+        let mut expected_next_pa = None;
 
-        let first_page_pa = Self::translated_phys_addr(first_page_va)?;
-        let mut page_va = first_page_va;
-        let mut expected_page_pa = first_page_pa;
+        while remaining > 0 {
+            let (phys_region, offset) = addr_space.translate(next_va)?;
+            let translated_pa = phys_region.start_address().add_bytes(offset).value() as PhysAddr;
 
-        loop {
-            let page_pa = Self::translated_phys_addr(page_va)?;
-            if page_pa != expected_page_pa {
-                return None;
+            if let Some(expected_pa) = expected_next_pa {
+                if translated_pa != expected_pa {
+                    return None;
+                }
+            } else {
+                start_pa = Some(translated_pa);
             }
 
-            if page_va == last_page_va {
-                break;
-            }
+            let mapped_len = phys_region.size() - offset;
+            let covered_len = mapped_len.min(remaining);
 
-            page_va = page_va.add_pages(1);
-            expected_page_pa += PAGE_SIZE as PhysAddr;
+            next_va = next_va.add_bytes(covered_len);
+            remaining -= covered_len;
+            expected_next_pa = Some(translated_pa + covered_len as PhysAddr);
         }
 
-        Some(first_page_pa + vaddr.page_offset() as PhysAddr)
+        start_pa
     }
 
     fn bounce_copy_in(paddr: PhysAddr, src: &[u8]) {
@@ -98,12 +95,6 @@ impl VirtioHal {
             .lock_save_irq()
             .push(BouncedShare { paddr, pages });
 
-        // trace!(
-        //     "virtio share: bounced {:p} len={} direction={direction:?} to paddr={paddr:#x}",
-        //     buffer.as_ptr(),
-        //     buffer.len(),
-        // );
-
         paddr
     }
 }
@@ -130,13 +121,10 @@ unsafe impl Hal for VirtioHal {
             core::ptr::write_bytes(vaddr.as_ptr(), 0, pages * PAGE_SIZE);
         }
 
-        // trace!("alloc DMA: paddr={paddr:#x}, pages={pages}, order={order}");
         (paddr, vaddr)
     }
 
     unsafe fn dma_dealloc(paddr: PhysAddr, _vaddr: NonNull<u8>, pages: usize) -> i32 {
-        // trace!("dealloc DMA: paddr={paddr:#x}, pages={pages}");
-
         let order = Self::pages_to_order(pages);
         let region = PhysMemoryRegion::new(
             PA::from_value(paddr as usize),
