@@ -149,7 +149,7 @@ fn validate_stack_addr(vm: &crate::process::ProcVM, addr: usize, allow_end: bool
     let vma = vma.ok_or(KernelError::InvalidValue)?;
     let permissions = vma.permissions();
 
-    if vma.name() != "[stack]" || !permissions.read || !permissions.write {
+    if !permissions.read || !permissions.write {
         return Err(KernelError::InvalidValue);
     }
 
