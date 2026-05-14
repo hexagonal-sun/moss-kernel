@@ -6,7 +6,7 @@ use crate::{
         sched_task::{Work, state::TaskState},
         waker::create_waker,
     },
-    sync::SpinLock,
+    sync::{CondVar, SpinLock},
 };
 use alloc::{
     collections::btree_map::BTreeMap,
@@ -16,7 +16,7 @@ use alloc::{
 use builder::ThreadGroupBuilder;
 use core::sync::atomic::AtomicUsize;
 use core::{fmt::Display, sync::atomic::Ordering};
-use libkernel::fs::pathbuf::PathBuf;
+use libkernel::{fs::pathbuf::PathBuf, sync::condvar::WakeupType};
 use pid::PidT;
 use rsrc_lim::ResourceLimits;
 use signal::{SigId, SigSet, SignalActionState};
@@ -112,6 +112,9 @@ pub struct ThreadGroup {
     pub pending_signals: SpinLock<SigSet>,
     pub priority: SpinLock<i8>,
     pub child_notifiers: Notifiers,
+    /// `true` while a parent is blocked in `CLONE_VFORK` waiting for this
+    /// process to either `execve()` successfully or exit.
+    pub vfork_blocked_parent: CondVar<bool>,
     pub utime: AtomicUsize,
     pub stime: AtomicUsize,
     pub last_account: AtomicUsize,
@@ -149,6 +152,30 @@ impl ThreadGroup {
 
     pub fn get(id: Tgid) -> Option<Arc<Self>> {
         TG_LIST.lock_save_irq().get(&id).and_then(|x| x.upgrade())
+    }
+
+    pub fn start_vfork(&self) {
+        self.vfork_blocked_parent.update(|blocked| {
+            *blocked = true;
+            WakeupType::None
+        });
+    }
+
+    pub async fn wait_for_vfork_release(&self) {
+        self.vfork_blocked_parent
+            .wait_until(|blocked| (!*blocked).then_some(()))
+            .await;
+    }
+
+    pub fn complete_vfork(&self) {
+        self.vfork_blocked_parent.update(|blocked| {
+            if *blocked {
+                *blocked = false;
+                WakeupType::All
+            } else {
+                WakeupType::None
+            }
+        });
     }
 
     pub fn notify_signal_waiters(&self) {

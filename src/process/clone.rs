@@ -1,6 +1,6 @@
 use super::owned::OwnedTask;
 use super::ptrace::{PTrace, TracePoint, ptrace_stop};
-use super::{ITimers, Tid};
+use super::{ITimers, Tid, VmHandle};
 use super::{
     ctx::Context,
     thread_group::signal::{AtomicSigSet, SigSet},
@@ -120,11 +120,14 @@ pub async fn sys_clone(
         };
 
         let vm = if flags.contains(CloneFlags::CLONE_VM) {
-            current_task.vm.clone()
+            if flags.contains(CloneFlags::CLONE_THREAD) {
+                current_task.vm.clone()
+            } else {
+                Arc::new(VmHandle::from_shared(current_task.vm.shared_vm()))
+            }
         } else {
-            Arc::new(SpinLock::new(
-                current_task.vm.lock_save_irq().clone_as_cow()?,
-            ))
+            let proc_vm = current_task.vm.shared_vm();
+            Arc::new(VmHandle::new(proc_vm.lock_save_irq().clone_as_cow()?))
         };
 
         let files = if flags.contains(CloneFlags::CLONE_FILES) {
@@ -195,8 +198,15 @@ pub async fn sys_clone(
         }
     };
 
+    if flags.contains(CloneFlags::CLONE_VFORK) {
+        new_task.process.start_vfork();
+    }
+
     let desc = new_task.descriptor();
     let work = Work::new(Box::new(new_task));
+    let vfork_process = flags
+        .contains(CloneFlags::CLONE_VFORK)
+        .then(|| work.process.clone());
 
     TASK_LIST
         .lock_save_irq()
@@ -217,6 +227,10 @@ pub async fn sys_clone(
     }
     if flags.contains(CloneFlags::CLONE_CHILD_SETTID) && !child_tidptr.is_null() {
         copy_to_user(child_tidptr, desc.tid.value()).await?;
+    }
+
+    if let Some(vfork_process) = vfork_process {
+        vfork_process.wait_for_vfork_release().await;
     }
 
     Ok(desc.tid.value() as _)

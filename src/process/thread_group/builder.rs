@@ -2,7 +2,10 @@ use core::sync::atomic::AtomicUsize;
 
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 
-use crate::{drivers::fs::cgroup, sync::SpinLock};
+use crate::{
+    drivers::fs::cgroup,
+    sync::{CondVar, SpinLock},
+};
 
 use super::{
     Pgid, ProcessState, Sid, TG_LIST, Tgid, ThreadGroup,
@@ -80,6 +83,7 @@ impl ThreadGroupBuilder {
                 .unwrap_or_else(|| Arc::new(SpinLock::new(ResourceLimits::default()))),
             pending_signals: SpinLock::new(SigSet::empty()),
             child_notifiers: Notifiers::new(),
+            vfork_blocked_parent: CondVar::new(false),
             priority: SpinLock::new(self.pri.unwrap_or(0)),
             utime: AtomicUsize::new(0),
             stime: AtomicUsize::new(0),

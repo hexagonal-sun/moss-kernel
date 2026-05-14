@@ -20,7 +20,8 @@ use crate::sched::syscall_ctx::ProcessCtx;
 /// - On a successful resize, it returns the new break.
 /// - On a failed resize, it returns the current, unchanged break.
 pub async fn sys_brk(ctx: &ProcessCtx, addr: VA) -> Result<usize, Infallible> {
-    let mut vm = ctx.shared().vm.lock_save_irq();
+    let proc_vm = ctx.shared().vm.shared_vm();
+    let mut vm = proc_vm.lock_save_irq();
 
     // The query case `brk(0)` is special and is handled separately from modifications.
     if addr.is_null() {

@@ -35,7 +35,8 @@ pub async fn sys_mincore(ctx: &ProcessCtx, start: u64, len: usize, vec: UA) -> R
     let mut buf: Vec<u8> = vec![0; pages];
 
     {
-        let mut vm_guard = ctx.shared().vm.lock_save_irq();
+        let proc_vm = ctx.shared().vm.shared_vm();
+        let mut vm_guard = proc_vm.lock_save_irq();
         let mm = vm_guard.mm_mut();
 
         // Validate the entire region is covered by VMAs

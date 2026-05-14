@@ -1,5 +1,5 @@
 use super::{
-    Comm, ITimers, Task, Tid,
+    Comm, ITimers, Task, Tid, VmHandle,
     creds::Credentials,
     ctx::{Context, UserCtx},
     fd_table::FileDescriptorTable,
@@ -70,7 +70,7 @@ impl OwnedTask {
             cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             root: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             creds: SpinLock::new(Credentials::new_root()),
-            vm: Arc::new(SpinLock::new(vm)),
+            vm: Arc::new(VmHandle::new(vm)),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             i_timers: SpinLock::new(ITimers::default()),
             ptrace: SpinLock::new(PTrace::new()),
@@ -100,7 +100,7 @@ impl OwnedTask {
             cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             root: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             creds: SpinLock::new(Credentials::new_root()),
-            vm: Arc::new(SpinLock::new(
+            vm: Arc::new(VmHandle::new(
                 ProcessVM::empty().expect("Could not create init process's VM"),
             )),
             i_timers: SpinLock::new(ITimers::default()),
