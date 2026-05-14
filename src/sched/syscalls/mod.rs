@@ -26,7 +26,7 @@ pub async fn sys_sched_getaffinity(
     };
     let cpu_mask = {
         let sched_data = task.sched_data.lock_save_irq();
-        sched_data.as_ref().unwrap().cpu_mask
+        sched_data.as_ref().map(|data| data.cpu_mask).unwrap_or([u8::MAX; CPU_MASK_SIZE])
     };
     let mut cpu_mask: &[u8] = &cpu_mask;
     if CPU_MASK_SIZE > size {
