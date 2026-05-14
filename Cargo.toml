@@ -37,12 +37,12 @@ fdt-parser = "0.4.16"
 futures = { version = "0.3.31", default-features = false, features = ["alloc", "async-await"] }
 getargs = { version = "0.5.0", default-features = false }
 log = { workspace = true }
-object = { version = "0.38.0", default-features = false, features = ["core", "elf", "read_core"] }
+object = { version = "0.39.0", default-features = false, features = ["core", "elf", "read_core"] }
 paste = { workspace = true }
 ringbuf = { version = "0.4.8", default-features = false, features = ["alloc"] }
 rand = { workspace = true }
 rustc-hash = { version = "2.1", default-features = false }
-smoltcp = { version = "0.12.0", default-features = false, features = ["alloc", "medium-ethernet", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"] }
+smoltcp = { version = "0.13.0", default-features = false, features = ["alloc", "medium-ethernet", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"] }
 tock-registers = "0.10.1"
 virtio-drivers = "0.13.0"
 atomic_enum = "0.3.0"
