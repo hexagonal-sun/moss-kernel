@@ -1,5 +1,6 @@
 [build]
 target = "aarch64-unknown-none-softfloat"
+rustflags = ["-C", "force-frame-pointers=yes"]
 
 [target.aarch64-unknown-none-softfloat]
 runner = "scripts/qemu_runner.py"

@@ -20,7 +20,7 @@ use crate::{
 use alloc::string::String;
 use alloc::sync::Arc;
 use libkernel::{
-    CpuOps,
+    CpuOps, StackTrace,
     error::Result,
     memory::{
         address::{UA, VA},
@@ -36,6 +36,8 @@ pub trait Arch: CpuOps + VirtualMemory {
 
     /// The type for GP regs copied via `PTRACE_GETREGSET`.
     type PTraceGpRegs: UserCopyable + for<'a> From<&'a Self::UserContext>;
+
+    type ArchStackTrace: StackTrace;
 
     /// The starting address for the logical mapping of all physical ram.
     const PAGE_OFFSET: usize;
@@ -205,6 +207,10 @@ pub trait Arch: CpuOps + VirtualMemory {
         dst: *mut u8,
         len: usize,
     ) -> impl Future<Output = Result<usize>>;
+
+    unsafe fn stack_trace() -> Option<Self::ArchStackTrace> {
+        unsafe { Self::ArchStackTrace::start() }
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
@@ -212,3 +218,7 @@ mod arm64;
 
 #[cfg(target_arch = "aarch64")]
 pub use self::arm64::Aarch64 as ArchImpl;
+#[cfg(target_arch = "aarch64")]
+pub(crate) use self::arm64::{
+    EMERG_STACK_END, IMAGE_BASE, KERNEL_STACK_AREA, KERNEL_STACK_PG_ORDER,
+};

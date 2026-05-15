@@ -8,7 +8,7 @@ use cpu_ops::{local_irq_restore, local_irq_save};
 use exceptions::ExceptionState;
 use libkernel::{
     CpuOps,
-    arch::arm64::memory::pg_tables::L0Table,
+    arch::arm64::{memory::pg_tables::L0Table, stacktrace::StackTraceImpl},
     error::Result,
     memory::{
         address::{UA, VA},
@@ -44,6 +44,10 @@ mod memory;
 mod proc;
 pub mod psci;
 pub mod ptrace;
+
+pub(crate) use self::boot::memory::{KERNEL_STACK_AREA, KERNEL_STACK_PG_ORDER};
+pub(crate) use self::exceptions::EMERG_STACK_END;
+pub(crate) use self::memory::IMAGE_BASE;
 
 pub struct Aarch64 {}
 
@@ -86,6 +90,7 @@ impl VirtualMemory for Aarch64 {
 impl Arch for Aarch64 {
     type UserContext = ExceptionState;
     type PTraceGpRegs = Arm64PtraceGPRegs;
+    type ArchStackTrace = StackTraceImpl;
 
     const PAGE_OFFSET: usize = PAGE_OFFSET;
 

@@ -42,6 +42,7 @@ extern crate alloc;
 extern crate moss_macros;
 
 mod arch;
+mod backtrace;
 mod clock;
 mod console;
 mod drivers;
@@ -73,6 +74,8 @@ fn on_panic(info: &PanicInfo) -> ! {
     } else {
         error!("Kernel panicked at unknown location: {panic_msg}");
     }
+
+    backtrace::print_backtrace();
 
     ArchImpl::power_off();
 }

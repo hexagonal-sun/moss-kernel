@@ -112,6 +112,30 @@ pub trait CpuOps: 'static {
     fn enable_interrupts();
 }
 
+/// Generic stack trace methods
+pub trait StackTrace: Sized {
+    /// Start a stack trace, if supported.
+    ///
+    /// # Safety
+    /// Will mess up stack
+    unsafe fn start() -> Option<Self> {
+        None
+    }
+
+    /// Continue to next frame in stack, returning `None` if there are no more frames or if the next frame is invalid.
+    ///
+    /// # Safety
+    /// Will mess up stack
+    unsafe fn next(self) -> Option<Self> {
+        None
+    }
+
+    /// Frame pointer
+    fn fp(&self) -> usize;
+    /// PC PTR
+    fn pc_ptr(&self) -> *const usize;
+}
+
 #[cfg(test)]
 #[allow(missing_docs)]
 pub mod test {

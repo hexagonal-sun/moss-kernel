@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
 import argparse
+import re
+import shutil
 import subprocess
+import sys
 
 parser = argparse.ArgumentParser(description="QEMU runner")
 
@@ -14,6 +17,7 @@ parser.add_argument("--smp", default=4, help="Number of CPU cores to use")
 parser.add_argument("--memory", default="2G")
 parser.add_argument("--debug", action="store_true", help="Enable QEMU debugging")
 parser.add_argument("--display", action="store_true", help="Add a display device to the VM")
+parser.add_argument("--demangle", action="store_true", help="Add a demangled backtrace")
 
 
 
@@ -68,4 +72,59 @@ for key, value in default_args.items():
 
 qemu_command += extra_args
 
-subprocess.run(qemu_command, check=True)
+if args.demangle:
+    addr2line = (
+        shutil.which("aarch64-none-elf-addr2line")
+        or shutil.which("llvm-addr2line")
+        or shutil.which("addr2line")
+    )
+    pc_pattern = re.compile(r"\bPC ([0-9a-fA-F]+)\b")
+    decode_cache = {}
+
+
+    def decode_pc(pc: str) -> str | None:
+        if addr2line is None:
+            return None
+
+        pc = pc.lower()
+        if pc in decode_cache:
+            return decode_cache[pc]
+
+        result = subprocess.run(
+            [addr2line, "-e", elf_executable, "-f", "-C", "-p", f"0x{pc}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        decoded = result.stdout.strip() or None
+        decode_cache[pc] = decoded
+        return decoded
+
+
+    with subprocess.Popen(
+        qemu_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    ) as proc:
+        assert proc.stdout is not None
+
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+            match = pc_pattern.search(line)
+            if match is None:
+                continue
+
+            decoded = decode_pc(match.group(1))
+            if decoded is not None:
+                print(f"\t=> {decoded}", flush=True)
+
+        ret = proc.wait()
+        if ret != 0:
+            raise subprocess.CalledProcessError(ret, qemu_command)
+else:
+    subprocess.run(qemu_command, check=True)
