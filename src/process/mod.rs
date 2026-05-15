@@ -143,6 +143,49 @@ impl TaskDescriptor {
 
 pub type ProcVM = ProcessVM<<ArchImpl as VirtualMemory>::ProcessAddressSpace>;
 
+/// A per-task handle to a process address space.
+///
+/// Separate processes may temporarily share the same underlying `ProcVM`
+/// (e.g. `CLONE_VM` without `CLONE_THREAD`, including `CLONE_VFORK`) while
+/// still allowing one side to detach on `execve()` without affecting the
+/// other. Tasks in the same thread group share the same `VmHandle` so that an
+/// `execve()` updates the whole group consistently.
+pub struct VmHandle {
+    current: SpinLock<Arc<SpinLock<ProcVM>>>,
+}
+
+impl VmHandle {
+    pub fn new(vm: ProcVM) -> Self {
+        Self::from_shared(Arc::new(SpinLock::new(vm)))
+    }
+
+    pub fn from_shared(vm: Arc<SpinLock<ProcVM>>) -> Self {
+        Self {
+            current: SpinLock::new(vm),
+        }
+    }
+
+    pub fn shared_vm(&self) -> Arc<SpinLock<ProcVM>> {
+        self.current.lock_save_irq().clone()
+    }
+
+    pub fn replace(&self, vm: ProcVM) {
+        self.replace_shared(Arc::new(SpinLock::new(vm)));
+    }
+
+    pub fn replace_shared(&self, vm: Arc<SpinLock<ProcVM>>) {
+        *self.current.lock_save_irq() = vm;
+    }
+
+    pub fn activate(&self) {
+        self.shared_vm()
+            .lock_save_irq()
+            .mm_mut()
+            .address_space_mut()
+            .activate();
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct Comm([u8; 16]);
 
@@ -183,7 +226,7 @@ pub struct Task {
     pub tid: Tid,
     pub comm: Arc<SpinLock<Comm>>,
     pub process: Arc<ThreadGroup>,
-    pub vm: Arc<SpinLock<ProcVM>>,
+    pub vm: Arc<VmHandle>,
     pub cwd: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
     pub root: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
     pub creds: SpinLock<Credentials>,
@@ -276,8 +319,10 @@ impl Task {
                 Box::into_pin(fut).await?;
             }
 
+            let proc_vm = self.vm.shared_vm();
+
             {
-                let mut vm = self.vm.lock_save_irq();
+                let mut vm = proc_vm.lock_save_irq();
 
                 if let Some(pa) = vm.mm_mut().address_space_mut().translate(va) {
                     let region = pa.pfn.as_phys_range();
@@ -302,7 +347,7 @@ impl Task {
             }
 
             // Try to handle the fault.
-            match handle_demand_fault(self.vm.clone(), va, access_kind)? {
+            match handle_demand_fault(proc_vm.clone(), va, access_kind)? {
                 // Resolved the fault.   Try again
                 FaultResolution::Resolved => continue,
                 FaultResolution::Denied => return Err(KernelError::Fault),

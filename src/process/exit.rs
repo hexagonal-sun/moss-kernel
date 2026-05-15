@@ -62,6 +62,10 @@ pub fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
     // to wait for all the processes to have stopped execution before tearing
     // down the address-space, etc.
 
+    // If this process was created with `CLONE_VFORK`, the parent may resume as
+    // soon as we are guaranteed not to run in the shared address space again.
+    process.complete_vfork();
+
     // Reparent children to `init`
     {
         let mut our_children = process.children.lock_save_irq();

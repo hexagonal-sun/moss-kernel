@@ -109,7 +109,8 @@ Threads:\t{tasks}\n",
                 TaskFileType::Comm => format!("{name}\n", name = name.as_str()),
                 TaskFileType::State => format!("{state}\n"),
                 TaskFileType::Stat => {
-                    let vm = task.vm.lock_save_irq();
+                    let proc_vm = task.vm.shared_vm();
+                    let vm = proc_vm.lock_save_irq();
 
                     let mut vsize = 0;
                     let mut startcode = 0;
@@ -217,7 +218,8 @@ Threads:\t{tasks}\n",
                 TaskFileType::Root => task.root.lock_save_irq().1.as_str().to_string(),
                 TaskFileType::Maps => {
                     let mut output = String::new();
-                    let mut vm = task.vm.lock_save_irq();
+                    let proc_vm = task.vm.shared_vm();
+                    let mut vm = proc_vm.lock_save_irq();
 
                     for vma in vm.mm_mut().iter_vmas() {
                         output.push_str(&format!(

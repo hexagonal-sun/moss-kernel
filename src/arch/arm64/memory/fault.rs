@@ -74,7 +74,7 @@ fn run_mem_fault_handler(
 }
 
 fn handle_uacess_abort(exception: Exception, info: AbortIss, state: &mut ExceptionState) {
-    match run_mem_fault_handler(current_work().vm.clone(), exception, info) {
+    match run_mem_fault_handler(current_work().vm.shared_vm(), exception, info) {
         // We mapped in a page, the uacess handler can proceed.
         Ok(FaultResolution::Resolved) => (),
         // If the fault couldn't be resolved, signal to the uacess fixup that
@@ -124,7 +124,7 @@ pub fn handle_kernel_mem_fault(exception: Exception, info: AbortIss, state: &mut
 }
 
 pub fn handle_mem_fault(ctx: &mut ProcessCtx, exception: Exception, info: AbortIss) {
-    match run_mem_fault_handler(ctx.shared().vm.clone(), exception, info) {
+    match run_mem_fault_handler(ctx.shared().vm.shared_vm(), exception, info) {
         Ok(FaultResolution::Resolved) => {}
         Ok(FaultResolution::Denied) => {
             ctx.task().process.deliver_signal(SigId::SIGSEGV);

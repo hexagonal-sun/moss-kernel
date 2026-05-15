@@ -20,9 +20,8 @@ impl FutexKey {
     }
 
     pub fn new_shared(ctx: &ProcessCtx, uaddr: TUA<u32>) -> Result<Self> {
-        let pg_info = ctx
-            .shared()
-            .vm
+        let proc_vm = ctx.shared().vm.shared_vm();
+        let pg_info = proc_vm
             .lock_save_irq()
             .mm_mut()
             .address_space_mut()

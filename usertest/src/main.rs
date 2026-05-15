@@ -79,6 +79,54 @@ fn test_fork() {
 
 register_test!(test_fork);
 
+#[expect(deprecated)]
+fn test_vfork_exit() {
+    unsafe {
+        let pid = libc::vfork();
+        if pid < 0 {
+            panic!("vfork failed");
+        } else if pid == 0 {
+            libc::_exit(0);
+        } else {
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+            assert!(libc::WIFEXITED(status));
+            assert_eq!(libc::WEXITSTATUS(status), 0);
+        }
+    }
+}
+
+register_test!(test_vfork_exit);
+
+#[expect(deprecated)]
+fn test_vfork_exec() {
+    static TRUE_PATH: &[u8] = b"/bin/true\0";
+
+    unsafe {
+        let pid = libc::vfork();
+        if pid < 0 {
+            panic!("vfork failed");
+        } else if pid == 0 {
+            let argv = [TRUE_PATH.as_ptr().cast::<libc::c_char>(), core::ptr::null()];
+            let envp = [core::ptr::null()];
+
+            libc::execve(
+                TRUE_PATH.as_ptr().cast::<libc::c_char>(),
+                argv.as_ptr(),
+                envp.as_ptr(),
+            );
+            libc::_exit(127);
+        } else {
+            let mut status = 0;
+            libc::waitpid(pid, &mut status, 0);
+            assert!(libc::WIFEXITED(status));
+            assert_eq!(libc::WEXITSTATUS(status), 0);
+        }
+    }
+}
+
+register_test!(test_vfork_exec);
+
 fn test_rust_thread() {
     let handle = thread::spawn(|| 24);
 

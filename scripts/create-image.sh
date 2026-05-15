@@ -50,7 +50,7 @@ fi
 
 # Build and copy over usertest
 cd "$base"/usertest
-usertest_binary="$(cargo build --message-format=json | jq -r 'select(.reason == "compiler-artifact") | .filenames[]' | grep "usertest")"
+usertest_binary="$(cargo build --message-format=json-render-diagnostics | jq -r 'select(.reason == "compiler-artifact" and .target.name == "usertest") | .executable // empty')"
 cp "$usertest_binary" "$base/build/rootfs/bin/usertest"
 
 # make image

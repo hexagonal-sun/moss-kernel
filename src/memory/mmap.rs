@@ -127,7 +127,8 @@ pub async fn sys_mmap(
     };
 
     // Lock the task and call the core memory manager to perform the mapping.
-    let new_mapping_addr = ctx.shared().vm.lock_save_irq().mm_mut().mmap(
+    let proc_vm = ctx.shared().vm.shared_vm();
+    let new_mapping_addr = proc_vm.lock_save_irq().mm_mut().mmap(
         address_request,
         requested_len,
         permissions,
@@ -141,7 +142,8 @@ pub async fn sys_mmap(
 pub async fn sys_munmap(ctx: &ProcessCtx, addr: VA, len: usize) -> Result<usize> {
     let region = VirtMemoryRegion::new(addr, len);
 
-    let pages = ctx.shared().vm.lock_save_irq().mm_mut().munmap(region)?;
+    let proc_vm = ctx.shared().vm.shared_vm();
+    let pages = proc_vm.lock_save_irq().mm_mut().munmap(region)?;
 
     // Free any physical frames that were unmapped.
     if !pages.is_empty() {
@@ -165,11 +167,8 @@ pub fn sys_mprotect(ctx: &ProcessCtx, addr: VA, len: usize, prot: u64) -> Result
     let perms = prot_to_perms(prot);
     let region = VirtMemoryRegion::new(addr, len);
 
-    ctx.shared()
-        .vm
-        .lock_save_irq()
-        .mm_mut()
-        .mprotect(region, perms)?;
+    let proc_vm = ctx.shared().vm.shared_vm();
+    proc_vm.lock_save_irq().mm_mut().mprotect(region, perms)?;
 
     Ok(0)
 }

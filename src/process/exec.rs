@@ -187,14 +187,7 @@ async fn exec_elf(
     ptrace_stop(ctx, TracePoint::Exec).await;
 
     let user_ctx = ArchImpl::new_user_context(entry_addr, stack_ptr);
-    let mut vm = ProcessVM::from_map(mem_map);
-
-    // We don't have to worry about actually calling for a full context switch
-    // here. Parts of the old process that are replaced will go out of scope and
-    // be cleaned up (open files, etc.); We don't need to preserve any extra
-    // state. Simply activate the new process's address space.
-    vm.mm_mut().address_space_mut().activate();
-
+    let vm = ProcessVM::from_map(mem_map);
     let new_comm = argv.first().map(|s| Comm::new(s.as_str()));
 
     {
@@ -205,9 +198,14 @@ async fn exec_elf(
         }
 
         current_task.ctx = Context::from_user_ctx(user_ctx);
-        *current_task.vm.lock_save_irq() = vm;
+        current_task.vm.replace(vm);
+        current_task.vm.activate();
         *current_task.process.signals.lock_save_irq() = SignalActionState::new_default();
     }
+
+    // `CLONE_VFORK` parents must resume as soon as the child has stopped using
+    // the shared address space, before any later async cleanup can block.
+    ctx.shared().process.complete_vfork();
 
     // Close all the CLOEXEC FDs.
     let mut fd_table = ctx.shared().fd_table.lock_save_irq().clone();
