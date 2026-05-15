@@ -1,12 +1,15 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
+use crate::{memory::page::ClaimedPage, process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
 use alloc::string::{String, ToString};
 use libkernel::{
-    error::{KernelError, Result},
+    error::{KernelError, MapError, Result},
     memory::{
+        PAGE_MASK, PAGE_SIZE,
         address::VA,
+        paging::permissions::PtePermissions,
         proc_vm::{
+            address_space::UserAddressSpace,
             memory_map::AddressRequest,
             vmarea::{VMAPermissions, VMAreaKind},
         },
@@ -45,6 +48,47 @@ fn prot_to_perms(prot: u64) -> VMAPermissions {
 /// # Returns
 /// A `Result` containing the starting address of the new mapping on success,
 /// or a `KernelError` on failure.
+fn align_mmap_len(len: usize) -> usize {
+    if len & PAGE_MASK != 0 {
+        (len & !PAGE_MASK) + PAGE_SIZE
+    } else {
+        len
+    }
+}
+
+async fn populate_shared_anon_mapping(
+    ctx: &ProcessCtx,
+    start: VA,
+    len: usize,
+    permissions: VMAPermissions,
+) -> Result<()> {
+    let region = VirtMemoryRegion::new(start, align_mmap_len(len));
+
+    for page_va in region.iter_pages() {
+        let page = ClaimedPage::alloc_zeroed()?;
+        let pfn = page.pa().to_pfn();
+
+        match ctx
+            .shared()
+            .vm
+            .lock_save_irq()
+            .mm_mut()
+            .address_space_mut()
+            .map_page(pfn, page_va, PtePermissions::from(permissions))
+        {
+            Ok(()) => {
+                page.leak();
+            }
+            Err(KernelError::MappingError(MapError::AlreadyMapped)) => {
+                drop(page);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn sys_mmap(
     ctx: &ProcessCtx,
     addr: u64,
@@ -58,13 +102,15 @@ pub async fn sys_mmap(
         return Err(KernelError::InvalidValue);
     }
 
-    // Ensure mapping sharability has been specified:
-    if (flags & (MAP_SHARED | MAP_PRIVATE)) == 0 {
+    let mapping_kind = flags & (MAP_SHARED | MAP_PRIVATE);
+    if mapping_kind == 0 || mapping_kind == (MAP_SHARED | MAP_PRIVATE) {
         return Err(KernelError::InvalidValue);
     }
 
-    // TODO: Shared Mappings.
-    if (flags & MAP_SHARED) != 0 {
+    let is_shared = (flags & MAP_SHARED) != 0;
+    let is_anon = (flags & (MAP_ANON | MAP_ANONYMOUS)) != 0;
+
+    if is_shared && !is_anon {
         return Err(KernelError::NotSupported);
     }
 
@@ -87,7 +133,10 @@ pub async fn sys_mmap(
 
     let requested_len = len as usize;
 
-    let (kind, name) = if (flags & (MAP_ANON | MAP_ANONYMOUS)) != 0 {
+    let (kind, name) = if is_anon {
+        if offset != 0 {
+            return Err(KernelError::InvalidValue);
+        }
         (VMAreaKind::Anon, String::new())
     } else {
         // File-backed mapping: require a valid fd and use the provided offset.
@@ -127,13 +176,22 @@ pub async fn sys_mmap(
     };
 
     // Lock the task and call the core memory manager to perform the mapping.
-    let new_mapping_addr = ctx.shared().vm.lock_save_irq().mm_mut().mmap(
+    let new_mapping_addr = ctx.shared().vm.lock_save_irq().mm_mut().mmap_with_options(
         address_request,
         requested_len,
         permissions,
         kind,
         name,
+        is_shared,
     )?;
+
+    if is_shared
+        && let Err(e) =
+            populate_shared_anon_mapping(ctx, new_mapping_addr, requested_len, permissions).await
+    {
+        let _ = sys_munmap(ctx, new_mapping_addr, align_mmap_len(requested_len)).await;
+        return Err(e);
+    }
 
     Ok(new_mapping_addr.value())
 }
