@@ -237,7 +237,7 @@ async fn exec_script(
         .ok_or(ExecError::InvalidScriptFormat)?;
     let parts: Vec<&str> = first_line[2..].split_whitespace().collect();
     if parts.is_empty() {
-        return Err(ExecError::InvalidScriptFormat)?;
+        Err(ExecError::InvalidScriptFormat)?;
     }
     let interp_path = parts[0];
     let interp_args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();

@@ -95,7 +95,7 @@ pub async fn sys_rt_sigaction(
     sigsetsize: usize,
 ) -> Result<usize> {
     if sigsetsize != size_of::<SigSet>() {
-        return Err(KernelError::InvalidValue)?;
+        return Err(KernelError::InvalidValue);
     }
 
     let sig: SigId = sig.try_into()?;
