@@ -1,7 +1,10 @@
 use crate::clock::realtime::date;
 use crate::{
     drivers::{DM, Driver},
-    process::Task,
+    process::{
+        Task,
+        inotify::{notify_create, notify_delete, notify_delete_self, notify_modify, notify_move},
+    },
     sync::SpinLock,
 };
 use alloc::{borrow::ToOwned, boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
@@ -377,9 +380,11 @@ impl VFS {
                         return Err(FsError::NotADirectory.into());
                     }
 
-                    parent_inode
+                    let target_inode = parent_inode
                         .create(file_name, FileType::File, mode, Some(date()))
-                        .await?
+                        .await?;
+                    notify_create(parent_inode.id(), file_name, false).await;
+                    target_inode
                 } else {
                     // O_CREAT was not specified, so NotFound is the correct error.
                     return Err(FsError::NotFound.into());
@@ -409,6 +414,7 @@ impl VFS {
         {
             // TODO: Check for write permissions on the inode itself.
             target_inode.truncate(0).await?;
+            notify_modify(target_inode.id()).await;
         }
 
         match attr.file_type {
@@ -485,6 +491,7 @@ impl VFS {
                 parent_inode
                     .create(dir_name, FileType::Directory, mode, Some(date()))
                     .await?;
+                notify_create(parent_inode.id(), dir_name, true).await;
 
                 Ok(())
             }
@@ -547,6 +554,9 @@ impl VFS {
         let name = path.file_name().ok_or(FsError::InvalidInput)?;
 
         parent_inode.unlink(name).await?;
+        let is_dir = attr.file_type == FileType::Directory;
+        notify_delete(parent_inode.id(), name, is_dir).await;
+        notify_delete_self(target_inode.id(), is_dir).await;
 
         Ok(())
     }
@@ -558,7 +568,9 @@ impl VFS {
         name: &str,
     ) -> Result<()> {
         // just delegate to inode only, all handling is done at the syscall level
-        new_parent.link(name, target).await
+        new_parent.link(name, target).await?;
+        notify_create(new_parent.id(), name, false).await;
+        Ok(())
     }
 
     pub async fn symlink(
@@ -584,7 +596,9 @@ impl VFS {
                     return Err(FsError::NotADirectory.into());
                 }
 
-                parent_inode.symlink(name, target).await
+                parent_inode.symlink(name, target).await?;
+                notify_create(parent_inode.id(), name, false).await;
+                Ok(())
             }
             Err(e) => Err(e),
         }
@@ -598,9 +612,24 @@ impl VFS {
         new_name: &str,
         no_replace: bool,
     ) -> Result<()> {
+        let target_inode = old_parent_inode.lookup(old_name).await?;
+        let target_attr = target_inode.getattr().await?;
+
         new_parent_inode
-            .rename_from(old_parent_inode, old_name, new_name, no_replace)
-            .await
+            .rename_from(old_parent_inode.clone(), old_name, new_name, no_replace)
+            .await?;
+
+        notify_move(
+            old_parent_inode.id(),
+            old_name,
+            new_parent_inode.id(),
+            new_name,
+            target_inode.id(),
+            target_attr.file_type == FileType::Directory,
+        )
+        .await;
+
+        Ok(())
     }
 
     pub async fn exchange(

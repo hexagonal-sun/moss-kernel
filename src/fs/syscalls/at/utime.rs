@@ -16,7 +16,7 @@ use crate::{
     clock::{realtime::date, timespec::TimeSpec},
     fs::syscalls::at::{AtFlags, resolve_at_start_node, resolve_path_flags},
     memory::uaccess::{copy_from_user, cstr::UserCStr},
-    process::fd_table::Fd,
+    process::{fd_table::Fd, inotify::notify_attrib},
     sched::syscall_ctx::ProcessCtx,
 };
 
@@ -88,6 +88,7 @@ pub async fn sys_utimensat(
     }
 
     node.setattr(attr).await?;
+    notify_attrib(node.id()).await;
 
     Ok(0)
 }

@@ -1,7 +1,7 @@
 use crate::fs::VFS;
 use crate::memory::uaccess::copy_from_user_slice;
 use crate::memory::uaccess::cstr::UserCStr;
-use crate::process::fd_table::Fd;
+use crate::process::{fd_table::Fd, inotify::notify_attrib};
 use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -47,6 +47,7 @@ async fn setxattr(
         flags.contains(SetXattrFlags::REPLACE),
     )
     .await?;
+    notify_attrib(node.id()).await;
     Ok(size)
 }
 

@@ -8,6 +8,7 @@ use std::{
 mod epoll;
 mod fs;
 mod futex;
+mod inotify;
 mod signalfd;
 mod signals;
 mod socket;

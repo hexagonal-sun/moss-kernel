@@ -6,7 +6,10 @@ use libkernel::{
     },
 };
 
-use crate::{process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
+use crate::{
+    process::{fd_table::Fd, inotify::notify_attrib},
+    sched::syscall_ctx::ProcessCtx,
+};
 
 pub async fn sys_fchown(ctx: &ProcessCtx, fd: Fd, owner: i32, group: i32) -> Result<usize> {
     let task = ctx.shared().clone();
@@ -35,6 +38,7 @@ pub async fn sys_fchown(ctx: &ProcessCtx, fd: Fd, owner: i32, group: i32) -> Res
         }
     }
     inode.setattr(attr).await?;
+    notify_attrib(inode.id()).await;
 
     Ok(0)
 }

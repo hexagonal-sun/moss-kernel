@@ -43,6 +43,7 @@ pub mod epoll;
 pub mod exec;
 pub mod exit;
 pub mod fd_table;
+pub mod inotify;
 pub mod owned;
 pub mod pidfd;
 pub mod prctl;

@@ -13,7 +13,7 @@ use libkernel::{
 use crate::{
     fs::syscalls::at::{AtFlags, resolve_at_start_node, resolve_path_flags},
     memory::uaccess::cstr::UserCStr,
-    process::fd_table::Fd,
+    process::{fd_table::Fd, inotify::notify_attrib},
     sched::syscall_ctx::ProcessCtx,
 };
 
@@ -51,6 +51,7 @@ pub async fn sys_fchownat(
         }
     }
     node.setattr(attr).await?;
+    notify_attrib(node.id()).await;
 
     Ok(0)
 }

@@ -5,6 +5,7 @@ use crate::{
         page::ClaimedPage,
         uaccess::{copy_from_user_slice, copy_to_user_slice},
     },
+    process::inotify::notify_modify,
 };
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
@@ -88,11 +89,17 @@ impl FileOps for RegFile {
             buf = buf.add_bytes(bytes_written);
         }
 
+        if total_bytes_written > 0 {
+            notify_modify(self.inode.id()).await;
+        }
+
         Ok(total_bytes_written)
     }
 
     async fn truncate(&mut self, _ctx: &FileCtx, new_size: usize) -> Result<()> {
-        self.inode.truncate(new_size as _).await
+        self.inode.truncate(new_size as _).await?;
+        notify_modify(self.inode.id()).await;
+        Ok(())
     }
 
     fn poll_read_ready(&self) -> Pin<Box<dyn Future<Output = Result<()>> + 'static + Send>> {
