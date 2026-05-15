@@ -36,6 +36,7 @@ use crate::{
             iov::{sys_preadv, sys_preadv2, sys_pwritev, sys_pwritev2, sys_readv, sys_writev},
             listxattr::{sys_flistxattr, sys_listxattr, sys_llistxattr},
             mount::sys_mount,
+            pivot_root::sys_pivot_root,
             removexattr::{sys_fremovexattr, sys_lremovexattr, sys_removexattr},
             rw::{sys_pread64, sys_pwrite64, sys_read, sys_write},
             seek::sys_lseek,
@@ -45,6 +46,7 @@ use crate::{
             statfs::{sys_fstatfs, sys_statfs},
             sync::{sys_fdatasync, sys_fsync, sys_sync, sys_syncfs},
             trunc::{sys_ftruncate, sys_truncate},
+            umount::sys_umount2,
         },
     },
     kernel::{
@@ -71,9 +73,9 @@ use crate::{
         caps::{sys_capget, sys_capset},
         clone::sys_clone,
         creds::{
-            sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_getsid,
-            sys_gettid, sys_getuid, sys_setfsgid, sys_setfsuid, sys_setgid, sys_setregid,
-            sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid,
+            sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getresgid, sys_getresuid,
+            sys_getsid, sys_gettid, sys_getuid, sys_setfsgid, sys_setfsuid, sys_setgid,
+            sys_setregid, sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid,
         },
         epoll::{sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait},
         exec::sys_execve,
@@ -284,6 +286,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             )
             .await
         }
+        0x27 => sys_umount2(&ctx, TUA::from_value(arg1 as _), arg2 as _).await,
         0x28 => {
             sys_mount(
                 &ctx,
@@ -295,6 +298,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             )
             .await
         }
+        0x29 => sys_pivot_root(&ctx, TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x2b => sys_statfs(&ctx, TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x2c => sys_fstatfs(&ctx, arg1.into(), TUA::from_value(arg2 as _)).await,
         0x2d => sys_truncate(&ctx, TUA::from_value(arg1 as _), arg2 as _).await,
@@ -616,6 +620,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x9b => sys_getpgid(&ctx, arg1 as _),
         0x9c => sys_getsid(&ctx).await,
         0x9d => sys_setsid(&ctx).await,
+        0x9e => sys_getgroups(&ctx, arg1 as _, TUA::from_value(arg2 as _)).map_err(|e| match e {}),
         0xa0 => sys_uname(TUA::from_value(arg1 as _)).await,
         0xa1 => sys_sethostname(&ctx, TUA::from_value(arg1 as _), arg2 as _).await,
         0xa3 => Err(KernelError::InvalidValue),

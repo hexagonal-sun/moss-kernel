@@ -109,6 +109,48 @@ fn test_chroot() {
 
 register_test!(test_chroot);
 
+fn test_mount_umount() {
+    use std::path::Path;
+
+    let pid = unsafe { libc::getpid() };
+    let mount_point = format!("/tmp/mount_umount_test_{pid}");
+    let test_file = format!("{mount_point}/hello.txt");
+    let c_mount_point = CString::new(mount_point.clone()).unwrap();
+    let c_source = CString::new("tmpfs").unwrap();
+    let c_type = CString::new("tmpfs").unwrap();
+
+    fs::create_dir(&mount_point).expect("Failed to create mount point");
+
+    unsafe {
+        if libc::mount(
+            c_source.as_ptr(),
+            c_mount_point.as_ptr(),
+            c_type.as_ptr(),
+            0,
+            std::ptr::null(),
+        ) != 0
+        {
+            panic!("mount failed: {}", std::io::Error::last_os_error());
+        }
+    }
+
+    fs::write(&test_file, b"hello").expect("Failed to write file on mounted fs");
+    assert!(Path::new(&test_file).exists());
+
+    unsafe {
+        if libc::umount(c_mount_point.as_ptr()) != 0 {
+            panic!("umount failed: {}", std::io::Error::last_os_error());
+        }
+    }
+
+    assert!(!Path::new(&test_file).exists());
+    assert_eq!(fs::read_dir(&mount_point).unwrap().count(), 0);
+
+    fs::remove_dir(&mount_point).expect("Failed to remove mount point");
+}
+
+register_test!(test_mount_umount);
+
 fn test_chmod() {
     let dir_path = "/tmp/chmod_test";
     let c_dir_path = CString::new(dir_path).unwrap();
