@@ -54,7 +54,7 @@ use crate::{
     memory::{
         brk::sys_brk,
         mincore::sys_mincore,
-        mmap::{sys_mmap, sys_mprotect, sys_munmap},
+        mmap::{sys_mmap, sys_mprotect, sys_mremap, sys_munmap},
         process_vm::sys_process_vm_readv,
     },
     net::syscalls::{
@@ -674,6 +674,17 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             .await
             .map_err(|e| match e {}),
         0xd7 => sys_munmap(&ctx, VA::from_value(arg1 as usize), arg2 as _).await,
+        0xd8 => {
+            sys_mremap(
+                &ctx,
+                VA::from_value(arg1 as usize),
+                arg2 as _,
+                arg3 as _,
+                arg4,
+                VA::from_value(arg5 as usize),
+            )
+            .await
+        }
         0xdc => {
             sys_clone(
                 &ctx,
