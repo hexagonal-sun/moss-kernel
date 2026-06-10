@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
+import shutil
 import subprocess
+
+def find_objcopy():
+    for candidate in ["aarch64-none-elf-objcopy", "llvm-objcopy", "rust-objcopy"]:
+        if shutil.which(candidate):
+            return candidate
+    raise FileNotFoundError("No objcopy found. Install gcc-aarch64-embedded or llvm.")
 
 parser = argparse.ArgumentParser(description="QEMU runner")
 
@@ -23,7 +30,7 @@ args = parser.parse_args()
 elf_executable = args.elf_executable
 bin_executable_location = elf_executable.replace(".elf", "") + ".bin"
 # Convert the ELF executable to a binary format
-subprocess.run(["aarch64-none-elf-objcopy", "-O", "binary", elf_executable, bin_executable_location], check=True)
+subprocess.run([find_objcopy(), "-O", "binary", elf_executable, bin_executable_location], check=True)
 
 append_args = ""
 
