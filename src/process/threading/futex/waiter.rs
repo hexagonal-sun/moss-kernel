@@ -72,9 +72,6 @@ impl WaiterCell {
 
     /// Updates the location after the entry moved to `queue`. Caller must
     /// hold the locks of both the source and destination queues.
-    // TODO(futex2): expect(dead_code) is temporary until sys_futex_requeue
-    // lands.
-    #[expect(dead_code)]
     pub fn requeue_to(&self, queue: FutexQueue, token: u64) {
         self.state.lock_save_irq().location = Some((queue, token));
     }

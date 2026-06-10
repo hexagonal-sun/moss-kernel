@@ -103,7 +103,11 @@ use crate::{
             umask::sys_umask,
             wait::{sys_wait4, sys_waitid},
         },
-        threading::{futex::sys_futex, sys_set_robust_list, sys_set_tid_address},
+        threading::{
+            futex::futex2::{sys_futex_requeue, sys_futex_wait, sys_futex_waitv, sys_futex_wake},
+            futex::sys_futex,
+            sys_set_robust_list, sys_set_tid_address,
+        },
     },
     sched::{
         self,
@@ -824,6 +828,40 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             .await
         }
         0x1b8 => Ok(0), // process_madvise is a no-op
+        0x1c1 => {
+            sys_futex_waitv(
+                &ctx,
+                TUA::from_value(arg1 as _),
+                arg2 as _,
+                arg3 as _,
+                TUA::from_value(arg4 as _),
+                arg5 as _,
+            )
+            .await
+        }
+        0x1c6 => sys_futex_wake(&ctx, arg1, arg2, arg3 as _, arg4 as _),
+        0x1c7 => {
+            sys_futex_wait(
+                &ctx,
+                arg1,
+                arg2,
+                arg3,
+                arg4 as _,
+                TUA::from_value(arg5 as _),
+                arg6 as _,
+            )
+            .await
+        }
+        0x1c8 => {
+            sys_futex_requeue(
+                &ctx,
+                TUA::from_value(arg1 as _),
+                arg2 as _,
+                arg3 as _,
+                arg4 as _,
+            )
+            .await
+        }
         _ => panic!(
             "Unhandled syscall 0x{nr:x}, PC: 0x{:x}",
             ctx.task().ctx.user().elr_el1

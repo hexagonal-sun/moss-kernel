@@ -15,6 +15,7 @@ use libkernel::{
 use wait::{ParsedWaiter, futex_wait_multi};
 use waiter::{FutexQueue, WaiterCell};
 
+pub mod futex2;
 pub mod key;
 mod wait;
 mod waiter;
@@ -79,8 +80,6 @@ pub fn wake_key(nr_wake: usize, key: FutexKey, mask: u64) -> usize {
 ///
 /// Wake masks are ignored, matching Linux requeue semantics. Returns the
 /// number of waiters woken.
-// TODO(futex2): expect(dead_code) is temporary until sys_futex_requeue lands.
-#[expect(dead_code)]
 pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: usize) -> usize {
     if key1 == key2 {
         // Requeueing onto the same queue is a no-op; just wake.
