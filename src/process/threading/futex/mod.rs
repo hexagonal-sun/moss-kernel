@@ -1,25 +1,22 @@
 use crate::clock::realtime::date;
 use crate::clock::timespec::TimeSpec;
-use crate::drivers::timer::sleep;
 use crate::process::thread_group::signal::{InterruptResult, Interruptable};
 use crate::sched::syscall_ctx::ProcessCtx;
 use crate::sync::{OnceLock, SpinLock};
-use alloc::boxed::Box;
+use alloc::vec::Vec;
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 use core::time::Duration;
-use futures::FutureExt;
 use key::FutexKey;
 use libkernel::{
     error::{KernelError, Result},
     memory::address::TUA,
     sync::waker_set::WakerSet,
 };
-use wait::FutexWait;
+use wait::{ParsedWaiter, futex_wait_multi};
+use waiter::{FutexQueue, WaiterCell};
 
 pub mod key;
 mod wait;
-// TODO(futex2): expect(dead_code) is temporary until wake/requeue use WaiterCell.
-#[expect(dead_code)]
 mod waiter;
 
 const FUTEX_WAIT: i32 = 0;
@@ -28,7 +25,7 @@ const FUTEX_WAIT_BITSET: i32 = 9;
 const FUTEX_WAKE_BITSET: i32 = 10;
 const FUTEX_PRIVATE_FLAG: i32 = 128;
 
-type FutexTable = BTreeMap<FutexKey, Arc<SpinLock<WakerSet<u32>>>>;
+type FutexTable = BTreeMap<FutexKey, FutexQueue>;
 
 /// Global futex table mapping a futex key to its wait queue.
 #[allow(clippy::type_complexity)]
@@ -38,7 +35,7 @@ fn futex_table() -> &'static SpinLock<FutexTable> {
     FUTEX_TABLE.get_or_init(|| SpinLock::new(BTreeMap::new()))
 }
 
-fn get_or_create_queue(key: FutexKey) -> Arc<SpinLock<WakerSet<u32>>> {
+fn get_or_create_queue(key: FutexKey) -> FutexQueue {
     let table = futex_table();
 
     table
@@ -48,20 +45,90 @@ fn get_or_create_queue(key: FutexKey) -> Arc<SpinLock<WakerSet<u32>>> {
         .clone()
 }
 
-pub fn wake_key(nr_wake: usize, key: FutexKey, bitmask: u32) -> usize {
-    let mut woke = 0;
+pub fn wake_key(nr_wake: usize, key: FutexKey, mask: u64) -> usize {
+    let mut wakers = Vec::new();
 
     let table = futex_table();
 
     if let Some(waitq_arc) = table.lock_save_irq().get(&key).cloned() {
         let mut waitq = waitq_arc.lock_save_irq();
-        for _ in 0..nr_wake {
-            if waitq.wake_if(|x| *x & bitmask != 0) {
-                woke += 1;
-            } else {
-                break;
+
+        while wakers.len() < nr_wake {
+            match waitq.take_if(|cell: &Arc<WaiterCell>| cell.mask & mask != 0) {
+                Some((waker, cell)) => {
+                    cell.mark_woken();
+                    wakers.push(waker);
+                }
+                None => break,
             }
         }
+    }
+
+    // Wake outside the queue lock; a woken task may run immediately and
+    // re-take futex locks.
+    let woke = wakers.len();
+    for waker in wakers {
+        waker.wake();
+    }
+
+    woke
+}
+
+/// Wakes up to `nr_wake` waiters on `key1`, then moves up to `nr_requeue` of
+/// the remaining waiters onto `key2`'s queue without waking them.
+///
+/// Wake masks are ignored, matching Linux requeue semantics. Returns the
+/// number of waiters woken.
+// TODO(futex2): expect(dead_code) is temporary until sys_futex_requeue lands.
+#[expect(dead_code)]
+pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: usize) -> usize {
+    if key1 == key2 {
+        // Requeueing onto the same queue is a no-op; just wake.
+        return wake_key(nr_wake, key1, u64::MAX);
+    }
+
+    let q1_arc = get_or_create_queue(key1);
+    let q2_arc = get_or_create_queue(key2);
+
+    let mut wakers = Vec::new();
+
+    {
+        // Lock both queues in key order so concurrent requeues can't
+        // deadlock.
+        let (mut q1, mut q2) = if key1 < key2 {
+            let q1 = q1_arc.lock_save_irq();
+            let q2 = q2_arc.lock_save_irq();
+            (q1, q2)
+        } else {
+            let q2 = q2_arc.lock_save_irq();
+            let q1 = q1_arc.lock_save_irq();
+            (q1, q2)
+        };
+
+        while wakers.len() < nr_wake {
+            match q1.take_first() {
+                Some((waker, cell)) => {
+                    cell.mark_woken();
+                    wakers.push(waker);
+                }
+                None => break,
+            }
+        }
+
+        for _ in 0..nr_requeue {
+            match q1.take_first() {
+                Some((waker, cell)) => {
+                    let token = q2.insert(waker, cell.clone());
+                    cell.requeue_to(q2_arc.clone(), token);
+                }
+                None => break,
+            }
+        }
+    }
+
+    let woke = wakers.len();
+    for waker in wakers {
+        waker.wake();
     }
 
     woke
@@ -74,24 +141,17 @@ async fn do_futex_wait(
     bitmask: u32,
     timeout: Option<Duration>,
 ) -> Result<usize> {
-    // Obtain (or create) the wait-queue for this futex word.
-    let slot = get_or_create_queue(key);
+    let waiter = ParsedWaiter {
+        key,
+        uaddr,
+        val,
+        mask: bitmask as u64,
+    };
 
     // Return 0 on success.
-    if let Some(dur) = timeout {
-        let mut wait = FutexWait::new(uaddr, val, bitmask, slot).fuse();
-        let mut sleep = Box::pin(sleep(dur).fuse());
-        futures::select_biased! {
-            res = wait => {
-                res.map(|_| 0)
-            },
-            _ = sleep => {
-                Err(KernelError::TimedOut)
-            }
-        }
-    } else {
-        FutexWait::new(uaddr, val, bitmask, slot).await.map(|_| 0)
-    }
+    futex_wait_multi(core::slice::from_ref(&waiter), timeout)
+        .await
+        .map(|_| 0)
 }
 
 pub async fn sys_futex(
@@ -119,7 +179,9 @@ pub async fn sys_futex(
             } else {
                 let timeout = TimeSpec::copy_from_user(timeout).await?;
                 if matches!(cmd, FUTEX_WAIT_BITSET) {
-                    Some(Duration::from(timeout) - date())
+                    // The deadline is absolute and may already have passed;
+                    // a zero timeout still performs the value check below.
+                    Some(Duration::from(timeout).saturating_sub(date()))
                 } else {
                     Some(Duration::from(timeout))
                 }
@@ -143,7 +205,11 @@ pub async fn sys_futex(
         FUTEX_WAKE | FUTEX_WAKE_BITSET => Ok(wake_key(
             val as _,
             key,
-            if cmd == FUTEX_WAKE { u32::MAX } else { val3 },
+            if cmd == FUTEX_WAKE {
+                u32::MAX as u64
+            } else {
+                val3 as u64
+            },
         )),
 
         _ => Err(KernelError::NotSupported),
