@@ -18,6 +18,9 @@ use wait::FutexWait;
 
 pub mod key;
 mod wait;
+// TODO(futex2): expect(dead_code) is temporary until wake/requeue use WaiterCell.
+#[expect(dead_code)]
+mod waiter;
 
 const FUTEX_WAIT: i32 = 0;
 const FUTEX_WAKE: i32 = 1;
