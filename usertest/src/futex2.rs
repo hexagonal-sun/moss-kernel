@@ -467,6 +467,156 @@ fn test_futex2_requeue() {
 
 register_test!(test_futex2_requeue);
 
+fn test_futex2_wake_n_of_m() {
+    // Six waiters park on one futex; waking 2 must wake exactly 2 (the two
+    // oldest, FIFO), leaving 4. A final wake-all drains the rest.
+    const NR_THREADS: usize = 6;
+
+    let f = Arc::new(AtomicU32::new(0));
+    let woken = Arc::new(AtomicU32::new(0));
+
+    let threads: Vec<_> = (0..NR_THREADS)
+        .map(|_| {
+            let f = f.clone();
+            let woken = woken.clone();
+            thread::spawn(move || {
+                let ret = unsafe {
+                    futex2_wait(
+                        f.as_ptr() as *const u32,
+                        0,
+                        MATCH_ANY,
+                        FUTEX2_SIZE_U32,
+                        std::ptr::null(),
+                        libc::CLOCK_MONOTONIC,
+                    )
+                };
+                if ret != 0 {
+                    panic!("futex_wait returned {ret}, errno {}", errno());
+                }
+                woken.fetch_add(1, Ordering::SeqCst);
+            })
+        })
+        .collect();
+
+    thread::sleep(Duration::from_millis(150));
+
+    unsafe {
+        let ret = futex2_wake(f.as_ptr() as *const u32, MATCH_ANY, 2, FUTEX2_SIZE_U32);
+        if ret != 2 {
+            panic!("wake nr=2 woke {ret}, expected 2");
+        }
+    }
+
+    thread::sleep(Duration::from_millis(100));
+    let woken_now = woken.load(Ordering::SeqCst);
+    if woken_now != 2 {
+        panic!("{woken_now} threads ran after wake nr=2, expected 2");
+    }
+
+    unsafe {
+        let ret = futex2_wake(f.as_ptr() as *const u32, MATCH_ANY, 64, FUTEX2_SIZE_U32);
+        if ret != NR_THREADS as i64 - 2 {
+            panic!("wake-all woke {ret}, expected {}", NR_THREADS - 2);
+        }
+    }
+
+    for t in threads {
+        t.join().expect("waiter thread panicked");
+    }
+}
+
+register_test!(test_futex2_wake_n_of_m);
+
+fn test_futex2_wake_nr_zero() {
+    // Waking 0 waiters is a no-op that returns 0, never EFAULT, even when the
+    // address has no queue. Guards against computing the key (and faulting on
+    // a shared translation) before the nr<=0 short-circuit.
+    let word: u32 = 0;
+    let addr = &word as *const u32;
+
+    unsafe {
+        let ret = futex2_wake(addr, MATCH_ANY, 0, FUTEX2_SIZE_U32);
+        if ret != 0 {
+            panic!("wake nr=0 returned {ret}, errno {}", errno());
+        }
+
+        // Negative count is likewise a 0-wake no-op (not EINVAL).
+        let ret = futex2_wake(addr, MATCH_ANY, -1, FUTEX2_SIZE_U32);
+        if ret != 0 {
+            panic!("wake nr=-1 returned {ret}, errno {}", errno());
+        }
+    }
+}
+
+register_test!(test_futex2_wake_nr_zero);
+
+fn test_futex2_wake_no_waiters() {
+    // Waking an address nobody has ever waited on returns 0.
+    let word: u32 = 0;
+    let addr = &word as *const u32;
+
+    unsafe {
+        let ret = futex2_wake(addr, MATCH_ANY, 64, FUTEX2_SIZE_U32 | FUTEX2_PRIVATE);
+        if ret != 0 {
+            panic!("wake of un-waited address woke {ret}, expected 0");
+        }
+    }
+}
+
+register_test!(test_futex2_wake_no_waiters);
+
+fn test_futex2_requeue_to_self() {
+    // Requeueing a futex onto itself (uaddr1 == uaddr2) is rejected with
+    // EINVAL on Linux. moss currently short-circuits this to a plain wake and
+    // returns success, silently dropping nr_requeue -- this test encodes the
+    // Linux contract and is expected to fail until that is fixed.
+    let f = Arc::new(AtomicU32::new(0));
+    let woken = Arc::new(AtomicU32::new(0));
+
+    let f1 = f.clone();
+    let woken1 = woken.clone();
+    let t = thread::spawn(move || {
+        let ret = unsafe {
+            futex2_wait(
+                f1.as_ptr() as *const u32,
+                0,
+                MATCH_ANY,
+                FUTEX2_SIZE_U32,
+                std::ptr::null(),
+                libc::CLOCK_MONOTONIC,
+            )
+        };
+        if ret != 0 {
+            panic!("futex_wait returned {ret}, errno {}", errno());
+        }
+        woken1.fetch_add(1, Ordering::SeqCst);
+    });
+
+    thread::sleep(Duration::from_millis(100));
+
+    let same = f.as_ptr() as *const u32;
+    let pair = [
+        FutexWaitv::new(same, 0, FUTEX2_SIZE_U32),
+        FutexWaitv::new(same, 0, FUTEX2_SIZE_U32),
+    ];
+
+    unsafe {
+        let ret = futex2_requeue(pair.as_ptr(), 0, 1, 1);
+        if ret != -1 || errno() != libc::EINVAL {
+            panic!("requeue-to-self: ret {ret}, errno {}, expected EINVAL", errno());
+        }
+    }
+
+    // The waiter is still parked (requeue was rejected); wake it so the
+    // thread can exit cleanly.
+    unsafe {
+        futex2_wake(same, MATCH_ANY, 1, FUTEX2_SIZE_U32);
+    }
+    t.join().expect("waiter thread panicked");
+}
+
+register_test!(test_futex2_requeue_to_self);
+
 fn test_futex2_requeue_timeout_race() {
     // Requeue waiters that are about to time out: their timeout-path
     // unregistration must find them on the destination queue.
