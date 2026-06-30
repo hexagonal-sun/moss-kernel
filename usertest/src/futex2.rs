@@ -603,7 +603,10 @@ fn test_futex2_requeue_to_self() {
     unsafe {
         let ret = futex2_requeue(pair.as_ptr(), 0, 1, 1);
         if ret != -1 || errno() != libc::EINVAL {
-            panic!("requeue-to-self: ret {ret}, errno {}, expected EINVAL", errno());
+            panic!(
+                "requeue-to-self: ret {ret}, errno {}, expected EINVAL",
+                errno()
+            );
         }
     }
 

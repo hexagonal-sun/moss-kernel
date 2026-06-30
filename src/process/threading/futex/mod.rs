@@ -135,7 +135,10 @@ pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: u
 /// Waits on a single futex word, the common case shared by the legacy
 /// `FUTEX_WAIT` ops and futex2 `sys_futex_wait`. Interruption (and recovery of
 /// a wake that raced a signal) is handled inside [`futex_wait_multi`].
-pub(super) async fn futex_wait_single(waiter: ParsedWaiter, timeout: Option<Deadline>) -> Result<usize> {
+pub(super) async fn futex_wait_single(
+    waiter: ParsedWaiter,
+    timeout: Option<Deadline>,
+) -> Result<usize> {
     // Return 0 on success.
     futex_wait_multi(core::slice::from_ref(&waiter), timeout)
         .await

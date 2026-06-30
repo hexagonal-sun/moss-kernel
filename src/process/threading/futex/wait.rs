@@ -170,12 +170,8 @@ pub async fn futex_wait_multi(
             // race window, so `finish()` reports it and we return success in
             // that case rather than losing the wake. Otherwise it is the
             // genuine timeout / interrupt result.
-            InterruptResult::Uninterrupted(_) => {
-                guard.finish().ok_or(KernelError::TimedOut)
-            }
-            InterruptResult::Interrupted => {
-                guard.finish().ok_or(KernelError::Interrupted)
-            }
+            InterruptResult::Uninterrupted(_) => guard.finish().ok_or(KernelError::TimedOut),
+            InterruptResult::Interrupted => guard.finish().ok_or(KernelError::Interrupted),
         };
     }
 }
