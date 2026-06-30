@@ -14,7 +14,7 @@ use libkernel::{
         pg_descriptors::{L3Descriptor, MemoryType},
         pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
         pg_tear_down::tear_down_address_space,
-        pg_walk::{get_pte, walk_and_modify_region},
+        pg_walk::{translate as translate_va, walk_and_modify_region},
     },
     error::{KernelError, MapError, Result},
     memory::{
@@ -137,16 +137,15 @@ impl UserAddressSpace for Arm64ProcessAddressSpace {
     }
 
     fn translate(&self, va: VA) -> Option<PageInfo> {
-        let pte = get_pte(
-            self.l0_table,
-            va.page_aligned(),
-            &mut PageOffsetPgTableMapper {},
-        )
-        .unwrap()?;
+        let (region, offset, perms) =
+            translate_va(self.l0_table, va, &mut PageOffsetPgTableMapper {})
+                .ok()
+                .flatten()?;
+        let pa = region.start_address().add_bytes(offset);
 
         Some(PageInfo {
-            pfn: pte.mapped_address()?.to_pfn(),
-            perms: pte.permissions()?,
+            pfn: pa.to_pfn(),
+            perms,
         })
     }
 

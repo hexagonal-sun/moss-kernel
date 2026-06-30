@@ -328,6 +328,15 @@ pub fn sys_setfsgid(ctx: &ProcessCtx, _new_id: usize) -> core::result::Result<us
     sys_getgid(ctx)
 }
 
+pub fn sys_getgroups(
+    _ctx: &ProcessCtx,
+    _size: usize,
+    _list: TUA<Gid>,
+) -> core::result::Result<usize, Infallible> {
+    // Supplementary groups are not implemented yet.
+    Ok(0)
+}
+
 pub fn sys_gettid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
     let tid: u32 = ctx.shared().tid.0;
 
