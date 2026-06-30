@@ -41,11 +41,6 @@ impl Deadline {
         }
     }
 
-    /// Returns `true` if the deadline has already passed on its clock.
-    pub fn has_passed(self) -> bool {
-        self.clock_now() >= self.target()
-    }
-
     /// Sleeps until this deadline.
     ///
     /// The monotonic clock advances uniformly, so a single relative sleep is
