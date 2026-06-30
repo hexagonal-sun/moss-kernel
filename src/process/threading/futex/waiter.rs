@@ -27,7 +27,8 @@ pub type FutexQueue = Arc<SpinLock<WakerSet<Arc<WaiterCell>>>>;
 /// alias a new registration.
 pub struct WaiterCell {
     /// Wake mask; a wake with mask `m` wakes this waiter iff `mask & m != 0`.
-    pub mask: u64,
+    /// Only 32-bit futexes exist, so a 32-bit mask is sufficient.
+    pub mask: u32,
     state: SpinLock<CellState>,
 }
 
@@ -41,7 +42,7 @@ struct CellState {
 }
 
 impl WaiterCell {
-    pub fn new(mask: u64) -> Arc<Self> {
+    pub fn new(mask: u32) -> Arc<Self> {
         Arc::new(Self {
             mask,
             state: SpinLock::new(CellState {

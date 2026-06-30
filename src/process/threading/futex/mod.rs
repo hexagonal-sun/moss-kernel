@@ -1,6 +1,5 @@
 use crate::clock::realtime::date;
 use crate::clock::timespec::TimeSpec;
-use crate::process::thread_group::signal::{InterruptResult, Interruptable};
 use crate::sched::syscall_ctx::ProcessCtx;
 use crate::sync::{OnceLock, SpinLock};
 use alloc::vec::Vec;
@@ -46,7 +45,7 @@ fn get_or_create_queue(key: FutexKey) -> FutexQueue {
         .clone()
 }
 
-pub fn wake_key(nr_wake: usize, key: FutexKey, mask: u64) -> usize {
+pub fn wake_key(nr_wake: usize, key: FutexKey, mask: u32) -> usize {
     let mut wakers = Vec::new();
 
     let table = futex_table();
@@ -81,10 +80,9 @@ pub fn wake_key(nr_wake: usize, key: FutexKey, mask: u64) -> usize {
 /// Wake masks are ignored, matching Linux requeue semantics. Returns the
 /// number of waiters woken.
 pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: usize) -> usize {
-    if key1 == key2 {
-        // Requeueing onto the same queue is a no-op; just wake.
-        return wake_key(nr_wake, key1, u64::MAX);
-    }
+    // Callers must reject `key1 == key2` (requeue-to-self) before this point;
+    // the two-queue locking below assumes distinct queues.
+    debug_assert_ne!(key1, key2);
 
     let q1_arc = get_or_create_queue(key1);
     let q2_arc = get_or_create_queue(key2);
@@ -133,20 +131,10 @@ pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: u
     woke
 }
 
-async fn do_futex_wait(
-    key: FutexKey,
-    uaddr: TUA<u32>,
-    val: u32,
-    bitmask: u32,
-    timeout: Option<Duration>,
-) -> Result<usize> {
-    let waiter = ParsedWaiter {
-        key,
-        uaddr,
-        val,
-        mask: bitmask as u64,
-    };
-
+/// Waits on a single futex word, the common case shared by the legacy
+/// `FUTEX_WAIT` ops and futex2 `sys_futex_wait`. Interruption (and recovery of
+/// a wake that raced a signal) is handled inside [`futex_wait_multi`].
+pub(super) async fn futex_wait_single(waiter: ParsedWaiter, timeout: Option<Duration>) -> Result<usize> {
     // Return 0 on success.
     futex_wait_multi(core::slice::from_ref(&waiter), timeout)
         .await
@@ -186,30 +174,34 @@ pub async fn sys_futex(
                 }
             };
 
-            match do_futex_wait(
+            let bitmask = if cmd == FUTEX_WAIT { u32::MAX } else { val3 };
+
+            // A zero bitset can never be matched by any wake, so the waiter
+            // would be unwakeable; reject it as Linux does.
+            if matches!(cmd, FUTEX_WAIT_BITSET) && bitmask == 0 {
+                return Err(KernelError::InvalidValue);
+            }
+
+            let waiter = ParsedWaiter {
                 key,
                 uaddr,
                 val,
-                if cmd == FUTEX_WAIT { u32::MAX } else { val3 },
-                timeout,
-            )
-            .interruptable()
-            .await
-            {
-                InterruptResult::Interrupted => Err(KernelError::Interrupted),
-                InterruptResult::Uninterrupted(v) => v,
-            }
+                mask: bitmask,
+            };
+
+            futex_wait_single(waiter, timeout).await
         }
 
-        FUTEX_WAKE | FUTEX_WAKE_BITSET => Ok(wake_key(
-            val as _,
-            key,
-            if cmd == FUTEX_WAKE {
-                u32::MAX as u64
-            } else {
-                val3 as u64
-            },
-        )),
+        FUTEX_WAKE | FUTEX_WAKE_BITSET => {
+            let mask = if cmd == FUTEX_WAKE { u32::MAX } else { val3 };
+
+            // A zero bitset matches no waiter; reject it as Linux does.
+            if matches!(cmd, FUTEX_WAKE_BITSET) && mask == 0 {
+                return Err(KernelError::InvalidValue);
+            }
+
+            Ok(wake_key(val as _, key, mask))
+        }
 
         _ => Err(KernelError::NotSupported),
     }

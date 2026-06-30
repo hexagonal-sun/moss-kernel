@@ -3,7 +3,7 @@ use libkernel::error::{KernelError, Result};
 use libkernel::memory::address::{TUA, VA};
 use libkernel::memory::proc_vm::address_space::UserAddressSpace;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug)]
 pub enum FutexKey {
     Private { pid: u32, addr: usize },
     Shared { frame: usize, offset: usize },

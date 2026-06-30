@@ -13,12 +13,11 @@ use libkernel::memory::address::TUA;
 
 use super::key::FutexKey;
 use super::wait::{ParsedWaiter, futex_wait_multi};
-use super::{requeue_key, wake_key};
+use super::{futex_wait_single, requeue_key, wake_key};
 use crate::clock::realtime::date;
 use crate::clock::timespec::TimeSpec;
 use crate::drivers::timer::uptime;
 use crate::memory::uaccess::{UserCopyable, copy_obj_array_from_user};
-use crate::process::thread_group::signal::{InterruptResult, Interruptable};
 use crate::sched::syscall_ctx::ProcessCtx;
 
 const FUTEX2_SIZE_U32: u32 = 0x02;
@@ -136,16 +135,10 @@ pub async fn sys_futex_wait(
         key,
         uaddr,
         val: val as u32,
-        mask,
+        mask: mask as u32,
     };
 
-    match futex_wait_multi(core::slice::from_ref(&waiter), timeout)
-        .interruptable()
-        .await
-    {
-        InterruptResult::Interrupted => Err(KernelError::Interrupted),
-        InterruptResult::Uninterrupted(res) => res.map(|_| 0),
-    }
+    futex_wait_single(waiter, timeout).await
 }
 
 /// `futex_wake(uaddr, mask, nr, flags)`: wake up to `nr` waiters whose masks
@@ -163,13 +156,15 @@ pub fn sys_futex_wake(
         return Err(KernelError::InvalidValue);
     }
 
-    let (key, _) = make_key(ctx, uaddr, private)?;
-
+    // Waking zero (or fewer) waiters is a no-op; short-circuit before
+    // computing the key, which can fault when translating a shared address.
     if nr <= 0 {
         return Ok(0);
     }
 
-    Ok(wake_key(nr as usize, key, mask))
+    let (key, _) = make_key(ctx, uaddr, private)?;
+
+    Ok(wake_key(nr as usize, key, mask as u32))
 }
 
 /// `futex_waitv(waiters, nr_futexes, flags, timeout, clockid)`: wait on up to
@@ -209,14 +204,11 @@ pub async fn sys_futex_waitv(
             key,
             uaddr,
             val: entry.val as u32,
-            mask: FUTEX_BITSET_MATCH_ANY,
+            mask: FUTEX_BITSET_MATCH_ANY as u32,
         });
     }
 
-    match futex_wait_multi(&waiters, timeout).interruptable().await {
-        InterruptResult::Interrupted => Err(KernelError::Interrupted),
-        InterruptResult::Uninterrupted(res) => res,
-    }
+    futex_wait_multi(&waiters, timeout).await
 }
 
 /// `futex_requeue(waiters, flags, nr_wake, nr_requeue)`: wake up to `nr_wake`
@@ -241,20 +233,29 @@ pub async fn sys_futex_requeue(
 
     let entries = copy_obj_array_from_user(uwaiters, 2).await?;
 
-    let mut keys = [FutexKey::Private { pid: 0, addr: 0 }; 2];
-    for (key, entry) in keys.iter_mut().zip(&entries) {
+    let resolve = |entry: &FutexWaitvUser| -> Result<FutexKey> {
         if entry.reserved != 0 {
             return Err(KernelError::InvalidValue);
         }
 
         // `val` is unused by this op and deliberately not validated.
         let private = check_flags(entry.flags)?;
-        (*key, _) = make_key(ctx, entry.uaddr, private)?;
+        let (key, _) = make_key(ctx, entry.uaddr, private)?;
+        Ok(key)
+    };
+
+    let key1 = resolve(&entries[0])?;
+    let key2 = resolve(&entries[1])?;
+
+    // Requeueing a futex onto itself is invalid; this also catches distinct
+    // virtual addresses that alias the same shared frame.
+    if key1 == key2 {
+        return Err(KernelError::InvalidValue);
     }
 
     Ok(requeue_key(
-        keys[0],
-        keys[1],
+        key1,
+        key2,
         nr_wake as usize,
         nr_requeue as usize,
     ))

@@ -15,6 +15,7 @@ use super::key::FutexKey;
 use super::waiter::WaiterCell;
 use crate::drivers::timer::sleep;
 use crate::memory::uaccess::{copy_from_user, try_copy_from_user};
+use crate::process::thread_group::signal::{InterruptResult, Interruptable};
 
 /// One decoded wait request: wait on `key` while `*uaddr == val`, wakeable by
 /// any wake whose mask overlaps `mask`.
@@ -22,7 +23,7 @@ pub struct ParsedWaiter {
     pub key: FutexKey,
     pub uaddr: TUA<u32>,
     pub val: u32,
-    pub mask: u64,
+    pub mask: u32,
 }
 
 /// Owns the queue registrations of an in-progress multi-wait, so that
@@ -138,33 +139,45 @@ pub async fn futex_wait_multi(
             Setup::Queued => {}
         }
 
-        return match timeout {
-            None => {
-                let woken = poll_fn(|_| guard.poll_woken()).await;
-                guard.finish();
-                Ok(woken)
-            }
+        // Wait for a wake or the timer. Interruption is handled here, while
+        // `guard` is still alive, so a wake consumed concurrently with a
+        // signal is recovered via `finish()` rather than lost to EINTR.
+        let woken = match timeout {
+            None => poll_fn(|_| guard.poll_woken()).interruptable().await,
             Some(dur) => {
-                let mut wait = poll_fn(|_| guard.poll_woken()).fuse();
-                let mut sleep_fut = Box::pin(sleep(dur).fuse());
+                let wait = poll_fn(|_| guard.poll_woken());
+                let sleep_fut = Box::pin(sleep(dur).fuse());
 
-                let woken = futures::select_biased! {
-                    idx = wait => Some(idx),
-                    _ = sleep_fut => None,
+                // Map the timer firing to a sentinel so the outer match can
+                // distinguish it from a real wake.
+                let timed = async move {
+                    let mut wait = wait.fuse();
+                    let mut sleep_fut = sleep_fut;
+                    futures::select_biased! {
+                        idx = wait => idx,
+                        _ = sleep_fut => usize::MAX,
+                    }
                 };
 
-                drop(wait);
+                timed.interruptable().await
+            }
+        };
 
-                match woken {
-                    Some(idx) => {
-                        guard.finish();
-                        Ok(idx)
-                    }
-                    // A wake may have landed between the timer firing and us
-                    // unregistering; finish() reports it so the wake isn't
-                    // lost.
-                    None => guard.finish().ok_or(KernelError::TimedOut),
-                }
+        return match woken {
+            // A real wake landed and was observed.
+            InterruptResult::Uninterrupted(idx) if idx != usize::MAX => {
+                guard.finish();
+                Ok(idx)
+            }
+            // Timer fired, or a signal arrived: a wake may have landed in the
+            // race window, so `finish()` reports it and we return success in
+            // that case rather than losing the wake. Otherwise it is the
+            // genuine timeout / interrupt result.
+            InterruptResult::Uninterrupted(_) => {
+                guard.finish().ok_or(KernelError::TimedOut)
+            }
+            InterruptResult::Interrupted => {
+                guard.finish().ok_or(KernelError::Interrupted)
             }
         };
     }
