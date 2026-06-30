@@ -1,5 +1,6 @@
-use crate::clock::realtime::date;
+use crate::clock::Deadline;
 use crate::clock::timespec::TimeSpec;
+use crate::drivers::timer::uptime;
 use crate::sched::syscall_ctx::ProcessCtx;
 use crate::sync::{OnceLock, SpinLock};
 use alloc::vec::Vec;
@@ -134,7 +135,7 @@ pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: u
 /// Waits on a single futex word, the common case shared by the legacy
 /// `FUTEX_WAIT` ops and futex2 `sys_futex_wait`. Interruption (and recovery of
 /// a wake that raced a signal) is handled inside [`futex_wait_multi`].
-pub(super) async fn futex_wait_single(waiter: ParsedWaiter, timeout: Option<Duration>) -> Result<usize> {
+pub(super) async fn futex_wait_single(waiter: ParsedWaiter, timeout: Option<Deadline>) -> Result<usize> {
     // Return 0 on success.
     futex_wait_multi(core::slice::from_ref(&waiter), timeout)
         .await
@@ -164,13 +165,14 @@ pub async fn sys_futex(
             let timeout = if timeout.is_null() {
                 None
             } else {
-                let timeout = TimeSpec::copy_from_user(timeout).await?;
+                let ts = Duration::from(TimeSpec::copy_from_user(timeout).await?);
                 if matches!(cmd, FUTEX_WAIT_BITSET) {
-                    // The deadline is absolute and may already have passed;
-                    // a zero timeout still performs the value check below.
-                    Some(Duration::from(timeout).saturating_sub(date()))
+                    // FUTEX_WAIT_BITSET takes an absolute realtime deadline.
+                    Some(Deadline::Realtime(ts))
                 } else {
-                    Some(Duration::from(timeout))
+                    // FUTEX_WAIT takes a relative timeout on the monotonic
+                    // clock; convert to an absolute monotonic deadline.
+                    Some(Deadline::Monotonic(uptime() + ts))
                 }
             };
 

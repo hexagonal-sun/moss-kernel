@@ -14,9 +14,8 @@ use libkernel::memory::address::TUA;
 use super::key::FutexKey;
 use super::wait::{ParsedWaiter, futex_wait_multi};
 use super::{futex_wait_single, requeue_key, wake_key};
-use crate::clock::realtime::date;
+use crate::clock::Deadline;
 use crate::clock::timespec::TimeSpec;
-use crate::drivers::timer::uptime;
 use crate::memory::uaccess::{UserCopyable, copy_obj_array_from_user};
 use crate::sched::syscall_ctx::ProcessCtx;
 
@@ -83,29 +82,26 @@ fn make_key(ctx: &ProcessCtx, uaddr: u64, private: bool) -> Result<(FutexKey, TU
     Ok((key, addr))
 }
 
-/// Converts a futex2 absolute timeout into a relative [`Duration`].
+/// Parses a futex2 absolute timeout into a clock-tagged [`Deadline`].
 ///
 /// The clockid is only validated when a timeout is supplied, matching Linux.
-/// A deadline already in the past yields a zero timeout; the futex value is
-/// still checked first, so `EAGAIN` takes precedence over `ETIMEDOUT`.
-///
-/// `CLOCK_REALTIME` deadlines are converted to a relative sleep up front, so
-/// a concurrent `clock_settime` does not retarget an in-progress wait (same
-/// simplification as the legacy `FUTEX_WAIT_BITSET` path).
-async fn abs_timeout(timeout: TUA<TimeSpec>, clockid: u32) -> Result<Option<Duration>> {
+/// The deadline keeps its clock so the wait can re-evaluate against the live
+/// clock; a `CLOCK_REALTIME` deadline therefore still fires at the right
+/// wall-clock instant if the clock is stepped during the wait.
+async fn abs_timeout(timeout: TUA<TimeSpec>, clockid: u32) -> Result<Option<Deadline>> {
     if timeout.is_null() {
         return Ok(None);
     }
 
     let deadline = Duration::from(TimeSpec::copy_from_user(timeout).await?);
 
-    let base = match clockid {
-        CLOCK_REALTIME => date(),
-        CLOCK_MONOTONIC => uptime(),
+    let deadline = match clockid {
+        CLOCK_REALTIME => Deadline::Realtime(deadline),
+        CLOCK_MONOTONIC => Deadline::Monotonic(deadline),
         _ => return Err(KernelError::InvalidValue),
     };
 
-    Ok(Some(deadline.saturating_sub(base)))
+    Ok(Some(deadline))
 }
 
 /// `futex_wait(uaddr, val, mask, flags, timeout, clockid)`: wait on a single

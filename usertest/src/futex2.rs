@@ -617,6 +617,60 @@ fn test_futex2_requeue_to_self() {
 
 register_test!(test_futex2_requeue_to_self);
 
+fn test_futex2_realtime_retarget() {
+    // A CLOCK_REALTIME wait with a far-future deadline must retarget when the
+    // wall clock is stepped forward past the deadline: the waiter should time
+    // out promptly rather than sleeping out the original (now-past) deadline.
+    let word = Arc::new(AtomicU32::new(0));
+    let word_clone = word.clone();
+
+    // Snapshot the current realtime so we can restore it afterwards.
+    let mut saved: libc::timespec = unsafe { std::mem::zeroed() };
+    unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut saved) };
+
+    let t = thread::spawn(move || {
+        // Deadline 10s out on the realtime clock.
+        let ts = abs_deadline(libc::CLOCK_REALTIME, 10_000);
+        let start = Instant::now();
+        let ret = unsafe {
+            futex2_wait(
+                word_clone.as_ptr() as *const u32,
+                0,
+                MATCH_ANY,
+                FUTEX2_SIZE_U32,
+                &ts,
+                libc::CLOCK_REALTIME,
+            )
+        };
+        if ret != -1 || errno() != libc::ETIMEDOUT {
+            panic!("realtime wait: ret {ret}, errno {}", errno());
+        }
+        // Must have woken well before the original 10s deadline.
+        if start.elapsed() > Duration::from_secs(5) {
+            panic!("realtime wait did not retarget after clock step");
+        }
+    });
+
+    // Let the waiter park, then step the wall clock 20s forward, past the
+    // waiter's deadline.
+    thread::sleep(Duration::from_millis(150));
+    let mut stepped = saved;
+    stepped.tv_sec += 20;
+    let ret = unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &stepped) };
+    if ret != 0 {
+        // Restore and surface the failure.
+        unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &saved) };
+        panic!("clock_settime failed: errno {}", errno());
+    }
+
+    t.join().expect("realtime waiter thread panicked");
+
+    // Restore the clock so later tests see a sane wall time.
+    unsafe { libc::clock_settime(libc::CLOCK_REALTIME, &saved) };
+}
+
+register_test!(test_futex2_realtime_retarget);
+
 fn test_futex2_requeue_timeout_race() {
     // Requeue waiters that are about to time out: their timeout-path
     // unregistration must find them on the destination queue.

@@ -1,9 +1,7 @@
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::future::poll_fn;
 use core::task::{Poll, Waker};
-use core::time::Duration;
 use futures::FutureExt;
 use libkernel::{
     error::{KernelError, Result},
@@ -13,7 +11,7 @@ use libkernel::{
 use super::get_or_create_queue;
 use super::key::FutexKey;
 use super::waiter::WaiterCell;
-use crate::drivers::timer::sleep;
+use crate::clock::Deadline;
 use crate::memory::uaccess::{copy_from_user, try_copy_from_user};
 use crate::process::thread_group::signal::{InterruptResult, Interruptable};
 
@@ -115,7 +113,7 @@ fn setup_all(waiters: &[ParsedWaiter], waker: &Waker, guard: &mut WaitGuard) -> 
 /// that counts as a successful wake rather than `EAGAIN`.
 pub async fn futex_wait_multi(
     waiters: &[ParsedWaiter],
-    timeout: Option<Duration>,
+    timeout: Option<Deadline>,
 ) -> Result<usize> {
     loop {
         let mut guard = WaitGuard::default();
@@ -144,15 +142,14 @@ pub async fn futex_wait_multi(
         // signal is recovered via `finish()` rather than lost to EINTR.
         let woken = match timeout {
             None => poll_fn(|_| guard.poll_woken()).interruptable().await,
-            Some(dur) => {
-                let wait = poll_fn(|_| guard.poll_woken());
-                let sleep_fut = Box::pin(sleep(dur).fuse());
-
+            Some(deadline) => {
                 // Map the timer firing to a sentinel so the outer match can
-                // distinguish it from a real wake.
-                let timed = async move {
-                    let mut wait = wait.fuse();
-                    let mut sleep_fut = sleep_fut;
+                // distinguish it from a real wake. The sleep future is pinned
+                // on the stack to avoid a per-wait heap allocation.
+                let timed = async {
+                    let mut wait = poll_fn(|_| guard.poll_woken()).fuse();
+                    let sleep_fut = deadline.sleep().fuse();
+                    let mut sleep_fut = core::pin::pin!(sleep_fut);
                     futures::select_biased! {
                         idx = wait => idx,
                         _ = sleep_fut => usize::MAX,
