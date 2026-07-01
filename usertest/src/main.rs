@@ -196,6 +196,55 @@ fn test_mincore() {
 
 register_test!(test_mincore);
 
+fn test_mremap() {
+    use std::ptr;
+
+    unsafe {
+        let page_size = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+        assert!(page_size > 0);
+
+        let addr = libc::mmap(
+            ptr::null_mut(),
+            2 * page_size,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        );
+        if addr == libc::MAP_FAILED {
+            panic!("mmap failed: {}", std::io::Error::last_os_error());
+        }
+
+        let base = addr as *mut u8;
+        ptr::write(base, 0x2a);
+        ptr::write(base.add(page_size), 0x5a);
+
+        let grown = libc::mremap(addr, 2 * page_size, 4 * page_size, libc::MREMAP_MAYMOVE);
+        if grown == libc::MAP_FAILED {
+            panic!("mremap grow failed: {}", std::io::Error::last_os_error());
+        }
+
+        let grown = grown as *mut u8;
+        assert_eq!(ptr::read(grown), 0x2a);
+        assert_eq!(ptr::read(grown.add(page_size)), 0x5a);
+        ptr::write(grown.add(3 * page_size), 0x7b);
+        assert_eq!(ptr::read(grown.add(3 * page_size)), 0x7b);
+
+        let shrunk = libc::mremap(grown.cast(), 4 * page_size, page_size, 0);
+        if shrunk == libc::MAP_FAILED {
+            panic!("mremap shrink failed: {}", std::io::Error::last_os_error());
+        }
+
+        let shrunk = shrunk as *mut u8;
+        assert_eq!(ptr::read(shrunk), 0x2a);
+
+        let rc = libc::munmap(shrunk.cast(), page_size);
+        assert_eq!(rc, 0, "munmap failed: {}", std::io::Error::last_os_error());
+    }
+}
+
+register_test!(test_mremap);
+
 fn test_itimer() {
     use libc::{ITIMER_REAL, itimerval};
     use std::mem::MaybeUninit;
