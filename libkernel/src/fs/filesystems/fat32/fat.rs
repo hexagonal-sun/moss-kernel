@@ -89,8 +89,10 @@ impl Fat {
             dev.read_at(bpb.sector_offset(sec), &mut buf).await?;
 
             fat.extend(
-                buf.chunks_exact(4)
-                    .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                buf.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|chunk| u32::from_le_bytes(*chunk))
                     .map(|v| v.into()),
             );
         }

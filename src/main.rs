@@ -2,7 +2,6 @@
 #![no_main]
 #![feature(used_with_arg)]
 #![feature(likely_unlikely)]
-#![feature(box_as_ptr)]
 #![allow(internal_features)]
 #![cfg_attr(test, feature(core_intrinsics))]
 #![feature(custom_test_frameworks)]
