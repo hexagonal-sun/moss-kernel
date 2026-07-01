@@ -84,9 +84,8 @@ macro_rules! ktest_impl {
                         )
                     };
                     match result {
-                        0 => crate::testing::TestResult::Ok,
-                        1 => crate::testing::TestResult::Failed,
-                        _ => unreachable!("catch_unwind should only return 0 or 1"),
+                        false => crate::testing::TestResult::Ok,
+                        true => crate::testing::TestResult::Failed,
                     }
                 },
             };
