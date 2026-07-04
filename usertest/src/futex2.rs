@@ -567,9 +567,9 @@ register_test!(test_futex2_wake_no_waiters);
 
 fn test_futex2_requeue_to_self() {
     // Requeueing a futex onto itself (uaddr1 == uaddr2) is rejected with
-    // EINVAL on Linux. moss currently short-circuits this to a plain wake and
-    // returns success, silently dropping nr_requeue -- this test encodes the
-    // Linux contract and is expected to fail until that is fixed.
+    // EINVAL, matching Linux. moss detects key1 == key2 before requeueing
+    // (this also catches distinct virtual addresses aliasing one shared
+    // frame); this test guards against that reject regressing.
     let f = Arc::new(AtomicU32::new(0));
     let woken = Arc::new(AtomicU32::new(0));
 
