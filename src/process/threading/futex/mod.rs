@@ -78,19 +78,37 @@ pub fn wake_key(nr_wake: usize, key: FutexKey, mask: u32) -> usize {
 /// Wakes up to `nr_wake` waiters on `key1`, then moves up to `nr_requeue` of
 /// the remaining waiters onto `key2`'s queue without waking them.
 ///
-/// Wake masks are ignored, matching Linux requeue semantics. Returns the
-/// number of waiters woken.
+/// Wake masks are ignored, matching Linux requeue semantics. `key1 == key2`
+/// (requeue-to-self) is permitted: waiters are woken and the requeue step is a
+/// no-op since the survivors already sit on that queue. Returns the total
+/// number of waiters woken *plus* requeued, matching Linux's `task_count`.
 pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: usize) -> usize {
-    // Callers must reject `key1 == key2` (requeue-to-self) before this point;
-    // the two-queue locking below assumes distinct queues.
-    debug_assert_ne!(key1, key2);
-
-    let q1_arc = get_or_create_queue(key1);
-    let q2_arc = get_or_create_queue(key2);
-
     let mut wakers = Vec::new();
+    let mut requeued = 0;
 
-    {
+    if key1 == key2 {
+        // Single queue: wake up to `nr_wake`; the requeue is a no-op because
+        // the remaining waiters are already on this queue.
+        let q_arc = get_or_create_queue(key1);
+        let mut q = q_arc.lock_save_irq();
+
+        while wakers.len() < nr_wake {
+            match q.take_first() {
+                Some((waker, cell)) => {
+                    cell.mark_woken();
+                    wakers.push(waker);
+                }
+                None => break,
+            }
+        }
+
+        // Linux counts up to `nr_requeue` of the survivors toward task_count
+        // even though they don't move.
+        requeued = core::cmp::min(nr_requeue, q.len());
+    } else {
+        let q1_arc = get_or_create_queue(key1);
+        let q2_arc = get_or_create_queue(key2);
+
         // Lock both queues in key order so concurrent requeues can't
         // deadlock.
         let (mut q1, mut q2) = if key1 < key2 {
@@ -118,6 +136,7 @@ pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: u
                 Some((waker, cell)) => {
                     let token = q2.insert(waker, cell.clone());
                     cell.requeue_to(q2_arc.clone(), token);
+                    requeued += 1;
                 }
                 None => break,
             }
@@ -129,7 +148,7 @@ pub fn requeue_key(key1: FutexKey, key2: FutexKey, nr_wake: usize, nr_requeue: u
         waker.wake();
     }
 
-    woke
+    woke + requeued
 }
 
 /// Waits on a single futex word, the common case shared by the legacy

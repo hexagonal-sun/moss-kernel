@@ -51,6 +51,13 @@ impl Deadline {
     /// wait in both directions across a step.
     pub async fn sleep(self) {
         loop {
+            // Sample the clock-set generation *before* reading the clock. A
+            // realtime step that lands after this point bumps the generation,
+            // so `clock_was_set_since` below fires immediately and we re-loop;
+            // sampling after `clock_now()` would leave a window where a step
+            // makes `remaining` stale yet goes unnoticed.
+            let generation = clock_set_generation();
+
             let now = self.clock_now();
             let target = self.target();
 
@@ -70,7 +77,6 @@ impl Deadline {
                 // A realtime step (in either direction) wakes the notifier;
                 // loop to re-evaluate against the new wall time.
                 Deadline::Realtime(_) => {
-                    let generation = clock_set_generation();
                     let mut timer = core::pin::pin!(sleep(remaining).fuse());
                     let mut was_set = core::pin::pin!(clock_was_set_since(generation).fuse());
                     futures::select_biased! {

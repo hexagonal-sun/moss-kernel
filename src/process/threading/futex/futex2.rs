@@ -16,7 +16,7 @@ use super::wait::{ParsedWaiter, futex_wait_multi};
 use super::{futex_wait_single, requeue_key, wake_key};
 use crate::clock::Deadline;
 use crate::clock::timespec::TimeSpec;
-use crate::memory::uaccess::{UserCopyable, copy_obj_array_from_user};
+use crate::memory::uaccess::{UserCopyable, copy_from_user, copy_obj_array_from_user};
 use crate::sched::syscall_ctx::ProcessCtx;
 
 const FUTEX2_SIZE_U32: u32 = 0x02;
@@ -209,8 +209,12 @@ pub async fn sys_futex_waitv(
 
 /// `futex_requeue(waiters, flags, nr_wake, nr_requeue)`: wake up to `nr_wake`
 /// waiters on `waiters[0].uaddr`, then move up to `nr_requeue` of the rest
-/// onto `waiters[1].uaddr`. No value comparison is performed (unlike legacy
-/// `FUTEX_CMP_REQUEUE`). Returns the number woken.
+/// onto `waiters[1].uaddr`.
+///
+/// This mirrors the legacy `FUTEX_CMP_REQUEUE`, so `waiters[0].val` is compared
+/// against the live value at `waiters[0].uaddr` and the whole operation fails
+/// with `EAGAIN` if it has changed (guarding against the classic requeue race).
+/// Returns the total number of waiters woken plus requeued, matching Linux.
 pub async fn sys_futex_requeue(
     ctx: &ProcessCtx,
     uwaiters: TUA<FutexWaitvUser>,
@@ -223,32 +227,50 @@ pub async fn sys_futex_requeue(
         return Err(KernelError::InvalidValue);
     }
 
+    // A null waiter array is rejected before any translation (Linux returns
+    // EINVAL here, not EFAULT).
+    if uwaiters.is_null() {
+        return Err(KernelError::InvalidValue);
+    }
+
     if nr_wake < 0 || nr_requeue < 0 {
         return Err(KernelError::InvalidValue);
     }
 
     let entries = copy_obj_array_from_user(uwaiters, 2).await?;
 
-    let resolve = |entry: &FutexWaitvUser| -> Result<FutexKey> {
+    // Both entries must agree on flags (size/private), matching Linux, which
+    // mandates identical flags until variable-sized futexes land.
+    if entries[0].flags != entries[1].flags {
+        return Err(KernelError::InvalidValue);
+    }
+
+    let resolve = |entry: &FutexWaitvUser| -> Result<(FutexKey, TUA<u32>)> {
         if entry.reserved != 0 {
             return Err(KernelError::InvalidValue);
         }
 
-        // `val` is unused by this op and deliberately not validated.
         let private = check_flags(entry.flags)?;
-        let (key, _) = make_key(ctx, entry.uaddr, private)?;
-        Ok(key)
+        make_key(ctx, entry.uaddr, private)
     };
 
-    let key1 = resolve(&entries[0])?;
-    let key2 = resolve(&entries[1])?;
+    let (key1, uaddr1) = resolve(&entries[0])?;
+    let (key2, _) = resolve(&entries[1])?;
 
-    // Requeueing a futex onto itself is invalid; this also catches distinct
-    // virtual addresses that alias the same shared frame.
-    if key1 == key2 {
+    // `waiters[0].val` is the expected value at `uaddr1`; bail with EAGAIN if
+    // the futex word changed under us before we requeue.
+    let expected = entries[0].val;
+    if expected > u64::from(u32::MAX) {
         return Err(KernelError::InvalidValue);
     }
+    let curval = copy_from_user(uaddr1).await?;
+    if curval != expected as u32 {
+        return Err(KernelError::TryAgain);
+    }
 
+    // Requeueing a futex onto itself (key1 == key2) is permitted for plain
+    // (non-PI) requeue: waiters are woken, then any "requeue" is a no-op since
+    // they are already on the same queue. `requeue_key` handles this case.
     Ok(requeue_key(
         key1,
         key2,

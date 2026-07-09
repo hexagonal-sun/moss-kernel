@@ -56,10 +56,25 @@ pub fn clock_set_generation() -> u64 {
     *CLOCK_SET_GEN.lock_save_irq()
 }
 
+/// Removes its waker from [`clock_set_waiters`] when dropped, so a caller that
+/// abandons the wait (e.g. a wrapping `select!` that exits via a timer) does
+/// not leave a stale registration lingering until the next clock step.
+struct ClockSetRegistration {
+    token: Option<u64>,
+}
+
+impl Drop for ClockSetRegistration {
+    fn drop(&mut self) {
+        if let Some(token) = self.token {
+            clock_set_waiters().lock_save_irq().remove(token);
+        }
+    }
+}
+
 /// Resolves once the realtime clock is stepped after `generation` was sampled.
 /// If a step already happened since `generation`, returns immediately.
 pub async fn clock_was_set_since(generation: u64) {
-    let mut registered = false;
+    let mut registration = ClockSetRegistration { token: None };
 
     poll_fn(|cx| {
         // Register before re-checking the generation so a step that races our
@@ -70,14 +85,18 @@ pub async fn clock_was_set_since(generation: u64) {
             return Poll::Ready(());
         }
 
-        if !registered {
-            waiters.register(cx.waker());
-            registered = true;
+        if registration.token.is_none() {
+            registration.token = Some(waiters.register(cx.waker()));
         }
 
         Poll::Pending
     })
     .await;
+
+    // Reaching here means the generation changed and our waker was already
+    // consumed by `wake_all`; forget the token so drop does not try to remove
+    // an id that may have been reused.
+    registration.token = None;
 }
 
 #[cfg(test)]

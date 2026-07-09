@@ -112,6 +112,11 @@ impl<T> WakerSet<T> {
         self.waiters.is_empty()
     }
 
+    /// Number of registered wakers.
+    pub fn len(&self) -> usize {
+        self.waiters.len()
+    }
+
     /// Registers a waker together with associated data, returning its token.
     pub fn register_with_data(&mut self, waker: &Waker, data: T) -> u64 {
         self.insert(waker.clone(), data)

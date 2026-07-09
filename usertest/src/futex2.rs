@@ -330,6 +330,34 @@ fn test_futex2_invalid_args() {
         if ret != -1 || errno() != libc::EINVAL {
             panic!("requeue nr_wake=-1: ret {ret}, errno {}", errno());
         }
+
+        // requeue: a NULL waiter array is EINVAL.
+        let ret = futex2_requeue(std::ptr::null(), 0, 1, 0);
+        if ret != -1 || errno() != libc::EINVAL {
+            panic!("requeue NULL array: ret {ret}, errno {}", errno());
+        }
+
+        // requeue: the two entries must share identical flags.
+        let mismatched = [
+            FutexWaitv::new(addr, 0, FUTEX2_SIZE_U32),
+            FutexWaitv::new(addr, 0, FUTEX2_SIZE_U32 | FUTEX2_PRIVATE),
+        ];
+        let ret = futex2_requeue(mismatched.as_ptr(), 0, 1, 0);
+        if ret != -1 || errno() != libc::EINVAL {
+            panic!("requeue flag mismatch: ret {ret}, errno {}", errno());
+        }
+
+        // requeue: value mismatch at uaddr1 -> EAGAIN.
+        let word2: u32 = 0;
+        let addr2 = &word2 as *const u32;
+        let cmp = [
+            FutexWaitv::new(addr, 1, FUTEX2_SIZE_U32), // expects 1, *addr == 0
+            FutexWaitv::new(addr2, 0, FUTEX2_SIZE_U32),
+        ];
+        let ret = futex2_requeue(cmp.as_ptr(), 0, 1, 1);
+        if ret != -1 || errno() != libc::EAGAIN {
+            panic!("requeue val mismatch: ret {ret}, errno {}", errno());
+        }
     }
 }
 
@@ -430,9 +458,10 @@ fn test_futex2_requeue() {
 
     unsafe {
         // Wake one waiter, move the rest to f2.
+        // Returns woken + requeued (Linux semantics): 1 woken + (NR-1) requeued.
         let ret = futex2_requeue(pair.as_ptr(), 0, 1, NR_THREADS as i32 - 1);
-        if ret != 1 {
-            panic!("futex_requeue woke {ret}, expected 1");
+        if ret != NR_THREADS as i64 {
+            panic!("futex_requeue returned {ret}, expected {NR_THREADS}");
         }
     }
 
@@ -566,33 +595,39 @@ fn test_futex2_wake_no_waiters() {
 register_test!(test_futex2_wake_no_waiters);
 
 fn test_futex2_requeue_to_self() {
-    // Requeueing a futex onto itself (uaddr1 == uaddr2) is rejected with
-    // EINVAL, matching Linux. moss detects key1 == key2 before requeueing
-    // (this also catches distinct virtual addresses aliasing one shared
-    // frame); this test guards against that reject regressing.
+    // Requeueing a futex onto itself (uaddr1 == uaddr2) is *allowed* for plain
+    // (non-PI) requeue on Linux: up to nr_wake waiters are woken and the rest
+    // stay put (the requeue is a no-op onto the same queue). The return value
+    // still counts woken + requeued survivors.
+    const NR_THREADS: usize = 3;
+
     let f = Arc::new(AtomicU32::new(0));
     let woken = Arc::new(AtomicU32::new(0));
 
-    let f1 = f.clone();
-    let woken1 = woken.clone();
-    let t = thread::spawn(move || {
-        let ret = unsafe {
-            futex2_wait(
-                f1.as_ptr() as *const u32,
-                0,
-                MATCH_ANY,
-                FUTEX2_SIZE_U32,
-                std::ptr::null(),
-                libc::CLOCK_MONOTONIC,
-            )
-        };
-        if ret != 0 {
-            panic!("futex_wait returned {ret}, errno {}", errno());
-        }
-        woken1.fetch_add(1, Ordering::SeqCst);
-    });
+    let threads: Vec<_> = (0..NR_THREADS)
+        .map(|_| {
+            let f = f.clone();
+            let woken = woken.clone();
+            thread::spawn(move || {
+                let ret = unsafe {
+                    futex2_wait(
+                        f.as_ptr() as *const u32,
+                        0,
+                        MATCH_ANY,
+                        FUTEX2_SIZE_U32,
+                        std::ptr::null(),
+                        libc::CLOCK_MONOTONIC,
+                    )
+                };
+                if ret != 0 {
+                    panic!("futex_wait returned {ret}, errno {}", errno());
+                }
+                woken.fetch_add(1, Ordering::SeqCst);
+            })
+        })
+        .collect();
 
-    thread::sleep(Duration::from_millis(100));
+    thread::sleep(Duration::from_millis(150));
 
     let same = f.as_ptr() as *const u32;
     let pair = [
@@ -601,21 +636,31 @@ fn test_futex2_requeue_to_self() {
     ];
 
     unsafe {
-        let ret = futex2_requeue(pair.as_ptr(), 0, 1, 1);
-        if ret != -1 || errno() != libc::EINVAL {
-            panic!(
-                "requeue-to-self: ret {ret}, errno {}, expected EINVAL",
-                errno()
-            );
+        // Wake 1, "requeue" the other 2 onto the same queue. Returns
+        // 1 woken + 2 requeued survivors = 3.
+        let ret = futex2_requeue(pair.as_ptr(), 0, 1, NR_THREADS as i32 - 1);
+        if ret != NR_THREADS as i64 {
+            panic!("requeue-to-self returned {ret}, expected {NR_THREADS}");
         }
     }
 
-    // The waiter is still parked (requeue was rejected); wake it so the
-    // thread can exit cleanly.
-    unsafe {
-        futex2_wake(same, MATCH_ANY, 1, FUTEX2_SIZE_U32);
+    thread::sleep(Duration::from_millis(100));
+    let woken_now = woken.load(Ordering::SeqCst);
+    if woken_now != 1 {
+        panic!("{woken_now} threads ran after self-requeue, expected 1");
     }
-    t.join().expect("waiter thread panicked");
+
+    // The survivors are still parked on the same futex; drain them.
+    unsafe {
+        let ret = futex2_wake(same, MATCH_ANY, 64, FUTEX2_SIZE_U32);
+        if ret != NR_THREADS as i64 - 1 {
+            panic!("woke {ret} survivors, expected {}", NR_THREADS - 1);
+        }
+    }
+
+    for t in threads {
+        t.join().expect("waiter thread panicked");
+    }
 }
 
 register_test!(test_futex2_requeue_to_self);
@@ -712,10 +757,11 @@ fn test_futex2_requeue_timeout_race() {
     ];
 
     unsafe {
-        // Move everyone to f2 without waking anybody.
+        // Move everyone to f2 without waking anybody. Return counts the
+        // requeued waiters (0 woken + NR requeued).
         let ret = futex2_requeue(pair.as_ptr(), 0, 0, NR_THREADS as i32);
-        if ret != 0 {
-            panic!("requeue woke {ret}, expected 0");
+        if ret != NR_THREADS as i64 {
+            panic!("requeue returned {ret}, expected {NR_THREADS} requeued");
         }
     }
 
