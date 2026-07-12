@@ -48,7 +48,7 @@ model within the kernel context:
 * Full task management including both UP and SMP scheduling via EEVDF and task
   migration via IPIs.
 * Capable of running dynamically linked ELF binaries from Arch Linux.
-* Currently implements [105 Linux syscalls](./etc/syscalls_linux_aarch64.md)
+* Currently implements [109 Linux syscalls](./etc/syscalls_linux_aarch64.md)
 * `fork()`, `execve()`, `clone()`, and full process lifecycle management.
 * Job control support (process groups, waitpid, background tasks).
 * Signal delivery, masking, and propagation (SIGTERM, SIGSTOP, SIGCONT, SIGCHLD,
@@ -172,7 +172,7 @@ moss is under active development. Current focus areas include:
 
 * Networking Stack: TCP/IP implementation.
 * A fully read/write capable filesystem driver.
-* Expanding coverage beyond the current 105 calls.
+* Expanding coverage beyond the current 109 calls.
 * systemd bringup.
 
 ## Non-Goals (for now)

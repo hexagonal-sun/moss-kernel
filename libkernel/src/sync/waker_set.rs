@@ -89,11 +89,45 @@ impl<T> WakerSet<T> {
         }
     }
 
+    /// Removes and returns the first (lowest-token, i.e. FIFO) entry whose
+    /// data matches `predicate`, without waking it.
+    pub fn take_if(&mut self, predicate: impl Fn(&T) -> bool) -> Option<(Waker, T)> {
+        let key = self
+            .waiters
+            .iter()
+            .find(|(_, (_, data))| predicate(data))
+            .map(|(key, _)| *key)?;
+
+        self.waiters.remove(&key)
+    }
+
+    /// Removes and returns the first (lowest-token, i.e. FIFO) entry, without
+    /// waking it.
+    pub fn take_first(&mut self) -> Option<(Waker, T)> {
+        self.waiters.pop_first().map(|(_, entry)| entry)
+    }
+
+    /// Returns `true` if no wakers are registered.
+    pub fn is_empty(&self) -> bool {
+        self.waiters.is_empty()
+    }
+
+    /// Number of registered wakers.
+    pub fn len(&self) -> usize {
+        self.waiters.len()
+    }
+
     /// Registers a waker together with associated data, returning its token.
     pub fn register_with_data(&mut self, waker: &Waker, data: T) -> u64 {
+        self.insert(waker.clone(), data)
+    }
+
+    /// Inserts an already-owned waker with associated data, returning its
+    /// token.
+    pub fn insert(&mut self, waker: Waker, data: T) -> u64 {
         let id = self.allocate_id();
 
-        self.waiters.insert(id, (waker.clone(), data));
+        self.waiters.insert(id, (waker, data));
 
         id
     }
@@ -190,6 +224,54 @@ where
             let waker_set = (self.get_waker_set)(&mut inner);
             waker_set.remove(token);
         }
+    }
+}
+
+#[cfg(test)]
+mod waker_set_tests {
+    use super::*;
+
+    fn set_with_data(data: &[u32]) -> WakerSet<u32> {
+        let mut set = WakerSet::new();
+        for &d in data {
+            set.insert(Waker::noop().clone(), d);
+        }
+        set
+    }
+
+    #[test]
+    fn take_if_removes_first_match_in_fifo_order() {
+        let mut set = set_with_data(&[0b01, 0b10, 0b11]);
+
+        let (_, data) = set.take_if(|d| d & 0b10 != 0).unwrap();
+        assert_eq!(data, 0b10);
+
+        let (_, data) = set.take_if(|d| d & 0b10 != 0).unwrap();
+        assert_eq!(data, 0b11);
+
+        assert!(set.take_if(|d| d & 0b10 != 0).is_none());
+        assert!(!set.is_empty());
+    }
+
+    #[test]
+    fn take_first_is_fifo() {
+        let mut set = set_with_data(&[1, 2, 3]);
+
+        assert_eq!(set.take_first().unwrap().1, 1);
+        assert_eq!(set.take_first().unwrap().1, 2);
+        assert_eq!(set.take_first().unwrap().1, 3);
+        assert!(set.take_first().is_none());
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn insert_then_remove_by_token() {
+        let mut set = WakerSet::new();
+        let token = set.insert(Waker::noop().clone(), 7u32);
+
+        assert!(set.contains_token(token));
+        set.remove(token);
+        assert!(set.is_empty());
     }
 }
 
