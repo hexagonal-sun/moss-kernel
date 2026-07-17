@@ -12,7 +12,7 @@
         pkgs = import nixpkgs { inherit system; };
         toolchain = fenix.packages.${system}.fromToolchainFile {
           file = ./rust-toolchain.toml;
-          sha256 = "sha256-ggvRZZFjlAlrZVjqul/f/UpU5CEhDbdKZU0OCR8Uzbc=";
+          sha256 = "sha256-gIs/sWVA0osI/I+duBKhKaExKdVBPNswYHoS7H+gljI=";
         };
         shell = pkgs.mkShell {
           buildInputs = with pkgs; [
