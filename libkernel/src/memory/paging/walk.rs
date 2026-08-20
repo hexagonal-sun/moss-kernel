@@ -3,7 +3,7 @@
 use crate::{
     error::MapError,
     memory::{
-        address::{PA, TPA, VA},
+        address::{Address, GuestPhysical, GuestVirtual, MemKind, Physical, TPA, VA, Virtual},
         region::VirtMemoryRegion,
     },
 };
@@ -13,11 +13,22 @@ use super::{
     TableMapperTable, permissions::PtePermissions,
 };
 
+/// A virtual address kind that can be translated through page tables.
+pub trait Translatable: MemKind {
+    /// The physical-side kind this translates into.
+    type Phys: MemKind;
+}
+
+impl Translatable for Virtual {
+    type Phys = Physical;
+}
+
+impl Translatable for GuestVirtual {
+    type Phys = GuestPhysical;
+}
+
 /// A collection of context required to modify page tables.
-pub struct WalkContext<'a, PM>
-where
-    PM: PageTableMapper + 'a,
-{
+pub struct WalkContext<'a, PM> {
     /// The mapper used to temporarily access page tables by physical address.
     pub mapper: &'a mut PM,
     /// The TLB invalidator invoked after modifying page table entries.
@@ -97,12 +108,14 @@ where
     }
 }
 
+pub(crate) type TranslatorResult<P> = (Address<P, ()>, usize, PtePermissions);
+
 pub(crate) trait Translator: PgTable + Sized {
-    fn translate<PM: PageTableMapper>(
-        table_pa: TPA<PgTableArray<Self>>,
-        va: VA,
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+        table_pa: Address<M::Phys, PgTableArray<Self>>,
+        va: Address<M, ()>,
         ctx: &mut WalkContext<PM>,
-    ) -> crate::error::Result<Option<(PA, usize, PtePermissions)>>;
+    ) -> crate::error::Result<Option<TranslatorResult<M::Phys>>>;
 }
 
 impl<T> Translator for T
@@ -111,21 +124,32 @@ where
     T::Descriptor: PaMapper,
     <T::Descriptor as TableMapper>::NextLevel: Translator,
 {
-    fn translate<PM: PageTableMapper>(
-        table_pa: TPA<PgTableArray<Self>>,
-        va: VA,
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+        table_pa: Address<M::Phys, PgTableArray<T>>,
+        va: Address<M, ()>,
         ctx: &mut WalkContext<PM>,
-    ) -> crate::error::Result<Option<(PA, usize, PtePermissions)>> {
+    ) -> crate::error::Result<Option<(Address<M::Phys, ()>, usize, PtePermissions)>> {
         let desc = unsafe {
-            ctx.mapper
-                .with_page_table(table_pa, |pgtable| T::from_ptr(pgtable).get_desc(va))?
+            ctx.mapper.with_page_table(table_pa, |pgtable| {
+                // Re-tag to a normal VA here. This is safe since `get_desc()`
+                // simply calculates the index into the table and returns the
+                // descriptor at that point. Given we've already forced pgtable
+                // to be a TVA, access to the table should be sound.
+                T::from_ptr(pgtable).get_desc(VA::from_value(va.value()))
+            })?
         };
 
         if let Some(next_pa) = desc.next_table_address() {
+            // next_table_address() returns a hard-coded PA-type pointer. Recast
+            // this to the `M::Phys` address-space for the next-level lookup.
+            let next_pa = Address::from_value(next_pa.value());
             <T::Descriptor as TableMapper>::NextLevel::translate(next_pa, va, ctx)
         } else if let Some(block_pa) = desc.mapped_address() {
+            // mapped_address() returns a hard-coded PA-type pointer. Recast
+            // this to the `M::Phys` address-space for final translation result.
+            let pa = Address::from_value(block_pa.value());
             let block_size = 1usize << T::Descriptor::MAP_SHIFT;
-            Ok(Some((block_pa, block_size, desc.permissions().unwrap())))
+            Ok(Some((pa, block_size, desc.permissions().unwrap())))
         } else if desc.is_valid() {
             Err(MapError::InvalidDescriptor)?
         } else {
