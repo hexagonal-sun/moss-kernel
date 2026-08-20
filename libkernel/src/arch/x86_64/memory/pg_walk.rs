@@ -4,14 +4,14 @@ use crate::{
     error::{MapError, Result},
     memory::{
         PAGE_SIZE,
-        address::{PA, TPA, VA},
+        address::{Address, TPA, VA},
         paging::{
             NullTlbInvalidator, PaMapper, PageTableEntry, PageTableMapper, PgTable, PgTableArray,
             TableMapper,
             permissions::PtePermissions,
-            walk::{RecursiveWalker, Translator, WalkContext},
+            walk::{RecursiveWalker, Translatable, Translator, WalkContext},
         },
-        region::{PhysMemoryRegion, VirtMemoryRegion},
+        region::{MemoryRegion, VirtMemoryRegion},
     },
 };
 
@@ -115,17 +115,21 @@ pub fn get_pte<PM: PageTableMapper>(
 }
 
 impl Translator for PML4Table {
-    fn translate<PM: PageTableMapper>(
-        table_pa: TPA<PgTableArray<Self>>,
-        va: VA,
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+        table_pa: Address<M::Phys, PgTableArray<PML4Table>>,
+        va: Address<M, ()>,
         ctx: &mut WalkContext<PM>,
-    ) -> Result<Option<(PA, usize, PtePermissions)>> {
+    ) -> crate::error::Result<Option<(Address<M::Phys, ()>, usize, PtePermissions)>> {
         let desc = unsafe {
-            ctx.mapper
-                .with_page_table(table_pa, |pgtable| Self::from_ptr(pgtable).get_desc(va))?
+            ctx.mapper.with_page_table(table_pa, |pgtable| {
+                Self::from_ptr(pgtable).get_desc(VA::from_value(va.value()))
+            })?
         };
         match desc.next_table_address() {
-            Some(next_pa) => PDPTable::translate(next_pa, va, ctx),
+            Some(next_pa) => {
+                let next_pa = Address::from_value(next_pa.value());
+                PDPTable::translate(next_pa, va, ctx)
+            }
             None if desc.is_valid() => Err(MapError::InvalidDescriptor.into()),
             None => Ok(None),
         }
@@ -133,19 +137,20 @@ impl Translator for PML4Table {
 }
 
 impl Translator for PTable {
-    fn translate<PM: PageTableMapper>(
-        table_pa: TPA<PgTableArray<Self>>,
-        va: VA,
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+        table_pa: Address<M::Phys, PgTableArray<PTable>>,
+        va: Address<M, ()>,
         ctx: &mut WalkContext<PM>,
-    ) -> Result<Option<(PA, usize, PtePermissions)>> {
+    ) -> crate::error::Result<Option<(Address<M::Phys, ()>, usize, PtePermissions)>> {
         let desc = unsafe {
-            ctx.mapper
-                .with_page_table(table_pa, |pgtable| Self::from_ptr(pgtable).get_desc(va))?
+            ctx.mapper.with_page_table(table_pa, |pgtable| {
+                Self::from_ptr(pgtable).get_desc(VA::from_value(va.value()))
+            })?
         };
 
         match desc.mapped_address() {
             Some(pa) => Ok(Some((
-                pa,
+                Address::from_value(pa.value()),
                 1 << Self::Descriptor::MAP_SHIFT,
                 desc.permissions(),
             ))),
@@ -155,12 +160,17 @@ impl Translator for PTable {
     }
 }
 
+/// Result of a translation, returning the region which is mapped (could be
+/// longer than [PAGE_SIZE] for block mappings), the offset of the virtual
+/// address into the region and the permissions of the mapping.
+pub type TranslationResult<K> = (MemoryRegion<K>, usize, PtePermissions);
+
 /// Translates the VA into a physical region plus an offset and permissions.
-pub fn translate<PM: PageTableMapper>(
-    pml4_table: TPA<PgTableArray<PML4Table>>,
-    va: VA,
+pub fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+    pml4_table: Address<M::Phys, PgTableArray<PML4Table>>,
+    va: Address<M, ()>,
     mapper: &mut PM,
-) -> Result<Option<(PhysMemoryRegion, usize, PtePermissions)>> {
+) -> Result<Option<TranslationResult<M::Phys>>> {
     let mut walk_ctx = WalkContext {
         mapper,
         // Safe to not invalidate the TLB, as we are not modifying any PTEs.
@@ -172,7 +182,9 @@ pub fn translate<PM: PageTableMapper>(
 
         let offset = va.value() & (blk_sz - 1);
 
-        Ok(Some((PhysMemoryRegion::new(pa, blk_sz), offset, perms)))
+        let rgn = MemoryRegion::new(pa, blk_sz);
+
+        Ok(Some((rgn, offset, perms)))
     } else {
         Ok(None)
     }

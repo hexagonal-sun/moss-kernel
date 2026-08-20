@@ -2,7 +2,7 @@
 
 use super::{
     PAGE_SIZE,
-    address::{PA, TPA, TVA, VA},
+    address::{Address, MemKind, PA, Physical, TPA, TVA, VA},
     region::PhysMemoryRegion,
 };
 use core::marker::PhantomData;
@@ -159,7 +159,7 @@ impl<K: PgTable, const N: usize> Default for PgTableArray<K, N> {
 }
 
 /// Trait for temporarily mapping and modifying a page table located at a
-/// physical address.
+/// (guest/host) physical address.
 ///
 /// During early boot, there are multiple mechanisms for accessing page table memory:
 /// - Identity mapping (idmap): active very early when VA = PA
@@ -175,7 +175,7 @@ impl<K: PgTable, const N: usize> Default for PgTableArray<K, N> {
 /// This function is `unsafe` because the caller must ensure:
 /// - The given physical address `pa` is valid and correctly aligned for type `T`.
 /// - The contents at that physical address represent a valid page table of type `T`.
-pub trait PageTableMapper {
+pub trait PageTableMapper<K: MemKind = Physical> {
     /// Map a physical address to a usable reference of the page table, run the
     /// closure, and unmap.
     ///
@@ -185,7 +185,7 @@ pub trait PageTableMapper {
     /// - The contents at that physical address represent a valid page table of type `T`.
     unsafe fn with_page_table<T: PgTable, R>(
         &mut self,
-        pa: TPA<PgTableArray<T>>,
+        pa: Address<K, PgTableArray<T>>,
         f: impl FnOnce(TVA<PgTableArray<T>>) -> R,
     ) -> crate::error::Result<R>;
 }
