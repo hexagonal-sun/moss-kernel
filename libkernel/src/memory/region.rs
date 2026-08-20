@@ -31,7 +31,9 @@
 
 use super::{
     PAGE_SHIFT, PAGE_SIZE,
-    address::{Address, AddressTranslator, GuestPhysical, MemKind, Physical, User, Virtual},
+    address::{
+        Address, AddressTranslator, GuestPhysical, GuestVirtual, MemKind, Physical, User, Virtual,
+    },
     page::PageFrame,
 };
 
@@ -441,6 +443,9 @@ pub type UserMemoryRegion = MemoryRegion<User>;
 
 /// A memory region of guest-physical memory.
 pub type GuestPhysMemoryRegion = MemoryRegion<GuestPhysical>;
+
+/// A memory region of guest-virutal memory.
+pub type GuestVirtualMemoryRegion = MemoryRegion<GuestVirtual>;
 
 /// A representation of a `MemoryRegion` that has been expanded to be page-aligned.
 ///
