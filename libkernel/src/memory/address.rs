@@ -249,6 +249,20 @@ impl<T> TPA<T> {
     }
 }
 
+impl<T> TGPA<T> {
+    /// Convert to an untyped guest physical address.
+    pub fn to_untyped(self) -> GPA {
+        GPA::from_value(self.value())
+    }
+}
+
+impl<T> TGVA<T> {
+    /// Convert to an untyped guest virtual address.
+    pub fn to_untyped(self) -> GVA {
+        GVA::from_value(self.value())
+    }
+}
+
 impl<T> Display for TPA<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Px{:08x}", self.inner)
