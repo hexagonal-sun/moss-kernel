@@ -25,6 +25,7 @@ SECTIONS
     .data : { *(.data*) }
     .rodata : {
         *(.rodata*)
+        . = ALIGN(8);
         __driver_inits_start = .;
         *(.driver_inits*)
         __driver_inits_end = .;
