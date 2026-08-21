@@ -181,12 +181,13 @@ fn segfault_child(inner: impl FnOnce()) {
 fn test_segfault_read() {
     segfault_child(|| {
         let addr: *const u8 = std::hint::black_box(std::ptr::null());
-        let _ = unsafe { std::ptr::read(addr) };
+        // Use a volatile read so the compiler can't elide the (dead) load.
+        let _ = std::hint::black_box(unsafe { std::ptr::read_volatile(addr) });
     });
     segfault_child(|| {
         // Ensure reading from kernel stack fails
-        let addr = 0xffff_ba00_0000_0000 as *const u8;
-        let _ = unsafe { std::ptr::read(addr) };
+        let addr = std::hint::black_box(0xffff_ba00_0000_0000 as *const u8);
+        let _ = std::hint::black_box(unsafe { std::ptr::read_volatile(addr) });
     });
 }
 
@@ -195,11 +196,12 @@ register_test!(test_segfault_read);
 fn test_segfault_write() {
     segfault_child(|| {
         let addr: *mut u8 = std::hint::black_box(std::ptr::null_mut());
-        unsafe { std::ptr::write(addr, 42) };
+        // Use a volatile write so the compiler can't elide the UB store.
+        unsafe { std::ptr::write_volatile(addr, 42) };
     });
     segfault_child(|| {
-        let addr = 0xffff_ba00_0000_0000 as *mut u8;
-        unsafe { std::ptr::write(addr, 42) };
+        let addr = std::hint::black_box(0xffff_ba00_0000_0000 as *mut u8);
+        unsafe { std::ptr::write_volatile(addr, 42) };
     });
 }
 

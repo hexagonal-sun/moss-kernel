@@ -222,8 +222,9 @@ fn test_mincore() {
             panic!("mmap failed: {}", std::io::Error::last_os_error());
         }
 
-        // Touch the page to fault it in
-        ptr::write(addr as *mut u8, 42);
+        // Touch the page to fault it in. Use a volatile write so the
+        // compiler can't elide the store.
+        ptr::write_volatile(addr as *mut u8, 42);
 
         let mut vec_byte: u8 = 0;
         let ret = libc::mincore(addr as *mut _, page_size, &mut vec_byte as *mut u8);
