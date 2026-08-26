@@ -151,31 +151,31 @@ impl ArmGicV2 {
 
         // 3. Configure all interrupts
         // Set all interrupts to Group 0 (secure)
-        for i in 0..(num_interrupts / 32) {
-            self.dist.IGROUPR[i].set(0); // Group 0 = 0 (secure interrupts)
+        for reg in self.dist.IGROUPR.iter().take(num_interrupts / 32) {
+            reg.set(0); // Group 0 = 0 (secure interrupts)
         }
 
         // Disable all interrupts
-        for i in 0..(num_interrupts / 32) {
-            self.dist.ICENABLER[i].set(0xFFFF_FFFF);
+        for reg in self.dist.ICENABLER.iter().take(num_interrupts / 32) {
+            reg.set(0xFFFF_FFFF);
         }
 
         // Clear all pending interrupts
-        for i in 0..(num_interrupts / 32) {
-            self.dist.ICPENDR[i].set(0xFFFF_FFFF);
+        for reg in self.dist.ICPENDR.iter().take(num_interrupts / 32) {
+            reg.set(0xFFFF_FFFF);
         }
 
         // Set priorities - default all to 0xA0 (medium priority)
-        for i in 0..(num_interrupts / 4) {
+        for reg in self.dist.IPRIORITYR.iter().take(num_interrupts / 4) {
             // Each IPRIORITYR register covers 4 interrupts, 8 bits each
-            self.dist.IPRIORITYR[i].set(0xA0A0_A0A0);
+            reg.set(0xA0A0_A0A0);
         }
 
         // Configure interrupts as level triggered (0)
-        for i in 0..(num_interrupts / 16) {
+        for reg in self.dist.ICFGR.iter().take(num_interrupts / 16) {
             // Each ICFGR register configures 16 interrupts, 2 bits each.
             // 0 = level triggered, 1 = edge triggered.
-            self.dist.ICFGR[i].set(0);
+            reg.set(0);
         }
 
         // 4. Enable Distributor
