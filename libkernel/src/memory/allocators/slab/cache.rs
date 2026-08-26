@@ -153,8 +153,8 @@ impl SlabCache {
     ) {
         for (line, slab) in self.caches.iter_mut().zip(slab_alloc.managers.iter()) {
             let mut slab = slab.lock_save_irq();
-            for i in 0..line.next_free {
-                slab.free(line.ptrs[i]);
+            for ptr in line.ptrs.iter().take(line.next_free) {
+                slab.free(*ptr);
             }
             line.next_free = 0;
         }

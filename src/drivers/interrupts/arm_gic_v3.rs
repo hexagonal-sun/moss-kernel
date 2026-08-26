@@ -191,8 +191,8 @@ impl ArmGicV3 {
         let num_spis = (it_lines * 32).saturating_sub(32) as usize;
 
         // Set all SPIs to Group 1 (non-secure)
-        for i in 1..num_spis.div_ceil(32) {
-            dist.IGROUPR[i].set(0xFFFF_FFFF);
+        for reg in dist.IGROUPR.iter().take(num_spis.div_ceil(32)).skip(1) {
+            reg.set(0xFFFF_FFFF);
         }
 
         // Disable, clear pending, and set default priority for all SPIs
@@ -202,8 +202,8 @@ impl ArmGicV3 {
         }
 
         // Set all priorites to 0 (highest).
-        for i in 8..((num_spis + 31) / 4) {
-            dist.IPRIORITYR[i].set(0);
+        for reg in dist.IPRIORITYR.iter().take((num_spis + 31) / 4).skip(8) {
+            reg.set(0);
         }
 
         // EnableGrp1ns: Enable group 1Ns interrupts
@@ -242,8 +242,8 @@ impl ArmGicV3 {
         sgi_ppi.ICPENDR0.set(0xFFFF_FFFF); // Clear all pending
 
         // Set default priorities
-        for i in 0..8 {
-            sgi_ppi.IPRIORITYR[i].set(0xA0A0_A0A0);
+        for reg in sgi_ppi.IPRIORITYR.iter().take(8) {
+            reg.set(0xA0A0_A0A0);
         }
 
         // 3. Enable the CPU's system register interface to the GIC
