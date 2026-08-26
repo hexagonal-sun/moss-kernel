@@ -53,6 +53,21 @@ impl<T: MemKind> MemoryRegion<T> {
         Self { address, size }
     }
 
+    /// Cast from one address space kind to the other, without modification of
+    /// the address bits.
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the same address is valid in the other
+    /// address space, e.g. through identity mappings.
+    pub const unsafe fn cast_mem_kind<O: MemKind>(self) -> MemoryRegion<O> {
+        // SAFETY: The caller ensures the safety invariant is true.
+        MemoryRegion {
+            address: unsafe { self.address.cast_mem_kind() },
+            size: self.size,
+        }
+    }
+
     /// Create an empty region with a size of 0 and address 0.
     pub const fn empty() -> Self {
         Self {

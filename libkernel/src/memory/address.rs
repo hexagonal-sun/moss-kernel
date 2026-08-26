@@ -118,6 +118,17 @@ impl<K: MemKind, T> Address<K, T> {
         }
     }
 
+    /// Cast from one address space kind to the other, without modification of
+    /// the address bits.
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the same address is valid in the other
+    /// address space, e.g. through identity mappings.
+    pub const unsafe fn cast_mem_kind<O: MemKind>(self) -> Address<O, T> {
+        Address::from_value(self.value())
+    }
+
     /// Return the underlying raw address value.
     pub const fn value(self) -> usize {
         self.inner
