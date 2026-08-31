@@ -194,6 +194,7 @@ mod tests {
             kind: VMAreaKind::Anon, // Simplification for test
             permissions: VMAPermissions::rx(),
             name: String::new(),
+            shared: false,
         };
 
         ProcessVM::from_vma(text_vma).unwrap()
@@ -350,6 +351,7 @@ mod tests {
             kind: VMAreaKind::Anon,
             permissions: VMAPermissions::ro(),
             name: String::new(),
+            shared: false,
         };
         vm.mm.insert_and_merge(obstacle_vma);
         assert_eq!(vm.mm.vma_count(), 2);

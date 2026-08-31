@@ -95,10 +95,23 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
     pub fn mmap(
         &mut self,
         requested_address: AddressRequest,
+        len: usize,
+        perms: VMAPermissions,
+        kind: VMAreaKind,
+        name: String,
+    ) -> Result<VA> {
+        self.mmap_with_options(requested_address, len, perms, kind, name, false)
+    }
+
+    /// Maps a region of memory with explicit VMA options.
+    pub fn mmap_with_options(
+        &mut self,
+        requested_address: AddressRequest,
         mut len: usize,
         perms: VMAPermissions,
         kind: VMAreaKind,
         name: String,
+        shared: bool,
     ) -> Result<VA> {
         if len == 0 {
             return Err(KernelError::InvalidValue);
@@ -150,6 +163,7 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
         let mut new_vma = VMArea::new(region, kind, perms);
 
         new_vma.set_name(name);
+        new_vma.set_shared(shared);
 
         self.insert_and_merge(new_vma);
 
@@ -494,8 +508,9 @@ impl<AS: UserAddressSpace> MemoryMap<AS> {
         for vma in new_vmas.values() {
             let mut pte_perms = PtePermissions::from(vma.permissions);
 
-            // Mark all writable pages as CoW.
-            if pte_perms.is_write() {
+            // Shared mappings stay shared across fork; private writable
+            // mappings become CoW.
+            if !vma.is_shared() && pte_perms.is_write() {
                 pte_perms = pte_perms.into_cow();
             }
 
