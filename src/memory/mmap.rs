@@ -220,9 +220,9 @@ pub async fn sys_mremap(
         RemapDestination::InPlaceOnly
     };
 
+    let proc_vm = ctx.shared().vm.shared_vm();
     let (new_mapping_addr, pages_to_free) =
-        ctx.shared()
-            .vm
+        proc_vm
             .lock_save_irq()
             .mm_mut()
             .mremap(old_addr, old_len, new_len, destination)?;
