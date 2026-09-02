@@ -8,12 +8,12 @@ use crate::{
     error::{MapError, Result},
     memory::{
         PAGE_SIZE,
-        address::{PA, TPA, VA},
+        address::{Address, TPA, VA},
         paging::{
             NullTlbInvalidator, PaMapper, PageTableEntry, PageTableMapper, PgTable, PgTableArray,
             TableMapper,
             permissions::PtePermissions,
-            walk::{RecursiveWalker, Translator, WalkContext},
+            walk::{RecursiveWalker, Translatable, Translator, WalkContext},
         },
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
@@ -114,18 +114,22 @@ pub fn get_pte<PM: PageTableMapper>(
 }
 
 impl Translator for L0Table {
-    fn translate<PM: PageTableMapper>(
-        table_pa: TPA<PgTableArray<Self>>,
-        va: VA,
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+        table_pa: Address<M::Phys, PgTableArray<Self>>,
+        va: Address<M, ()>,
         ctx: &mut WalkContext<PM>,
-    ) -> Result<Option<(PA, usize, PtePermissions)>> {
+    ) -> Result<Option<(Address<M::Phys, ()>, usize, PtePermissions)>> {
         let desc = unsafe {
-            ctx.mapper
-                .with_page_table(table_pa, |pgtable| Self::from_ptr(pgtable).get_desc(va))?
+            ctx.mapper.with_page_table(table_pa, |pgtable| {
+                Self::from_ptr(pgtable).get_desc(VA::from_value(va.value()))
+            })?
         };
 
         match desc.next_table_address() {
-            Some(next_pa) => L1Table::translate(next_pa, va, ctx),
+            Some(next_pa) => {
+                let next_pa = Address::from_value(next_pa.value());
+                L1Table::translate(next_pa, va, ctx)
+            }
             None if desc.is_valid() => Err(MapError::InvalidDescriptor.into()),
             None => Ok(None),
         }
@@ -133,19 +137,20 @@ impl Translator for L0Table {
 }
 
 impl Translator for L3Table {
-    fn translate<PM: PageTableMapper>(
-        table_pa: TPA<PgTableArray<Self>>,
-        va: VA,
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+        table_pa: Address<M::Phys, PgTableArray<Self>>,
+        va: Address<M, ()>,
         ctx: &mut WalkContext<PM>,
-    ) -> Result<Option<(PA, usize, PtePermissions)>> {
+    ) -> Result<Option<(Address<M::Phys, ()>, usize, PtePermissions)>> {
         let desc = unsafe {
-            ctx.mapper
-                .with_page_table(table_pa, |pgtable| Self::from_ptr(pgtable).get_desc(va))?
+            ctx.mapper.with_page_table(table_pa, |pgtable| {
+                Self::from_ptr(pgtable).get_desc(VA::from_value(va.value()))
+            })?
         };
 
         match desc.mapped_address() {
             Some(pa) => Ok(Some((
-                pa,
+                Address::from_value(pa.value()),
                 1 << Self::Descriptor::MAP_SHIFT,
                 desc.permissions().unwrap(),
             ))),
