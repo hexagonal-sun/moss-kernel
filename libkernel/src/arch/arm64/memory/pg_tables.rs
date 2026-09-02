@@ -56,17 +56,29 @@ macro_rules! impl_pgtable {
     };
 }
 
-impl_pgtable!(/// Level 0 page table (512 GiB per entry).
-    L0Table, L0Descriptor);
+impl_pgtable!(
+    /// Level 0 page table (512 GiB per entry).
+    L0Table,
+    L0Descriptor
+);
 
-impl_pgtable!(/// Level 1 page table (1 GiB per entry).
-    L1Table, L1Descriptor);
+impl_pgtable!(
+    /// Level 1 page table (1 GiB per entry).
+    L1Table,
+    L1Descriptor
+);
 
-impl_pgtable!(/// Level 2 page table (2 MiB per entry).
-    L2Table, L2Descriptor);
+impl_pgtable!(
+    /// Level 2 page table (2 MiB per entry).
+    L2Table,
+    L2Descriptor
+);
 
-impl_pgtable!(/// Level 3 page table (4 KiB per entry).
-    L3Table, L3Descriptor);
+impl_pgtable!(
+    /// Level 3 page table (4 KiB per entry).
+    L3Table,
+    L3Descriptor
+);
 
 /// Describes the attributes of a memory range to be mapped.
 pub struct MapAttributes {
