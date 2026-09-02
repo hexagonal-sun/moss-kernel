@@ -4,12 +4,12 @@ use libkernel::{
     arch::arm64::memory::{
         pg_descriptors::MemoryType,
         pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
-        pg_walk::get_pte,
+        pg_walk::translate as translate_va,
     },
     error::Result,
     memory::{
         address::{PA, TPA, VA},
-        paging::{PaMapper, PgTableArray, permissions::PtePermissions},
+        paging::{PgTableArray, permissions::PtePermissions},
         proc_vm::address_space::KernAddressSpace,
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
@@ -39,16 +39,11 @@ impl Arm64KernelAddressSpace {
         map_range(self.kernel_l0, map_attrs, &mut ctx)
     }
 
-    pub fn translate(&self, va: VA) -> Option<PA> {
-        let pg_offset = va.page_offset();
-
-        let pte = get_pte(self.kernel_l0, va, &mut PageOffsetPgTableMapper {})
+    pub fn translate(&self, va: VA) -> Option<(PhysMemoryRegion, usize)> {
+        translate_va(self.kernel_l0, va, &mut PageOffsetPgTableMapper {})
             .ok()
-            .flatten()?;
-
-        let pa = pte.mapped_address()?;
-
-        Some(pa.add_bytes(pg_offset))
+            .flatten()
+            .map(|(region, offset, _)| (region, offset))
     }
 
     pub fn table_pa(&self) -> PA {

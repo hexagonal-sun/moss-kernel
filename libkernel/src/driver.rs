@@ -8,3 +8,13 @@ pub struct CharDevDescriptor {
     /// The minor device number (identifies the device instance).
     pub minor: u64,
 }
+
+impl CharDevDescriptor {
+    /// Encodes this device descriptor into a Linux-style `dev_t` value.
+    pub const fn dev_t(self) -> u64 {
+        (self.minor & 0xff)
+            | ((self.major & 0xfff) << 8)
+            | ((self.minor & !0xff) << 12)
+            | ((self.major & !0xfff) << 32)
+    }
+}

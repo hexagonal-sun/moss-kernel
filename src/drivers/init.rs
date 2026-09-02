@@ -1,5 +1,6 @@
 use super::{
     Driver, DriverManager,
+    block::register_block_device,
     probe::{DeviceDescriptor, DeviceMatchType, ProbeFn},
 };
 use crate::{drivers::DM, sync::SpinLock};
@@ -58,6 +59,10 @@ impl PlatformBus {
             for probe_fn in probe_fns {
                 match (probe_fn)(dm, descr.clone()) {
                     Ok(driver) => {
+                        if let Some(block_device) = driver.clone().as_block_device() {
+                            register_block_device(driver.name(), block_device);
+                        }
+
                         dm.insert_driver(driver.clone());
                         return Ok(Some(driver));
                     }
