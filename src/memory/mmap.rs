@@ -1,13 +1,16 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{process::fd_table::Fd, sched::syscall_ctx::ProcessCtx};
-use alloc::string::{String, ToString};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use libkernel::{
     error::{KernelError, Result},
     memory::{
         address::VA,
         proc_vm::{
-            memory_map::AddressRequest,
+            memory_map::{AddressRequest, RemapDestination},
             vmarea::{VMAPermissions, VMAreaKind},
         },
         region::VirtMemoryRegion,
@@ -24,6 +27,10 @@ const MAP_FIXED: u64 = 0x0010;
 const MAP_FIXED_NOREPLACE: u64 = 0x100000;
 const MAP_ANON: u64 = 0x0020;
 const MAP_ANONYMOUS: u64 = 0x0020;
+
+const MREMAP_MAYMOVE: u64 = 1;
+const MREMAP_FIXED: u64 = 2;
+const MREMAP_DONTUNMAP: u64 = 4;
 
 /// Determines the minimal address that user-space is allowed to specify for
 /// MAP_FIXED{,_NOREPLACE}.
@@ -139,28 +146,90 @@ pub async fn sys_mmap(
     Ok(new_mapping_addr.value())
 }
 
+fn free_unmapped_pages(pages: Vec<libkernel::memory::page::PageFrame>) -> Result<()> {
+    if pages.is_empty() {
+        return Ok(());
+    }
+
+    // The frames returned by unmap/mremap are no longer mapped and belong to this process;
+    // creating temporary allocations from these regions allows the allocator to reclaim them on drop.
+    let allocator = crate::memory::PAGE_ALLOC
+        .get()
+        .ok_or(KernelError::NoMemory)?;
+
+    // Create a temporary allocation from the single-page region and drop it immediately to free.
+    for p in pages {
+        let tmp = unsafe { allocator.alloc_from_region(p.as_phys_range()) };
+        drop(tmp);
+    }
+
+    Ok(())
+}
+
 pub async fn sys_munmap(ctx: &ProcessCtx, addr: VA, len: usize) -> Result<usize> {
     let region = VirtMemoryRegion::new(addr, len);
-
     let proc_vm = ctx.shared().vm.shared_vm();
     let pages = proc_vm.lock_save_irq().mm_mut().munmap(region)?;
 
-    // Free any physical frames that were unmapped.
-    if !pages.is_empty() {
-        // The frames returned by munmap are no longer mapped and belong to this process;
-        // creating temporary allocations from these regions allows the allocator to reclaim them on drop.
-        let allocator = crate::memory::PAGE_ALLOC
-            .get()
-            .ok_or(KernelError::NoMemory)?;
-
-        for p in pages {
-            // Create a temporary allocation from the single-page region and drop it immediately to free.
-            let tmp = unsafe { allocator.alloc_from_region(p.as_phys_range()) };
-            drop(tmp);
-        }
-    }
+    free_unmapped_pages(pages)?;
 
     Ok(0)
+}
+
+pub async fn sys_mremap(
+    ctx: &ProcessCtx,
+    old_addr: VA,
+    old_len: usize,
+    new_len: usize,
+    flags: u64,
+    new_addr: VA,
+) -> Result<usize> {
+    if flags & !(MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP) != 0 {
+        return Err(KernelError::InvalidValue);
+    }
+
+    if old_len == 0 {
+        // Linux only allows this special case for shareable mappings, which moss does not support yet.
+        return Err(KernelError::InvalidValue);
+    }
+
+    if new_len == 0 || !old_addr.is_page_aligned() {
+        return Err(KernelError::InvalidValue);
+    }
+
+    if (flags & MREMAP_DONTUNMAP) != 0 {
+        return Err(KernelError::InvalidValue);
+    }
+
+    let destination = if (flags & MREMAP_FIXED) != 0 {
+        if (flags & MREMAP_MAYMOVE) == 0 || !new_addr.is_page_aligned() {
+            return Err(KernelError::InvalidValue);
+        }
+
+        let old_region = VirtMemoryRegion::new(old_addr, old_len).align_to_page_boundary();
+        let new_region = VirtMemoryRegion::new(new_addr, new_len).align_to_page_boundary();
+
+        if old_region.overlaps(new_region) {
+            return Err(KernelError::InvalidValue);
+        }
+
+        RemapDestination::Fixed(new_addr)
+    } else if (flags & MREMAP_MAYMOVE) != 0 {
+        RemapDestination::MayMove
+    } else {
+        RemapDestination::InPlaceOnly
+    };
+
+    let proc_vm = ctx.shared().vm.shared_vm();
+    let (new_mapping_addr, pages_to_free) =
+        proc_vm
+            .lock_save_irq()
+            .mm_mut()
+            .mremap(old_addr, old_len, new_len, destination)?;
+
+    free_unmapped_pages(pages_to_free)?;
+
+    Ok(new_mapping_addr.value())
 }
 
 pub fn sys_mprotect(ctx: &ProcessCtx, addr: VA, len: usize, prot: u64) -> Result<usize> {
