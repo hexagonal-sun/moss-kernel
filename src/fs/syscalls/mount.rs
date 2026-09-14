@@ -25,7 +25,7 @@ bitflags! {
         const MS_MOVE = 8192;
         const MS_REC = 16384;
         const MS_VERBOSE = 32768;
-        const MS_SILENT = 65536;
+        const MS_SILENT = 32768;
         const MS_POSIXACL = 1 << 16;
         const MS_UNBINDABLE	= 1 << 17;
         const MS_PRIVATE = 1 << 18;
@@ -53,10 +53,16 @@ pub async fn sys_mount(
     flags: i64,
     _data: UA,
 ) -> Result<usize> {
-    let flags = MountFlags::from_bits_truncate(flags as u64);
-    if flags.contains(MountFlags::MS_REC) {
-        // TODO: Handle later
-        return Ok(0);
+    ctx.shared()
+        .creds
+        .lock_save_irq()
+        .caps()
+        .check_capable(libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN)?;
+    // Mount options are not enforced by the global mount table yet. In
+    // particular, never silently accept security flags or propagation changes.
+    let harmless = MountFlags::MS_SILENT.bits();
+    if flags as u64 & !harmless != 0 {
+        return Err(KernelError::NotSupported);
     }
     let mut buf = [0u8; 1024];
     let dev_name = if dev_name.is_null() {
@@ -72,8 +78,9 @@ pub async fn sys_mount(
     let dir_name = UserCStr::from_ptr(dir_name)
         .copy_from_user(&mut buf)
         .await?;
+    let cwd = ctx.shared().cwd.lock_save_irq().0.clone();
     let mount_point = VFS
-        .resolve_path(Path::new(dir_name), VFS.root_inode(), ctx.shared())
+        .resolve_path(Path::new(dir_name), cwd, ctx.shared())
         .await?;
     let mut buf = [0u8; 1024];
     let fs_type = if type_.is_null() {

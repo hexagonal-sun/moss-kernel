@@ -1,15 +1,12 @@
 use crate::{
-    fs::{
-        VFS,
-        syscalls::at::{AtFlags, resolve_at_start_node},
-    },
+    fs::syscalls::at::{AtFlags, resolve_at_start_node, resolve_path_flags},
     memory::uaccess::{copy_to_user_slice, cstr::UserCStr},
     process::fd_table::Fd,
     sched::syscall_ctx::ProcessCtx,
 };
 use core::{cmp::min, ffi::c_char};
 use libkernel::{
-    error::{FsError, Result},
+    error::{FsError, KernelError, Result},
     fs::{FileType, path::Path},
     memory::address::{TUA, UA},
 };
@@ -21,6 +18,9 @@ pub async fn sys_readlinkat(
     buf: UA,
     size: usize,
 ) -> Result<usize> {
+    if size == 0 {
+        return Err(KernelError::InvalidValue);
+    }
     let mut path_buf = [0; 1024];
 
     let task = ctx.shared().clone();
@@ -30,16 +30,11 @@ pub async fn sys_readlinkat(
             .await?,
     );
 
-    let start = resolve_at_start_node(ctx, dirfd, path, AtFlags::empty()).await?;
-    let name = path.file_name().ok_or(FsError::InvalidInput)?;
-
-    let parent = if let Some(p) = path.parent() {
-        VFS.resolve_path_nofollow(p, start.clone(), &task).await?
-    } else {
-        start
-    };
-
-    let inode = parent.lookup(name).await?;
+    // Linux readlinkat accepts an empty pathname without a separate flags
+    // argument, including an O_PATH | O_NOFOLLOW handle to the symlink.
+    let flags = AtFlags::AT_EMPTY_PATH | AtFlags::AT_SYMLINK_NOFOLLOW;
+    let start = resolve_at_start_node(ctx, dirfd, path, flags).await?;
+    let inode = resolve_path_flags(dirfd, path, start, &task, flags).await?;
     let attr = inode.getattr().await?;
 
     if attr.file_type != FileType::Symlink {

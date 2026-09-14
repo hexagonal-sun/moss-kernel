@@ -97,7 +97,7 @@ pub async fn sys_memfd_create(
     _flags: u32,
 ) -> libkernel::error::Result<usize> {
     let memfd = MemFd::new();
-    let open_file = Arc::new(OpenFile::new(Box::new(memfd), OpenFlags::empty()));
+    let open_file = Arc::new(OpenFile::new(Box::new(memfd), OpenFlags::O_RDWR));
     Ok(ctx
         .shared()
         .fd_table

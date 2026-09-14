@@ -15,6 +15,15 @@ const F_DUPFD_CLOEXEC: u32 = F_LINUX_SPECIFIC_BASE + 6; // Duplicate file descri
 
 pub async fn sys_fcntl(ctx: &ProcessCtx, fd: Fd, op: u32, arg: usize) -> Result<usize> {
     let task = ctx.shared();
+    let file = task
+        .fd_table
+        .lock_save_irq()
+        .get_raw(fd)
+        .ok_or(KernelError::BadFd)?;
+    if file.is_path_only() && !matches!(op, F_DUPFD | F_DUPFD_CLOEXEC | F_GETFD | F_SETFD | F_GETFL)
+    {
+        return Err(KernelError::BadFd);
+    }
 
     match op {
         F_DUPFD => dup_fd(ctx, fd, Some(Fd(arg as i32))).map(|new_fd| new_fd.as_raw() as _),

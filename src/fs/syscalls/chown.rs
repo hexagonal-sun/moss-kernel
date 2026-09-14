@@ -1,10 +1,4 @@
-use libkernel::{
-    error::{KernelError, Result},
-    proc::{
-        caps::CapabilitiesFlags,
-        ids::{Gid, Uid},
-    },
-};
+use libkernel::error::{KernelError, Result};
 
 use crate::{
     process::{fd_table::Fd, inotify::notify_attrib},
@@ -22,21 +16,7 @@ pub async fn sys_fchown(ctx: &ProcessCtx, fd: Fd, owner: i32, group: i32) -> Res
     let inode = file.inode().ok_or(KernelError::BadFd)?;
     let mut attr = inode.getattr().await?;
 
-    {
-        let creds = task.creds.lock_save_irq();
-        if owner != -1 {
-            creds.caps().check_capable(CapabilitiesFlags::CAP_CHOWN)?;
-            attr.uid = Uid::new(owner as _);
-        }
-        if group != -1 {
-            let gid = Gid::new(group as _);
-            // doesn't seem like there's real groups so this is as good as it gets
-            if creds.uid() != attr.uid || creds.gid() != gid {
-                creds.caps().check_capable(CapabilitiesFlags::CAP_CHOWN)?;
-            }
-            attr.gid = gid;
-        }
-    }
+    task.creds.lock_save_irq().chown(&mut attr, owner, group)?;
     inode.setattr(attr).await?;
     notify_attrib(inode.id()).await;
 

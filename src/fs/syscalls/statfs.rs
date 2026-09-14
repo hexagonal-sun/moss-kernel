@@ -119,7 +119,7 @@ pub async fn sys_fstatfs(
         .shared()
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_raw(fd)
         .ok_or(KernelError::BadFd)?;
     let inode = fd.inode().ok_or(KernelError::InvalidValue)?;
     let statfs = statfs_impl(inode).await?;

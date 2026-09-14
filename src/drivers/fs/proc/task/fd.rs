@@ -10,11 +10,32 @@ use alloc::vec::Vec;
 use async_trait::async_trait;
 use libkernel::error::Result;
 use libkernel::error::{FsError, KernelError};
-use libkernel::fs::attr::FileAttr;
+use libkernel::fs::attr::{FileAttr, FilePermissions};
 use libkernel::fs::pathbuf::PathBuf;
 use libkernel::fs::{
     DirStream, Dirent, FileType, Filesystem, Inode, InodeId, SimpleDirStream, SimpleFile,
 };
+
+fn check_access(target: &crate::process::Task) -> Result<()> {
+    let caller = crate::sched::current_work().task.t_shared.clone();
+    crate::process::access::ptrace_may_access(&caller, target, true)
+        .map_err(|_| FsError::PermissionDenied.into())
+}
+
+fn task_attr(tid: Tid, mut attr: FileAttr) -> Result<FileAttr> {
+    let task = find_task_by_tid(tid).ok_or(FsError::NotFound)?;
+    let creds = task.creds.lock_save_irq();
+    if task
+        .process
+        .dumpable
+        .load(core::sync::atomic::Ordering::Acquire)
+        == 1
+    {
+        attr.uid = creds.euid();
+        attr.gid = creds.egid();
+    }
+    Ok(attr)
+}
 
 pub struct ProcFdInode {
     id: InodeId,
@@ -29,7 +50,7 @@ impl ProcFdInode {
             id: inode_id,
             attr: FileAttr {
                 file_type: FileType::Directory,
-                // Define appropriate file attributes for fdinfo.
+                permissions: FilePermissions::from_bits_retain(0o500),
                 ..FileAttr::default()
             },
             tid,
@@ -44,19 +65,40 @@ impl ProcFdInode {
 
 #[async_trait]
 impl Inode for ProcFdInode {
+    async fn check_access(
+        &self,
+        uid: libkernel::proc::ids::Uid,
+        gid: libkernel::proc::ids::Gid,
+        groups: &[libkernel::proc::ids::Gid],
+        caps: libkernel::proc::caps::Capabilities,
+        mode: libkernel::fs::attr::AccessMode,
+    ) -> Result<()> {
+        let result = self
+            .getattr()
+            .await?
+            .check_access_with_groups(uid, gid, groups, caps, mode);
+        if result.is_err() {
+            let target = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
+            if crate::sched::current_work().task.process.tgid == target.process.tgid {
+                return Ok(());
+            }
+        }
+        result
+    }
+
     fn id(&self) -> InodeId {
         self.id
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attr.clone())
+        task_attr(self.tid, self.attr.clone())
     }
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         let fd: i32 = name.parse().map_err(|_| FsError::NotFound)?;
         let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
         let fd_table = task.fd_table.lock_save_irq();
-        if fd_table.get(Fd(fd)).is_none() {
+        if fd_table.get_raw(Fd(fd)).is_none() {
             return Err(FsError::NotFound.into());
         }
         let fs = procfs();
@@ -74,13 +116,11 @@ impl Inode for ProcFdInode {
 
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
         let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
+        check_access(&task)?;
         let fd_table = task.fd_table.lock_save_irq();
         let mut entries = Vec::new();
-        for fd in 0..fd_table.len() {
-            if fd_table.get(Fd(fd as i32)).is_none() {
-                continue;
-            }
-            let fd_str = fd.to_string();
+        for (fd, _) in fd_table.iter() {
+            let fd_str = fd.as_raw().to_string();
             let next_offset = (entries.len() + 1) as u64;
             entries.push(Dirent {
                 id: InodeId::from_fsid_and_inodeid(
@@ -119,7 +159,7 @@ impl ProcFdFile {
                 } else {
                     FileType::Symlink
                 },
-                // Define appropriate file attributes for fdinfo file.
+                permissions: FilePermissions::from_bits_retain(if fd_info { 0o400 } else { 0o700 }),
                 ..FileAttr::default()
             },
             tid,
@@ -136,15 +176,16 @@ impl SimpleFile for ProcFdFile {
     }
 
     async fn getattr(&self) -> Result<FileAttr> {
-        Ok(self.attr.clone())
+        task_attr(self.tid, self.attr.clone())
     }
 
     async fn read(&self) -> Result<Vec<u8>> {
         let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
+        check_access(&task)?;
         let fd_entry = task
             .fd_table
             .lock_save_irq()
-            .get(Fd(self.fd))
+            .get_raw(Fd(self.fd))
             .ok_or(FsError::NotFound)?;
         let (_, ctx) = &mut *fd_entry.lock().await;
         let info_string = format!("pos: {}\nflags: {}", ctx.pos, ctx.flags.bits());
@@ -158,7 +199,8 @@ impl SimpleFile for ProcFdFile {
     async fn readlink(&self) -> Result<PathBuf> {
         if !self.fd_info {
             if let Some(task) = find_task_by_tid(self.tid) {
-                let Some(file) = task.fd_table.lock_save_irq().get(Fd(self.fd)) else {
+                check_access(&task)?;
+                let Some(file) = task.fd_table.lock_save_irq().get_raw(Fd(self.fd)) else {
                     return Err(FsError::NotFound.into());
                 };
                 if let Some(path) = file.path() {
@@ -182,10 +224,11 @@ impl SimpleFile for ProcFdFile {
             return Ok(None);
         }
         let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
+        check_access(&task)?;
         let file = task
             .fd_table
             .lock_save_irq()
-            .get(Fd(self.fd))
+            .get_raw(Fd(self.fd))
             .ok_or(FsError::NotFound)?;
         Ok(file.inode())
     }

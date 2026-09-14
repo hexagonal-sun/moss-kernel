@@ -70,6 +70,7 @@ impl OwnedTask {
             cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             root: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             creds: SpinLock::new(Credentials::new_root()),
+            umask: Arc::new(SpinLock::new(0)),
             vm: Arc::new(VmHandle::new(vm)),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             i_timers: SpinLock::new(ITimers::default()),
@@ -100,6 +101,7 @@ impl OwnedTask {
             cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             root: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
             creds: SpinLock::new(Credentials::new_root()),
+            umask: Arc::new(SpinLock::new(0)),
             vm: Arc::new(VmHandle::new(
                 ProcessVM::empty().expect("Could not create init process's VM"),
             )),

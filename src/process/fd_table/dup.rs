@@ -10,7 +10,7 @@ pub fn dup_fd(ctx: &ProcessCtx, fd: Fd, min_fd: Option<Fd>) -> Result<Fd> {
     let task = ctx.shared();
     let mut files = task.fd_table.lock_save_irq();
 
-    let file = files.get(fd).ok_or(KernelError::BadFd)?;
+    let file = files.get_raw(fd).ok_or(KernelError::BadFd)?;
 
     let new_fd = match min_fd {
         Some(min_fd) => files.insert_above(min_fd, file.clone())?,
@@ -30,6 +30,9 @@ pub fn sys_dup3(ctx: &ProcessCtx, oldfd: Fd, newfd: Fd, flags: u32) -> Result<us
     if oldfd == newfd {
         return Err(KernelError::InvalidValue);
     }
+    if newfd.as_raw() < 0 || newfd.as_raw() as usize >= super::MAX_FDS {
+        return Err(KernelError::BadFd);
+    }
 
     let flags = OpenFlags::from_bits_retain(flags);
 
@@ -41,7 +44,7 @@ pub fn sys_dup3(ctx: &ProcessCtx, oldfd: Fd, newfd: Fd, flags: u32) -> Result<us
     let task = ctx.shared();
     let mut files = task.fd_table.lock_save_irq();
 
-    let old_file = files.get(oldfd).ok_or(KernelError::BadFd)?;
+    let old_file = files.get_raw(oldfd).ok_or(KernelError::BadFd)?;
 
     files.insert_at(
         newfd,

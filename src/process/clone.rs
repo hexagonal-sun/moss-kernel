@@ -64,6 +64,22 @@ pub async fn sys_clone(
     tls: usize,
 ) -> Result<usize> {
     let flags = CloneFlags::from_bits_truncate(flags);
+    let namespaces = CloneFlags::CLONE_NEWNS
+        | CloneFlags::CLONE_NEWCGROUP
+        | CloneFlags::CLONE_NEWUTS
+        | CloneFlags::CLONE_NEWIPC
+        | CloneFlags::CLONE_NEWUSER
+        | CloneFlags::CLONE_NEWPID
+        | CloneFlags::CLONE_NEWNET;
+    // No namespace isolation is implemented yet. Never report a successful
+    // sandbox creation while leaving the child in the caller's global domains.
+    if flags.intersects(namespaces)
+        || (flags.contains(CloneFlags::CLONE_SIGHAND) && !flags.contains(CloneFlags::CLONE_VM))
+        || (flags.contains(CloneFlags::CLONE_THREAD)
+            && !flags.contains(CloneFlags::CLONE_SIGHAND | CloneFlags::CLONE_VM))
+    {
+        return Err(KernelError::InvalidValue);
+    }
 
     let trace_point = if flags.contains(CloneFlags::CLONE_THREAD) {
         TracePoint::Clone
@@ -91,7 +107,7 @@ pub async fn sys_clone(
         }
 
         let tg = if flags.contains(CloneFlags::CLONE_THREAD) {
-            if !flags.contains(CloneFlags::CLONE_SIGHAND & CloneFlags::CLONE_VM) {
+            if !flags.contains(CloneFlags::CLONE_SIGHAND | CloneFlags::CLONE_VM) {
                 // CLONE_THREAD requires both CLONE_SIGHAND and CLONE_VM to be
                 // set.
                 return Err(KernelError::InvalidValue);
@@ -184,6 +200,11 @@ pub async fn sys_clone(
                 fd_table: files,
                 cwd,
                 root,
+                umask: if flags.contains(CloneFlags::CLONE_FS) {
+                    current_task.umask.clone()
+                } else {
+                    Arc::new(SpinLock::new(*current_task.umask.lock_save_irq()))
+                },
                 i_timers: SpinLock::new(ITimers::default()),
                 creds: SpinLock::new(creds),
                 ptrace: SpinLock::new(ptrace),

@@ -570,8 +570,8 @@ pub async fn sys_inotify_add_watch(
 
     {
         let creds = task.creds.lock_save_irq();
-        if attr
-            .check_access(creds.euid(), creds.egid(), creds.caps(), AccessMode::R_OK)
+        if creds
+            .check_file_access(&attr, AccessMode::R_OK)
             .is_err()
         {
             return Err(FsError::PermissionDenied.into());

@@ -60,7 +60,7 @@ async fn resolve_at_start_node(
         let file = task
             .fd_table
             .lock_save_irq()
-            .get(dirfd)
+            .get_raw(dirfd)
             .ok_or(KernelError::BadFd)?;
 
         let inode = file.inode().ok_or(KernelError::NotSupported)?;
@@ -90,12 +90,16 @@ async fn resolve_path_flags(
             let file = task
                 .fd_table
                 .lock_save_irq()
-                .get(dirfd)
+                .get_raw(dirfd)
                 .ok_or(KernelError::BadFd)?;
 
             file.inode().ok_or(KernelError::NotSupported)?
         });
     };
+
+    if path.as_str().is_empty() {
+        return Err(FsError::NotFound.into());
+    }
 
     if flags.contains(AtFlags::AT_SYMLINK_NOFOLLOW) {
         return VFS.resolve_path_nofollow(path, root, task).await;

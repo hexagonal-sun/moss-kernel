@@ -30,7 +30,7 @@ pub async fn sys_accept4(
         .await?;
     let new_socket = new_socket.as_file();
 
-    let open_file = OpenFile::new(new_socket, OpenFlags::empty());
+    let open_file = OpenFile::new(new_socket, OpenFlags::O_RDWR);
     let new_fd = ctx
         .shared()
         .fd_table

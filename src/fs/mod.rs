@@ -1,4 +1,5 @@
 use crate::clock::realtime::date;
+use crate::process::creds::Credentials;
 use crate::{
     drivers::{DM, Driver},
     process::{
@@ -16,9 +17,9 @@ use libkernel::{
     error::{FsError, KernelError, Result},
     fs::{
         BlockDevice, FS_ID_START, FileType, Filesystem, Inode, InodeId, OpenFlags,
-        attr::FilePermissions, path::Path,
+        attr::{AccessMode, FilePermissions},
+        path::Path,
     },
-    proc::caps::CapabilitiesFlags,
 };
 use open_file::OpenFile;
 use reg::RegFile;
@@ -27,6 +28,7 @@ pub mod dir;
 pub mod fops;
 pub mod memfd;
 pub mod open_file;
+mod path_file;
 pub mod pipe;
 pub mod reg;
 pub mod syscalls;
@@ -50,6 +52,7 @@ impl Inode for DummyInode {
 struct Mount {
     fs: Arc<dyn Filesystem>,
     root_inode: Arc<dyn Inode>,
+    covered_inode: Arc<dyn Inode>,
 }
 
 /// This trait represents a type of filesystem, like "ext4" or "tmpfs". It acts
@@ -164,6 +167,7 @@ impl VFS {
         let mount = Mount {
             fs,
             root_inode: root_inode.clone(),
+            covered_inode: root_inode.clone(),
         };
 
         // Lock the state to add the new mount and filesystem.
@@ -190,7 +194,11 @@ impl VFS {
         let mount_point_id = mount_point.id();
         let root_inode = fs.root_inode().await?;
 
-        let new_mount = Mount { fs, root_inode };
+        let new_mount = Mount {
+            fs,
+            root_inode,
+            covered_inode: mount_point,
+        };
 
         // Lock the state and insert the new mount.
         self.state
@@ -228,13 +236,9 @@ impl VFS {
         root: Arc<dyn Inode>,
         task: &Arc<Task>,
     ) -> Result<Arc<dyn Inode>> {
-        let root = if path.is_absolute() {
-            task.root.lock_save_irq().0.clone() // use the task's root inode, in case a custom chroot was set
-        } else {
-            root
-        };
-
-        self.resolve_path_internal(path, root, true).await
+        let creds = task.creds.lock_save_irq().clone();
+        self.resolve_with_credentials(path, root, task, true, &creds)
+            .await
     }
 
     /// Resolves a path string to an Inode, starting from a given root for
@@ -245,13 +249,30 @@ impl VFS {
         root: Arc<dyn Inode>,
         task: &Arc<Task>,
     ) -> Result<Arc<dyn Inode>> {
+        let creds = task.creds.lock_save_irq().clone();
+        self.resolve_with_credentials(path, root, task, false, &creds)
+            .await
+    }
+
+    pub(crate) async fn resolve_with_credentials(
+        &self,
+        path: &Path,
+        root: Arc<dyn Inode>,
+        task: &Arc<Task>,
+        follow: bool,
+        creds: &Credentials,
+    ) -> Result<Arc<dyn Inode>> {
+        if path.as_str().is_empty() {
+            return Err(FsError::NotFound.into());
+        }
+        let process_root = task.root.lock_save_irq().0.clone();
         let root = if path.is_absolute() {
-            task.root.lock_save_irq().0.clone()
+            process_root.clone()
         } else {
             root
         };
-
-        self.resolve_path_internal(path, root, false).await
+        self.resolve_path_internal(path, root, follow, process_root, Some(creds))
+            .await
     }
 
     /// Resolves a path string to an Inode, starting from a given root for
@@ -271,7 +292,8 @@ impl VFS {
             root
         };
 
-        self.resolve_path_internal(path, root, true).await
+        self.resolve_path_internal(path, root, true, self.root_inode(), None)
+            .await
     }
 
     async fn resolve_path_internal(
@@ -279,6 +301,8 @@ impl VFS {
         path: &Path,
         root: Arc<dyn Inode>,
         follow_last_sym: bool,
+        process_root: Arc<dyn Inode>,
+        creds: Option<&Credentials>,
     ) -> Result<Arc<dyn Inode>> {
         let mut current_inode = root;
         let mut symlink_count = 0;
@@ -303,8 +327,44 @@ impl VFS {
                 current_inode = mount_root;
             }
 
-            if current_inode.getattr().await?.file_type != FileType::Directory {
+            let current_attr = current_inode.getattr().await?;
+            if current_attr.file_type != FileType::Directory {
                 return Err(FsError::NotADirectory.into());
+            }
+            if let Some(creds) = creds {
+                creds
+                    .check_inode_access(current_inode.as_ref(), AccessMode::X_OK)
+                    .await?;
+            }
+            if component == ".." && current_inode.id() == process_root.id() {
+                continue;
+            }
+            if component == ".." {
+                // Leave mount roots through their covered directory before
+                // asking the parent filesystem for `..` (never through a
+                // virtual filesystem's synthetic root entry).
+                loop {
+                    let covered = self
+                        .state
+                        .lock_save_irq()
+                        .mounts
+                        .values()
+                        .find(|m| m.root_inode.id() == current_inode.id())
+                        .map(|m| m.covered_inode.clone());
+                    let Some(covered) = covered else {
+                        break;
+                    };
+                    if covered.id() == current_inode.id() {
+                        break;
+                    }
+                    current_inode = covered;
+                    if current_inode.id() == process_root.id() {
+                        break;
+                    }
+                }
+                if current_inode.id() == process_root.id() {
+                    continue;
+                }
             }
             if component == "." {
                 continue;
@@ -313,7 +373,9 @@ impl VFS {
 
             let attr = next_inode.getattr().await?;
 
-            if attr.file_type == FileType::Symlink && (follow_last_sym || !components.is_empty()) {
+            if attr.file_type == FileType::Symlink
+                && (follow_last_sym || !components.is_empty() || path.as_str().ends_with('/'))
+            {
                 symlink_count += 1;
                 if symlink_count > MAX_SYMLINK {
                     return Err(FsError::Loop.into()); // prevent infinite looping
@@ -341,7 +403,7 @@ impl VFS {
 
                 if target.is_absolute() {
                     // if absolute, restart from root
-                    current_inode = self.root_inode.lock_save_irq().as_ref().unwrap().clone();
+                    current_inode = process_root.clone();
                 }
 
                 continue;
@@ -382,8 +444,24 @@ impl VFS {
         mode: FilePermissions,
         task: &Arc<Task>,
     ) -> Result<Arc<OpenFile>> {
+        if path.as_str().is_empty() {
+            return Err(FsError::NotFound.into());
+        }
+        let flags = if flags.contains(OpenFlags::O_PATH) {
+            flags & (OpenFlags::O_PATH | OpenFlags::O_DIRECTORY | OpenFlags::O_NOFOLLOW)
+        } else {
+            flags & !OpenFlags::O_CLOEXEC
+        };
+        let creds = task.creds.lock_save_irq().clone();
+        let mut created = false;
         // Attempt to resolve the full path first.
-        let resolve_result = self.resolve_path(path, root.clone(), task).await;
+        let resolve_result = if flags.contains(OpenFlags::O_NOFOLLOW)
+            || flags.contains(OpenFlags::O_CREAT | OpenFlags::O_EXCL)
+        {
+            self.resolve_path_nofollow(path, root.clone(), task).await
+        } else {
+            self.resolve_path(path, root.clone(), task).await
+        };
 
         let target_inode = match resolve_result {
             // The file/directory exists.
@@ -413,13 +491,27 @@ impl VFS {
 
                     // Ensure the parent is actually a directory before creating a
                     // file in it.
-                    if parent_inode.getattr().await?.file_type != FileType::Directory {
+                    let parent_attr = parent_inode.getattr().await?;
+                    if parent_attr.file_type != FileType::Directory {
                         return Err(FsError::NotADirectory.into());
                     }
+                    creds.check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
+                    let mode = FilePermissions::from_bits_truncate(
+                        mode.bits() & !(*task.umask.lock_save_irq() as u16),
+                    );
 
                     let target_inode = parent_inode
                         .create(file_name, FileType::File, mode, Some(date()))
                         .await?;
+                    let mut attr = target_inode.getattr().await?;
+                    attr.uid = creds.fsuid();
+                    attr.gid = if parent_attr.permissions.contains(FilePermissions::S_ISGID) {
+                        parent_attr.gid
+                    } else {
+                        creds.fsgid()
+                    };
+                    target_inode.setattr(attr).await?;
+                    created = true;
                     notify_create(parent_inode.id(), file_name, false).await;
                     target_inode
                 } else {
@@ -439,6 +531,29 @@ impl VFS {
             return Err(FsError::NotADirectory.into());
         }
 
+        if flags.contains(OpenFlags::O_PATH) {
+            let mut file = OpenFile::new(Box::new(path_file::PathFile), flags);
+            file.update(target_inode, path.to_owned());
+            return Ok(Arc::new(file));
+        }
+        if attr.file_type == FileType::Symlink {
+            return Err(FsError::Loop.into());
+        }
+        if !created {
+            let mut access = match flags & OpenFlags::O_ACCMODE {
+                OpenFlags::O_RDONLY => AccessMode::R_OK,
+                OpenFlags::O_WRONLY => AccessMode::W_OK,
+                OpenFlags::O_RDWR => AccessMode::R_OK | AccessMode::W_OK,
+                _ => return Err(KernelError::InvalidValue),
+            };
+            if flags.contains(OpenFlags::O_TRUNC) {
+                access.insert(AccessMode::W_OK);
+            }
+            creds
+                .check_inode_access(target_inode.as_ref(), access)
+                .await?;
+        }
+
         if attr.file_type == FileType::Directory
             && (flags.contains(OpenFlags::O_WRONLY) || flags.contains(OpenFlags::O_RDWR))
         {
@@ -449,7 +564,7 @@ impl VFS {
             && attr.file_type == FileType::File
             && (flags.contains(OpenFlags::O_WRONLY) || flags.contains(OpenFlags::O_RDWR))
         {
-            // TODO: Check for write permissions on the inode itself.
+            // Open-time permission checks above include write access for O_TRUNC.
             target_inode.truncate(0).await?;
             notify_modify(target_inode.id()).await;
         }
@@ -519,15 +634,28 @@ impl VFS {
                     root.clone()
                 };
 
-                // Verify that the parent is actually a directory.
-                if parent_inode.getattr().await?.file_type != FileType::Directory {
+                let parent_attr = parent_inode.getattr().await?;
+                if parent_attr.file_type != FileType::Directory {
                     return Err(FsError::NotADirectory.into());
                 }
-
-                // Delegate the creation to the filesystem-specific inode.
-                parent_inode
+                let creds = task.creds.lock_save_irq().clone();
+                creds.check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
+                let mut mode = FilePermissions::from_bits_truncate(
+                    mode.bits() & 0o1777 & !(*task.umask.lock_save_irq() as u16),
+                );
+                let gid = if parent_attr.permissions.contains(FilePermissions::S_ISGID) {
+                    mode.insert(FilePermissions::S_ISGID);
+                    parent_attr.gid
+                } else {
+                    creds.fsgid()
+                };
+                let inode = parent_inode
                     .create(dir_name, FileType::Directory, mode, Some(date()))
                     .await?;
+                let mut attr = inode.getattr().await?;
+                attr.uid = creds.fsuid();
+                attr.gid = gid;
+                inode.setattr(attr).await?;
                 notify_create(parent_inode.id(), dir_name, true).await;
 
                 Ok(())
@@ -579,12 +707,8 @@ impl VFS {
         {
             let creds = task.creds.lock_save_irq();
 
-            if attr.permissions.contains(FilePermissions::S_ISVTX)
-                && attr.uid != creds.euid()
-                && parent_attr.uid != creds.euid()
-            {
-                creds.caps().check_capable(CapabilitiesFlags::CAP_FOWNER)?;
-            }
+            creds.check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
+            creds.check_sticky(&parent_attr, &attr)?;
         }
 
         // Extract the final component (name) and perform the unlink on the parent.
@@ -628,12 +752,22 @@ impl VFS {
                     root.clone()
                 };
 
-                // verify that the parent inode is a directory
-                if parent_inode.getattr().await?.file_type != FileType::Directory {
+                let parent_attr = parent_inode.getattr().await?;
+                if parent_attr.file_type != FileType::Directory {
                     return Err(FsError::NotADirectory.into());
                 }
-
+                let creds = task.creds.lock_save_irq().clone();
+                creds.check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
                 parent_inode.symlink(name, target).await?;
+                let inode = parent_inode.lookup(name).await?;
+                let mut attr = inode.getattr().await?;
+                attr.uid = creds.fsuid();
+                attr.gid = if parent_attr.permissions.contains(FilePermissions::S_ISGID) {
+                    parent_attr.gid
+                } else {
+                    creds.fsgid()
+                };
+                inode.setattr(attr).await?;
                 notify_create(parent_inode.id(), name, false).await;
                 Ok(())
             }

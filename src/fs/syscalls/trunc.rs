@@ -15,7 +15,7 @@ pub async fn sys_truncate(ctx: &ProcessCtx, path: TUA<c_char>, new_size: usize) 
     let task = ctx.shared().clone();
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
 
-    let root = task.root.lock_save_irq().0.clone();
+    let root = task.cwd.lock_save_irq().0.clone();
     let file = VFS
         .open(
             path,
@@ -40,6 +40,8 @@ pub async fn sys_ftruncate(ctx: &ProcessCtx, fd: Fd, new_size: usize) -> Result<
         .ok_or(KernelError::BadFd)?;
 
     let (ops, ctx) = &mut *fd.lock().await;
+    ctx.require_writable()
+        .map_err(|_| KernelError::InvalidValue)?;
 
     ops.truncate(ctx, new_size).await.map(|_| 0)
 }

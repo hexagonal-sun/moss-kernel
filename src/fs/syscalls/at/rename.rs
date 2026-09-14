@@ -2,9 +2,8 @@ use core::ffi::c_char;
 
 use libkernel::{
     error::{FsError, KernelError, Result},
-    fs::{FileType, attr::FilePermissions, path::Path},
+    fs::{FileType, attr::AccessMode, path::Path},
     memory::address::TUA,
-    proc::caps::CapabilitiesFlags,
 };
 
 use crate::{
@@ -100,22 +99,17 @@ pub async fn sys_renameat2(
         let new_parent_attr = new_parent_inode.getattr().await?;
         let new_attr = match new_parent_inode.lookup(new_name).await {
             Ok(attr) => Some(attr.getattr().await?),
-            Err(_) => None,
+            Err(KernelError::Fs(FsError::NotFound)) => None,
+            Err(e) => return Err(e),
         };
 
         let creds = task.creds.lock_save_irq();
 
-        if (old_attr.permissions.contains(FilePermissions::S_ISVTX)
-            && old_attr.uid != creds.euid()
-            && old_parent_attr.uid != creds.euid())
-            || new_parent_attr.uid != creds.euid()
-        {
-            creds.caps().check_capable(CapabilitiesFlags::CAP_FOWNER)?;
-        } else if let Some(new_attr) = new_attr
-            && new_attr.permissions.contains(FilePermissions::S_ISVTX)
-            && new_attr.uid != creds.euid()
-        {
-            creds.caps().check_capable(CapabilitiesFlags::CAP_FOWNER)?;
+        creds.check_file_access(&old_parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
+        creds.check_file_access(&new_parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
+        creds.check_sticky(&old_parent_attr, &old_attr)?;
+        if let Some(new_attr) = new_attr {
+            creds.check_sticky(&new_parent_attr, &new_attr)?;
         }
     }
 

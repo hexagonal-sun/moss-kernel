@@ -4,6 +4,7 @@ use crate::process::Comm;
 use crate::sched::syscall_ctx::ProcessCtx;
 use bitflags::Flags;
 use core::ffi::c_char;
+use core::sync::atomic::Ordering;
 use libkernel::error::{KernelError, Result};
 use libkernel::memory::address::TUA;
 use libkernel::proc::caps::CapabilitiesFlags;
@@ -39,6 +40,9 @@ impl TryFrom<u64> for AmbientCapOp {
 }
 
 fn pr_read_capbset(ctx: &ProcessCtx, what: usize) -> Result<usize> {
+    if what >= 64 {
+        return Err(KernelError::InvalidValue);
+    }
     let what = CapabilitiesFlags::from_bits(1u64 << what).ok_or(KernelError::InvalidValue)?;
     let task = ctx.shared();
     let creds = task.creds.lock_save_irq();
@@ -46,9 +50,13 @@ fn pr_read_capbset(ctx: &ProcessCtx, what: usize) -> Result<usize> {
 }
 
 async fn pr_drop_capbset(ctx: &ProcessCtx, what: usize) -> Result<usize> {
+    if what >= 64 {
+        return Err(KernelError::InvalidValue);
+    }
     let what = CapabilitiesFlags::from_bits(1u64 << what).ok_or(KernelError::InvalidValue)?;
     let task = ctx.shared();
     let mut creds = task.creds.lock_save_irq();
+    creds.caps.check_capable(CapabilitiesFlags::CAP_SETPCAP)?;
     creds.caps.bounding_mut().remove(what);
     Ok(0)
 }
@@ -70,6 +78,9 @@ async fn pr_set_name(ctx: &ProcessCtx, str: TUA<c_char>) -> Result<usize> {
 
 async fn pr_cap_ambient(ctx: &ProcessCtx, op: u64, arg1: u64) -> Result<usize> {
     let op = AmbientCapOp::try_from(op)?;
+    if !matches!(op, AmbientCapOp::ClearAll) && arg1 >= 64 {
+        return Err(KernelError::InvalidValue);
+    }
     let task = ctx.shared();
     match op {
         AmbientCapOp::ClearAll => {
@@ -98,7 +109,7 @@ async fn pr_cap_ambient(ctx: &ProcessCtx, op: u64, arg1: u64) -> Result<usize> {
             if !creds.caps.inheritable().contains(what) {
                 return Err(KernelError::NotPermitted);
             }
-            if !creds.caps.bounding().contains(what) {
+            if !creds.caps.permitted().contains(what) {
                 return Err(KernelError::NotPermitted);
             }
             creds.caps.ambient_mut().insert(what);
@@ -109,6 +120,18 @@ async fn pr_cap_ambient(ctx: &ProcessCtx, op: u64, arg1: u64) -> Result<usize> {
 
 pub async fn sys_prctl(ctx: &ProcessCtx, op: i32, arg1: u64, arg2: u64) -> Result<usize> {
     match op {
+        3 => Ok(ctx.shared().process.dumpable.load(Ordering::Acquire)), // PR_GET_DUMPABLE
+        4 => {
+            // PR_SET_DUMPABLE
+            if arg1 > 1 {
+                return Err(KernelError::InvalidValue);
+            }
+            ctx.shared()
+                .process
+                .dumpable
+                .store(arg1 as usize, Ordering::Release);
+            Ok(0)
+        }
         PR_SET_NAME => pr_set_name(ctx, TUA::from_value(arg1 as usize)).await,
         PR_GET_NAME => pr_get_name(ctx, TUA::from_value(arg1 as usize)).await,
         PR_CAPBSET_READ => pr_read_capbset(ctx, arg1 as usize),
@@ -116,6 +139,6 @@ pub async fn sys_prctl(ctx: &ProcessCtx, op: i32, arg1: u64, arg2: u64) -> Resul
         PR_GET_SECUREBITS => Ok(0),
         PR_GET_NO_NEW_PRIVS => Ok(0),
         PR_CAP_AMBIENT => pr_cap_ambient(ctx, arg1, arg2).await,
-        _ => todo!("prctl op: {}", op),
+        _ => Err(KernelError::InvalidValue),
     }
 }

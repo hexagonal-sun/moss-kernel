@@ -59,15 +59,24 @@ pub async fn sys_utimensat(
         attr.ctime = date();
     } else {
         let times = copy_from_user(times).await?;
+        for time in &times {
+            if time.tv_nsec >= 1_000_000_000
+                && time.tv_nsec != UTIME_NOW
+                && time.tv_nsec != UTIME_OMIT
+            {
+                return Err(KernelError::InvalidValue);
+            }
+        }
+        if times[0].tv_nsec == UTIME_OMIT && times[1].tv_nsec == UTIME_OMIT {
+            return Ok(0);
+        }
         if times[0].tv_nsec == UTIME_NOW && times[1].tv_nsec == UTIME_NOW {
             test_creds(task, &attr)?;
-        } else if times[0].tv_nsec != UTIME_OMIT && times[1].tv_nsec != UTIME_OMIT {
+        } else {
             let creds = task.creds.lock_save_irq();
-            if creds.euid() != attr.uid
-                && !creds.caps().is_capable(CapabilitiesFlags::CAP_FOWNER)
-                && !creds.caps().is_capable(CapabilitiesFlags::CAP_DAC_OVERRIDE)
+            if creds.fsuid() != attr.uid && !creds.caps().is_capable(CapabilitiesFlags::CAP_FOWNER)
             {
-                return Err(FsError::PermissionDenied.into());
+                return Err(KernelError::NotPermitted);
             }
         }
 
@@ -95,10 +104,8 @@ pub async fn sys_utimensat(
 
 fn test_creds(task: Arc<Task>, attr: &FileAttr) -> Result<()> {
     let creds = task.creds.lock_save_irq();
-    if attr
-        .check_access(creds.uid(), creds.gid(), creds.caps(), AccessMode::W_OK)
-        .is_err()
-        && creds.euid() != attr.uid
+    if creds.check_file_access(attr, AccessMode::W_OK).is_err()
+        && creds.fsuid() != attr.uid
         && !creds.caps().is_capable(CapabilitiesFlags::CAP_FOWNER)
         && !creds.caps().is_capable(CapabilitiesFlags::CAP_DAC_OVERRIDE)
     {

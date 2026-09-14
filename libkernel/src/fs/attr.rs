@@ -1,7 +1,7 @@
 //! File attribute types (permissions, modes, and metadata).
 
 use crate::{
-    error::{KernelError, Result},
+    error::Result,
     proc::{
         caps::{Capabilities, CapabilitiesFlags},
         ids::{Gid, Uid},
@@ -173,58 +173,48 @@ impl FileAttr {
         caps: Capabilities,
         requested_mode: AccessMode,
     ) -> Result<()> {
-        // For filesystem related tasks, the CAP_DAC_OVERRIDE bypasses all permission checks.
-        if caps.is_capable(CapabilitiesFlags::CAP_DAC_OVERRIDE) {
+        self.check_access_with_groups(uid, gid, &[], caps, requested_mode)
+    }
+
+    /// Checks DAC mode bits and effective capabilities, including supplementary
+    /// groups. UID zero alone does not override permissions after capabilities
+    /// have been dropped. Failure is EACCES, not EPERM.
+    pub fn check_access_with_groups(
+        &self,
+        uid: Uid,
+        gid: Gid,
+        groups: &[Gid],
+        caps: Capabilities,
+        requested_mode: AccessMode,
+    ) -> Result<()> {
+        let shift = if uid == self.uid {
+            6
+        } else if gid == self.gid || groups.contains(&self.gid) {
+            3
+        } else {
+            0
+        };
+        let allowed = (self.permissions.bits() >> shift) & 0o7;
+        let requested = requested_mode.bits() as u16;
+        if allowed & requested == requested {
             return Ok(());
         }
-
-        // root (UID 0) bypasses most permission checks. For execute, at
-        // least one execute bit must be set.
-        if uid.is_root() {
-            if requested_mode.contains(AccessMode::X_OK) {
-                // Root still needs at least one execute bit to be set for X_OK
-                if self.permissions.intersects(
-                    FilePermissions::S_IXUSR | FilePermissions::S_IXGRP | FilePermissions::S_IXOTH,
-                ) {
-                    return Ok(());
-                }
-            } else {
-                return Ok(());
-            }
-        }
-
-        // Determine which set of permission bits to use (owner, group, or other)
-        let perms_to_check = if self.uid == uid {
-            // User is the owner
-            self.permissions
-        } else if self.gid == gid {
-            // User is in the file's group. Shift group bits to align with owner bits for easier checking.
-            FilePermissions::from_bits_truncate(self.permissions.bits() << 3)
-        } else {
-            // Others. Shift other bits to align with owner bits.
-            FilePermissions::from_bits_truncate(self.permissions.bits() << 6)
-        };
-
-        if requested_mode.contains(AccessMode::R_OK)
-            && !perms_to_check.contains(FilePermissions::S_IRUSR)
-            && !caps.is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH)
+        let directory = self.file_type == FileType::Directory;
+        let any_execute = self.permissions.intersects(
+            FilePermissions::S_IXUSR | FilePermissions::S_IXGRP | FilePermissions::S_IXOTH,
+        );
+        if caps.is_capable(CapabilitiesFlags::CAP_DAC_OVERRIDE)
+            && (directory || !requested_mode.contains(AccessMode::X_OK) || any_execute)
         {
-            return Err(KernelError::NotPermitted);
+            return Ok(());
         }
-        if requested_mode.contains(AccessMode::W_OK)
-            && !perms_to_check.contains(FilePermissions::S_IWUSR)
+        if caps.is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH)
+            && !requested_mode.contains(AccessMode::W_OK)
+            && (directory || !requested_mode.contains(AccessMode::X_OK))
         {
-            return Err(KernelError::NotPermitted);
+            return Ok(());
         }
-        if requested_mode.contains(AccessMode::X_OK)
-            && !perms_to_check.contains(FilePermissions::S_IXUSR)
-            && (self.file_type != FileType::Directory // CAP_DAC_READ_SEARCH allows directory search as well
-                || !caps.is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH))
-        {
-            return Err(KernelError::NotPermitted);
-        }
-
-        Ok(())
+        Err(crate::error::FsError::PermissionDenied.into())
     }
 }
 
@@ -258,7 +248,7 @@ mod tests {
             file.check_access(
                 ROOT_UID,
                 ROOT_GID,
-                Capabilities::new_empty(),
+                Capabilities::new_root(),
                 AccessMode::R_OK
             )
             .is_ok()
@@ -272,7 +262,7 @@ mod tests {
             file.check_access(
                 ROOT_UID,
                 ROOT_GID,
-                Capabilities::new_empty(),
+                Capabilities::new_root(),
                 AccessMode::W_OK
             )
             .is_ok()
@@ -285,10 +275,13 @@ mod tests {
         let result = file.check_access(
             ROOT_UID,
             ROOT_GID,
-            Capabilities::new_empty(),
+            Capabilities::new_root(),
             AccessMode::X_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -298,7 +291,7 @@ mod tests {
             file.check_access(
                 ROOT_UID,
                 ROOT_GID,
-                Capabilities::new_empty(),
+                Capabilities::new_root(),
                 AccessMode::X_OK
             )
             .is_ok()
@@ -312,7 +305,7 @@ mod tests {
             file.check_access(
                 ROOT_UID,
                 ROOT_GID,
-                Capabilities::new_empty(),
+                Capabilities::new_root(),
                 AccessMode::X_OK
             )
             .is_ok()
@@ -326,7 +319,7 @@ mod tests {
             file.check_access(
                 ROOT_UID,
                 ROOT_GID,
-                Capabilities::new_empty(),
+                Capabilities::new_root(),
                 AccessMode::X_OK
             )
             .is_ok()
@@ -356,7 +349,10 @@ mod tests {
             Capabilities::new_empty(),
             AccessMode::R_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -382,7 +378,10 @@ mod tests {
             Capabilities::new_empty(),
             AccessMode::W_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -402,7 +401,10 @@ mod tests {
         let file = setup_file(FilePermissions::S_IRUSR | FilePermissions::S_IXUSR);
         let mode = AccessMode::R_OK | AccessMode::W_OK | AccessMode::X_OK; // Requesting Write is denied
         let result = file.check_access(OWNER_UID, OWNER_GID, Capabilities::new_empty(), mode);
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -428,7 +430,10 @@ mod tests {
             Capabilities::new_empty(),
             AccessMode::W_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -440,7 +445,10 @@ mod tests {
             Capabilities::new_empty(),
             AccessMode::R_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -466,7 +474,10 @@ mod tests {
             Capabilities::new_empty(),
             AccessMode::R_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -478,7 +489,10 @@ mod tests {
             Capabilities::new_empty(),
             AccessMode::W_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -512,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn cap_dac_override_can_read_write_exec_without_perms() {
+    fn cap_dac_override_cannot_execute_regular_file_without_exec_bits() {
         let file = setup_file(FilePermissions::empty());
         let mode = AccessMode::R_OK | AccessMode::W_OK | AccessMode::X_OK;
         assert!(
@@ -522,7 +536,43 @@ mod tests {
                 Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_OVERRIDE),
                 mode,
             )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn supplementary_group_and_root_without_capabilities() {
+        let file = setup_file(FilePermissions::S_IRGRP);
+        assert!(
+            file.check_access_with_groups(
+                OTHER_UID,
+                OTHER_GID,
+                &[FILE_GROUP_GID],
+                Capabilities::new_empty(),
+                AccessMode::R_OK
+            )
             .is_ok()
+        );
+        assert!(
+            file.check_access(
+                ROOT_UID,
+                ROOT_GID,
+                Capabilities::new_empty(),
+                AccessMode::R_OK
+            )
+            .is_err()
+        );
+        let mut directory = setup_file(FilePermissions::empty());
+        directory.file_type = FileType::Directory;
+        assert!(
+            directory
+                .check_access(
+                    OTHER_UID,
+                    OTHER_GID,
+                    Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_READ_SEARCH),
+                    AccessMode::X_OK
+                )
+                .is_ok()
         );
     }
 
@@ -549,7 +599,10 @@ mod tests {
             Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_READ_SEARCH),
             AccessMode::W_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 
     #[test]
@@ -561,6 +614,9 @@ mod tests {
             Capabilities::new_cap(CapabilitiesFlags::CAP_DAC_READ_SEARCH),
             AccessMode::X_OK,
         );
-        assert!(matches!(result, Err(KernelError::NotPermitted)));
+        assert!(matches!(
+            result,
+            Err(KernelError::Fs(crate::error::FsError::PermissionDenied))
+        ));
     }
 }

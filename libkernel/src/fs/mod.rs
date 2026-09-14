@@ -46,7 +46,15 @@ mod _open_flags {
             const O_CREAT     = 0o100;
             const O_EXCL      = 0o200;
             const O_TRUNC     = 0o1000;
+            #[cfg(target_arch = "aarch64")]
+            const O_DIRECTORY = 0o40000;
+            #[cfg(not(target_arch = "aarch64"))]
             const O_DIRECTORY = 0o200000;
+            #[cfg(target_arch = "aarch64")]
+            const O_NOFOLLOW = 0o100000;
+            #[cfg(not(target_arch = "aarch64"))]
+            const O_NOFOLLOW = 0o400000;
+            const O_PATH = 0o10000000;
             const O_APPEND    = 0o2000;
             const O_NONBLOCK  = 0o4000;
             // AArch64 overrides the asm-generic value (compat with AArch32).
@@ -227,6 +235,21 @@ pub trait BlockDevice: Send + Sync {
 /// takes an explicit offset instead of using a hidden cursor.
 #[async_trait]
 pub trait Inode: Send + Sync + Any {
+    /// Checks access using filesystem credentials. Virtual filesystems may
+    /// override DAC (for example, access to a task's own procfs fd directory).
+    async fn check_access(
+        &self,
+        uid: crate::proc::ids::Uid,
+        gid: crate::proc::ids::Gid,
+        groups: &[crate::proc::ids::Gid],
+        caps: crate::proc::caps::Capabilities,
+        mode: attr::AccessMode,
+    ) -> Result<()> {
+        self.getattr()
+            .await?
+            .check_access_with_groups(uid, gid, groups, caps, mode)
+    }
+
     /// Get the unique ID for this inode.
     fn id(&self) -> InodeId;
 

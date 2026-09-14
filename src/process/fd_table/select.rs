@@ -297,13 +297,22 @@ pub async fn sys_ppoll(
 
         poll_fds
             .iter()
-            .map(|poll_fd| fd_table.get(poll_fd.fd).ok_or(KernelError::BadFd))
-            .collect::<Result<Vec<_>>>()?
+            .map(|poll_fd| fd_table.get(poll_fd.fd))
+            .collect::<Vec<_>>()
     };
 
     let mut futs = Vec::new();
 
+    let mut invalid_ready = 0;
     for (poll_fd, open_file) in poll_fds.iter_mut().zip(fds) {
+        poll_fd.revents = PollFlags::empty();
+        let Some(open_file) = open_file else {
+            if poll_fd.fd.as_raw() >= 0 {
+                poll_fd.revents = PollFlags::POLLNVAL;
+                invalid_ready += 1;
+            }
+            continue;
+        };
         let poll_fut = open_file.poll(poll_fd.events).await;
 
         futs.push(Box::pin(async {
@@ -314,7 +323,7 @@ pub async fn sys_ppoll(
     }
 
     let num_ready = poll_fn(|cx| {
-        let mut num_ready = 0;
+        let mut num_ready = invalid_ready;
 
         for fut in futs.iter_mut() {
             match fut.as_mut().poll(cx) {

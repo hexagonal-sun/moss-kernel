@@ -177,19 +177,15 @@ impl Path {
     /// assert_eq!(path_root.parent(), None);
     /// ```
     pub fn parent(&self) -> Option<&Path> {
-        let mut components = self.components().collect::<Vec<_>>();
+        let components = self.components().collect::<Vec<_>>();
         if components.len() <= 1 {
             return None;
         }
-        components.pop();
-        let parent_len = components.iter().map(|s| s.len()).sum::<usize>() + components.len() - 1;
-        let end = if self.is_absolute() {
-            parent_len + 1
-        } else {
-            parent_len
-        };
-
-        Some(Path::new(&self.inner[..end]))
+        // Components are borrowed from the original string. Do not compute a
+        // normalized length and use it to slice an unnormalized pathname.
+        let last = components.last()?;
+        let end = last.as_ptr() as usize - self.inner.as_ptr() as usize;
+        Some(Path::new(self.inner[..end].trim_end_matches('/')))
     }
 
     /// Returns the final component of the path, if there is one.
@@ -269,6 +265,17 @@ impl<'a> Iterator for Components<'a> {
 mod tests {
     use super::Path;
     use alloc::vec::Vec;
+
+    #[test]
+    fn parent_preserves_original_component_offsets() {
+        assert_eq!(Path::new("//dir/file").parent(), Some(Path::new("//dir")));
+        assert_eq!(Path::new("a//b").parent(), Some(Path::new("a")));
+        assert_eq!(Path::new("a/./b").parent(), Some(Path::new("a/.")));
+        assert_eq!(
+            Path::new("//目录///文件").parent(),
+            Some(Path::new("//目录"))
+        );
+    }
 
     #[test]
     fn test_new_path() {

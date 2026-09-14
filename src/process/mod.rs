@@ -35,6 +35,7 @@ use thread_group::pid::PidT;
 use thread_group::signal::{AtomicSigSet, SigId};
 use thread_group::{Tgid, ThreadGroup};
 
+pub mod access;
 pub mod caps;
 pub mod clone;
 pub mod creds;
@@ -230,6 +231,7 @@ pub struct Task {
     pub vm: Arc<VmHandle>,
     pub cwd: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
     pub root: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
+    pub umask: Arc<SpinLock<u32>>,
     pub creds: SpinLock<Credentials>,
     pub i_timers: SpinLock<ITimers>,
     pub fd_table: Arc<SpinLock<FileDescriptorTable>>,

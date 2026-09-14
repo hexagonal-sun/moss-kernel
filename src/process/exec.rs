@@ -19,7 +19,7 @@ use core::{ffi::c_char, mem, slice};
 use libkernel::memory::proc_vm::address_space::{UserAddressSpace, VirtualMemory};
 use libkernel::{
     error::{ExecError, KernelError, Result},
-    fs::{Inode, path::Path},
+    fs::{FileType, Inode, attr::AccessMode, path::Path},
     memory::{
         PAGE_SIZE,
         address::{TUA, VA},
@@ -90,6 +90,7 @@ async fn exec_elf(
     argv: Vec<String>,
     envp: Vec<String>,
 ) -> Result<()> {
+    check_execute(ctx, &inode).await?;
     // Read ELF header
     let mut buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
     inode.read_at(0, &mut buf).await?;
@@ -263,6 +264,7 @@ pub async fn kernel_exec(
     argv: Vec<String>,
     envp: Vec<String>,
 ) -> Result<()> {
+    check_execute(ctx, &inode).await?;
     let mut buf = [0u8; 4];
     inode.read_at(0, &mut buf).await?;
     if buf == [0x7F, b'E', b'L', b'F'] {
@@ -396,6 +398,7 @@ async fn process_interp(
     let task = ctx.shared();
     let path = Path::new(&interp_path);
     let interp_inode = VFS.resolve_path(path, VFS.root_inode(), task).await?;
+    check_execute(ctx, &interp_inode).await?;
 
     // Parse interpreter ELF header
     let mut hdr_buf = [0u8; core::mem::size_of::<elf::FileHeader64<LittleEndian>>()];
@@ -465,9 +468,18 @@ pub async fn sys_execve(
     }
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let inode = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
+    let cwd = task.cwd.lock_save_irq().0.clone();
+    let inode = VFS.resolve_path(path, cwd, &task).await?;
 
     kernel_exec(ctx, path, inode, argv, envp).await?;
 
     Ok(0)
+}
+
+async fn check_execute(ctx: &ProcessCtx, inode: &Arc<dyn Inode>) -> Result<()> {
+    let attr = inode.getattr().await?;
+    if attr.file_type != FileType::File {
+        return Err(libkernel::error::FsError::PermissionDenied.into());
+    }
+    ctx.shared().creds.lock_save_irq().check_file_access(&attr, AccessMode::X_OK)
 }

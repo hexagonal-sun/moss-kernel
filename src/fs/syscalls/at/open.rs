@@ -1,7 +1,7 @@
 use crate::{
     fs::{VFS, syscalls::at::AtFlags},
     memory::uaccess::cstr::UserCStr,
-    process::fd_table::Fd,
+    process::fd_table::{Fd, FdFlags},
     sched::syscall_ctx::ProcessCtx,
 };
 use core::ffi::c_char;
@@ -30,7 +30,15 @@ pub async fn sys_openat(
 
     let file = VFS.open(path, flags, start_node, mode, &task).await?;
 
-    let fd = task.fd_table.lock_save_irq().insert(file)?;
+    let fd_flags = if flags.contains(OpenFlags::O_CLOEXEC) {
+        FdFlags::CLOEXEC
+    } else {
+        FdFlags::empty()
+    };
+    let fd = task
+        .fd_table
+        .lock_save_irq()
+        .insert_with_flags(file, fd_flags)?;
 
     Ok(fd.as_raw() as _)
 }

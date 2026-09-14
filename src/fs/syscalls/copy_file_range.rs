@@ -20,10 +20,6 @@ pub async fn sys_copy_file_range(
         return Err(KernelError::InvalidValue);
     }
 
-    if size == 0 {
-        return Ok(0);
-    }
-
     let mut in_off: u64 = if off_in.is_null() {
         0
     } else {
@@ -53,6 +49,9 @@ pub async fn sys_copy_file_range(
 
         (reader, writer)
     };
+    reader.lock().await.1.require_readable()?;
+    writer.lock().await.1.require_writable()?;
+    if size == 0 { return Ok(0); }
 
     if Arc::ptr_eq(&reader, &writer) {
         return Err(KernelError::InvalidValue);

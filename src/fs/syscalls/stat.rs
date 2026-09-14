@@ -9,7 +9,7 @@ pub async fn sys_fstat(ctx: &ProcessCtx, fd: Fd, statbuf: TUA<Stat>) -> Result<u
         .shared()
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_raw(fd)
         .ok_or(KernelError::BadFd)?;
 
     let inode = fd.inode().ok_or(KernelError::BadFd)?;

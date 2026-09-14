@@ -51,7 +51,7 @@ pub struct FileDescriptorTable {
     next_fd_hint: usize,
 }
 
-const MAX_FDS: usize = 8192;
+pub(super) const MAX_FDS: usize = 8192;
 
 impl Default for FileDescriptorTable {
     fn default() -> Self {
@@ -67,12 +67,25 @@ impl FileDescriptorTable {
         }
     }
 
-    /// Gets the file object associated with a given file descriptor.
+    /// Gets an I/O-capable descriptor, excluding O_PATH like Linux fdget().
     pub fn get(&self, fd: Fd) -> Option<Arc<OpenFile>> {
+        self.get_raw(fd).filter(|file| !file.is_path_only())
+    }
+
+    /// Gets a descriptor including O_PATH, for metadata/path/dup operations.
+    pub fn get_raw(&self, fd: Fd) -> Option<Arc<OpenFile>> {
         self.entries
             .get(fd.0 as usize)
             .and_then(|entry| entry.as_ref())
             .map(|entry| entry.file.clone())
+    }
+
+    /// Iterates occupied slots, including sparse and O_PATH descriptors.
+    pub fn iter(&self) -> impl Iterator<Item = (Fd, &Arc<OpenFile>)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| entry.as_ref().map(|entry| (Fd(i as i32), &entry.file)))
     }
 
     /// Inserts a new file into the table, returning the new file descriptor.
@@ -107,6 +120,9 @@ impl FileDescriptorTable {
     /// Insert the given entry at or above the specified index, returning the
     /// file descriptor used.
     fn insert_above(&mut self, min_fd: Fd, file: Arc<OpenFile>) -> Result<Fd> {
+        if min_fd.0 < 0 || min_fd.0 as usize >= MAX_FDS {
+            return Err(KernelError::InvalidValue);
+        }
         let start_idx = min_fd.0 as usize;
         let entry = FileDescriptorEntry {
             file,
@@ -122,8 +138,12 @@ impl FileDescriptorTable {
         }
 
         // No free slot found, so we need to expand the table.
-        let fd = Fd(self.entries.len() as i32);
-        self.entries.push(Some(entry));
+        let next = self.entries.len().max(start_idx);
+        if next >= MAX_FDS {
+            return Err(FsError::TooManyFiles.into());
+        }
+        let fd = Fd(next as i32);
+        self.insert_at(fd, entry);
         Ok(fd)
     }
 

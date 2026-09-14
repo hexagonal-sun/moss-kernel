@@ -319,8 +319,9 @@ pub async fn sys_pipe2(ctx: &ProcessCtx, fds: TUA<[Fd; 2]>, flags: u32) -> Resul
             })
         };
 
-        let mut read_file = OpenFile::new(Box::new(reader), flags);
-        let mut write_file = OpenFile::new(Box::new(writer), flags);
+        let flags = flags & !OpenFlags::O_ACCMODE;
+        let mut read_file = OpenFile::new(Box::new(reader), flags | OpenFlags::O_RDONLY);
+        let mut write_file = OpenFile::new(Box::new(writer), flags | OpenFlags::O_WRONLY);
 
         read_file.update(inode.clone(), PathBuf::new());
         write_file.update(inode, PathBuf::new());

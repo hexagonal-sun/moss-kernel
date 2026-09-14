@@ -7,8 +7,8 @@ use crate::{
 use alloc::{borrow::ToOwned, ffi::CString, string::ToString};
 use core::{ffi::c_char, str::FromStr};
 use libkernel::{
-    error::{KernelError, Result},
-    fs::path::Path,
+    error::{FsError, KernelError, Result},
+    fs::{FileType, attr::AccessMode, path::Path},
     memory::address::{TUA, UA},
     proc::caps::CapabilitiesFlags,
 };
@@ -39,6 +39,13 @@ pub async fn sys_chdir(ctx: &ProcessCtx, path: TUA<c_char>) -> Result<usize> {
     let new_path = task.cwd.lock_save_irq().1.join(path);
 
     let node = VFS.resolve_path(path, current_path, &task).await?;
+    let attr = node.getattr().await?;
+    if attr.file_type != FileType::Directory {
+        return Err(FsError::NotADirectory.into());
+    }
+    task.creds
+        .lock_save_irq()
+        .check_file_access(&attr, AccessMode::X_OK)?;
 
     *task.cwd.lock_save_irq() = (node, new_path);
 
@@ -55,10 +62,17 @@ pub async fn sys_chroot(ctx: &ProcessCtx, path: TUA<c_char>) -> Result<usize> {
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let current_path = task.root.lock_save_irq().0.clone();
-    let new_path = task.root.lock_save_irq().1.join(path);
+    let current_path = task.cwd.lock_save_irq().0.clone();
+    let new_path = task.cwd.lock_save_irq().1.join(path);
 
     let node = VFS.resolve_path(path, current_path, &task).await?;
+    let attr = node.getattr().await?;
+    if attr.file_type != FileType::Directory {
+        return Err(FsError::NotADirectory.into());
+    }
+    task.creds
+        .lock_save_irq()
+        .check_file_access(&attr, AccessMode::X_OK)?;
 
     *task.root.lock_save_irq() = (node, new_path);
 
@@ -70,13 +84,19 @@ pub async fn sys_fchdir(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
     let file = task
         .fd_table
         .lock_save_irq()
-        .get(fd)
+        .get_raw(fd)
         .ok_or(KernelError::BadFd)?;
 
-    *task.cwd.lock_save_irq() = (
-        file.inode().ok_or(KernelError::BadFd)?,
-        file.path().ok_or(KernelError::BadFd)?.to_owned(),
-    );
+    let inode = file.inode().ok_or(KernelError::BadFd)?;
+    let attr = inode.getattr().await?;
+    if attr.file_type != FileType::Directory {
+        return Err(FsError::NotADirectory.into());
+    }
+    task.creds
+        .lock_save_irq()
+        .check_file_access(&attr, AccessMode::X_OK)?;
+
+    *task.cwd.lock_save_irq() = (inode, file.path().ok_or(KernelError::BadFd)?.to_owned());
 
     Ok(0)
 }

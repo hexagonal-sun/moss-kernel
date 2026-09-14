@@ -35,6 +35,7 @@ pub async fn sys_writev(
 
     let (ops, state) = &mut *file.lock().await;
 
+    state.require_writable()?;
     ops.writev(state, &iovs).await
 }
 
@@ -55,6 +56,7 @@ pub async fn sys_readv(
 
     let (ops, state) = &mut *file.lock().await;
 
+    state.require_readable()?;
     ops.readv(state, &iovs).await
 }
 
@@ -95,8 +97,9 @@ pub async fn sys_pwritev2(
 
     let iovs = copy_obj_array_from_user(iov_ptr, no_iov).await?;
 
-    let (ops, _state) = &mut *file.lock().await;
+    let (ops, state) = &mut *file.lock().await;
 
+    state.require_writable()?;
     ops.writevat(&iovs, offset).await
 }
 
@@ -117,7 +120,8 @@ pub async fn sys_preadv2(
 
     let iovs = copy_obj_array_from_user(iov_ptr, no_iov).await?;
 
-    let (ops, _state) = &mut *file.lock().await;
+    let (ops, state) = &mut *file.lock().await;
 
+    state.require_readable()?;
     ops.readvat(&iovs, offset).await
 }

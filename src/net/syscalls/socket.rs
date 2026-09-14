@@ -32,7 +32,7 @@ pub async fn sys_socket(
         _ => return Err(KernelError::AddressFamilyNotSupported),
     };
     // TODO: Correct flags
-    let open_file = OpenFile::new(new_socket, OpenFlags::empty());
+    let open_file = OpenFile::new(new_socket, OpenFlags::O_RDWR);
     let fd = ctx
         .shared()
         .fd_table

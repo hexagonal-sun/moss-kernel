@@ -6,7 +6,7 @@ use crate::{
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{future, pin::Pin, task::Poll};
 use libkernel::{
-    error::Result,
+    error::{KernelError, Result},
     fs::{Inode, OpenFlags, path::Path, pathbuf::PathBuf},
 };
 
@@ -19,9 +19,28 @@ impl FileCtx {
     pub fn new(flags: OpenFlags) -> Self {
         Self { flags, pos: 0 }
     }
+
+    pub fn require_readable(&self) -> Result<()> {
+        if self.flags.contains(OpenFlags::O_PATH)
+            || self.flags & OpenFlags::O_ACCMODE == OpenFlags::O_WRONLY
+        {
+            return Err(KernelError::BadFd);
+        }
+        Ok(())
+    }
+
+    pub fn require_writable(&self) -> Result<()> {
+        if self.flags.contains(OpenFlags::O_PATH)
+            || self.flags & OpenFlags::O_ACCMODE == OpenFlags::O_RDONLY
+        {
+            return Err(KernelError::BadFd);
+        }
+        Ok(())
+    }
 }
 
 pub struct OpenFile {
+    path_only: bool,
     inode: Option<Arc<dyn Inode>>,
     path: Option<PathBuf>,
     state: Mutex<(Box<dyn FileOps>, FileCtx)>,
@@ -30,6 +49,7 @@ pub struct OpenFile {
 impl OpenFile {
     pub fn new(ops: Box<dyn FileOps>, flags: OpenFlags) -> Self {
         Self {
+            path_only: flags.contains(OpenFlags::O_PATH),
             state: Mutex::new((ops, FileCtx::new(flags))),
             inode: None,
             path: None,
@@ -48,6 +68,11 @@ impl OpenFile {
 
     pub fn inode(&self) -> Option<Arc<dyn Inode>> {
         self.inode.clone()
+    }
+
+    /// Immutable handle kind, readable while the fd table is locked.
+    pub fn is_path_only(&self) -> bool {
+        self.path_only
     }
 
     pub fn path(&self) -> Option<&Path> {

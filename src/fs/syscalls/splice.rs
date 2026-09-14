@@ -30,6 +30,8 @@ pub async fn sys_sendfile(
 
     let (reader_ops, reader_ctx) = &mut *reader.lock().await;
     let (writer_ops, writer_ctx) = &mut *writer.lock().await;
+    reader_ctx.require_readable()?;
+    writer_ctx.require_writable()?;
 
     let mut total_written = 0;
 

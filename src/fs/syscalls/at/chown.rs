@@ -1,14 +1,6 @@
 use core::ffi::c_char;
 
-use libkernel::{
-    error::Result,
-    fs::path::Path,
-    memory::address::TUA,
-    proc::{
-        caps::CapabilitiesFlags,
-        ids::{Gid, Uid},
-    },
-};
+use libkernel::{error::Result, fs::path::Path, memory::address::TUA};
 
 use crate::{
     fs::syscalls::at::{AtFlags, resolve_at_start_node, resolve_path_flags},
@@ -35,21 +27,7 @@ pub async fn sys_fchownat(
     let node = resolve_path_flags(dirfd, path, start_node, &task, flags).await?;
     let mut attr = node.getattr().await?;
 
-    {
-        let creds = task.creds.lock_save_irq();
-        if owner != -1 {
-            creds.caps().check_capable(CapabilitiesFlags::CAP_CHOWN)?;
-            attr.uid = Uid::new(owner as _);
-        }
-        if group != -1 {
-            let gid = Gid::new(group as _);
-            // doesn't seem like there's real groups so this is as good as it gets
-            if creds.uid() != attr.uid || creds.gid() != gid {
-                creds.caps().check_capable(CapabilitiesFlags::CAP_CHOWN)?;
-            }
-            attr.gid = gid;
-        }
-    }
+    task.creds.lock_save_irq().chown(&mut attr, owner, group)?;
     node.setattr(attr).await?;
     notify_attrib(node.id()).await;
 

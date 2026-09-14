@@ -135,10 +135,13 @@ impl Capabilities {
         inheritable: CapabilitiesFlags,
     ) -> Result<()> {
         // permitted should be a subset of self.permitted, and effective should be a subset of permitted
-        // inheritable should be a subset of self.bounding, or caller's effective should contain CAP_SETPCAP
+        // New inheritable bits require the bounding set; without SETPCAP they
+        // must also be in the old permitted set. Existing inheritable bits may
+        // survive a later bounding-set drop.
         if !self.permitted.contains(permitted)
             || !permitted.contains(effective)
-            || (!self.bounding.contains(inheritable)
+            || !(self.inheritable | self.bounding).contains(inheritable)
+            || (!(self.inheritable | self.permitted).contains(inheritable)
                 && !caller_caps
                     .effective
                     .contains(CapabilitiesFlags::CAP_SETPCAP))
@@ -148,6 +151,7 @@ impl Capabilities {
         self.effective = effective;
         self.permitted = permitted;
         self.inheritable = inheritable;
+        self.ambient &= permitted & inheritable;
         Ok(())
     }
 

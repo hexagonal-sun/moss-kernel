@@ -103,7 +103,7 @@ pub struct ThreadGroup {
     pub pgid: SpinLock<Pgid>,
     pub sid: SpinLock<Sid>,
     pub state: SpinLock<ProcessState>,
-    pub umask: SpinLock<u32>,
+    pub dumpable: AtomicUsize,
     pub parent: SpinLock<Option<Weak<ThreadGroup>>>,
     pub children: SpinLock<BTreeMap<Tgid, Arc<ThreadGroup>>>,
     pub tasks: SpinLock<BTreeMap<Tid, Weak<Work>>>,

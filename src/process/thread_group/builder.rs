@@ -1,4 +1,4 @@
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::{collections::btree_map::BTreeMap, sync::Arc};
 
@@ -18,7 +18,6 @@ use super::{
 pub struct ThreadGroupBuilder {
     tgid: Tgid,
     parent: Option<Arc<ThreadGroup>>,
-    umask: Option<u32>,
     pri: Option<i8>,
     sigstate: Option<Arc<SpinLock<SignalActionState>>>,
     rsrc_lim: Option<Arc<SpinLock<ResourceLimits>>>,
@@ -30,7 +29,6 @@ impl ThreadGroupBuilder {
         ThreadGroupBuilder {
             tgid,
             parent: None,
-            umask: None,
             sigstate: None,
             rsrc_lim: None,
             pri: None,
@@ -73,7 +71,12 @@ impl ThreadGroupBuilder {
             ),
             sid: SpinLock::new(Sid(self.tgid.value())),
             parent: SpinLock::new(self.parent.as_ref().map(Arc::downgrade)),
-            umask: SpinLock::new(self.umask.unwrap_or(0)),
+            dumpable: AtomicUsize::new(
+                self.parent
+                    .as_ref()
+                    .map(|p| p.dumpable.load(Ordering::Acquire))
+                    .unwrap_or(1),
+            ),
             children: SpinLock::new(BTreeMap::new()),
             signals: self
                 .sigstate

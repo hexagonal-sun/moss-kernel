@@ -12,6 +12,8 @@ mod fs;
 mod futex;
 mod futex2;
 mod inotify;
+mod opath;
+mod permissions;
 mod pidfd;
 mod sched;
 mod signalfd;

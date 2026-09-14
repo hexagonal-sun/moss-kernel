@@ -211,12 +211,32 @@ async fn adapter_disk_formats() {
         root.unlink("hard").await.unwrap();
         root.unlink("left").await.unwrap();
         root.unlink("right").await.unwrap();
+        let chmod_inode = root
+            .create("chmod", FileType::File, mode, None)
+            .await
+            .unwrap();
+        let mut attrs = chmod_inode.getattr().await.unwrap();
+        attrs.permissions = FilePermissions::from_bits_retain(0o2640);
+        attrs.uid = Uid::new(1000);
+        attrs.gid = Gid::new(2000);
+        chmod_inode.setattr(attrs).await.unwrap();
+        assert_eq!(
+            chmod_inode.getattr().await.unwrap().permissions.bits(),
+            0o2640
+        );
+        drop(chmod_inode);
         fs.sync().await.unwrap();
         drop(fs);
         run(Command::new("e2fsck").args(["-fn"]).arg(&image), &[0]);
         let reopened = mount(&image).await;
         let root = reopened.root_inode().await.unwrap();
         assert!(root.lookup("right").await.is_err());
+        let attrs = root.lookup("chmod").await.unwrap().getattr().await.unwrap();
+        assert_eq!(attrs.file_type, FileType::File);
+        assert_eq!(
+            (attrs.permissions.bits(), attrs.uid, attrs.gid),
+            (0o2640, Uid::new(1000), Gid::new(2000))
+        );
         std::println!(
             "verified {kind}, block={block_size}, inode={inode_size}, features={features}"
         );

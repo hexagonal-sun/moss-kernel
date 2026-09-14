@@ -72,9 +72,10 @@ use crate::{
         caps::{sys_capget, sys_capset},
         clone::sys_clone,
         creds::{
-            sys_getegid, sys_geteuid, sys_getgid, sys_getresgid, sys_getresuid, sys_getsid,
-            sys_gettid, sys_getuid, sys_setfsgid, sys_setfsuid, sys_setgid, sys_setregid,
-            sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setuid,
+            sys_getegid, sys_geteuid, sys_getgid, sys_getgroups, sys_getresgid, sys_getresuid,
+            sys_getsid, sys_gettid, sys_getuid, sys_setfsgid, sys_setfsuid, sys_setgid,
+            sys_setgroups, sys_setregid, sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid,
+            sys_setuid,
         },
         epoll::{sys_epoll_create1, sys_epoll_ctl, sys_epoll_pwait},
         exec::sys_execve,
@@ -315,16 +316,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x32 => sys_fchdir(&ctx, arg1.into()).await,
         0x33 => sys_chroot(&ctx, TUA::from_value(arg1 as _)).await,
         0x34 => sys_fchmod(&ctx, arg1.into(), arg2 as _).await,
-        0x35 => {
-            sys_fchmodat(
-                &ctx,
-                arg1.into(),
-                TUA::from_value(arg2 as _),
-                arg3 as _,
-                arg4 as _,
-            )
-            .await
-        }
+        0x35 => sys_fchmodat(&ctx, arg1.into(), TUA::from_value(arg2 as _), arg3 as _, 0).await,
         0x36 => {
             sys_fchownat(
                 &ctx,
@@ -627,6 +619,8 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x9b => sys_getpgid(&ctx, arg1 as _),
         0x9c => sys_getsid(&ctx).await,
         0x9d => sys_setsid(&ctx).await,
+        0x9e => sys_getgroups(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,
+        0x9f => sys_setgroups(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,
         0xa0 => sys_uname(TUA::from_value(arg1 as _)).await,
         0xa1 => sys_sethostname(&ctx, TUA::from_value(arg1 as _), arg2 as _).await,
         0xa3 => Err(KernelError::InvalidValue),
@@ -853,6 +847,16 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             .await
         }
         0x1c6 => sys_futex_wake(&ctx, arg1, arg2, arg3 as _, arg4 as _),
+        0x1c4 => {
+            sys_fchmodat(
+                &ctx,
+                arg1.into(),
+                TUA::from_value(arg2 as _),
+                arg3 as _,
+                arg4 as _,
+            )
+            .await
+        }
         0x1c7 => {
             sys_futex_wait(
                 &ctx,

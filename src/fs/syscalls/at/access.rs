@@ -5,7 +5,7 @@ use crate::{
 };
 use core::ffi::c_char;
 use libkernel::{
-    error::Result,
+    error::{KernelError, Result},
     fs::{attr::AccessMode, path::Path},
     memory::address::TUA,
 };
@@ -29,11 +29,31 @@ pub async fn sys_faccessat2(
     let mut buf = [0; 1024];
 
     let task = ctx.shared().clone();
-    let access_mode = AccessMode::from_bits_retain(mode);
+    let access_mode = AccessMode::from_bits(mode).ok_or(KernelError::InvalidValue)?;
+    let allowed = AtFlags::AT_EACCESS | AtFlags::AT_SYMLINK_NOFOLLOW | AtFlags::AT_EMPTY_PATH;
+    if flags & !allowed.bits() != 0 {
+        return Err(KernelError::InvalidValue);
+    }
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let at_flags = AtFlags::from_bits_retain(flags);
     let start_node = resolve_at_start_node(ctx, dirfd, path, at_flags).await?;
-    let node = resolve_path_flags(dirfd, path, start_node, &task, at_flags).await?;
+    let creds = task
+        .creds
+        .lock_save_irq()
+        .for_access(at_flags.contains(AtFlags::AT_EACCESS));
+    let node = if path.as_str().is_empty() {
+        resolve_path_flags(dirfd, path, start_node, &task, at_flags).await?
+    } else {
+        crate::fs::VFS
+            .resolve_with_credentials(
+                path,
+                start_node,
+                &task,
+                !at_flags.contains(AtFlags::AT_SYMLINK_NOFOLLOW),
+                &creds,
+            )
+            .await?
+    };
 
     // If mode is F_OK (value 0), the check is for the file's existence.
     // Reaching this point means we found the file, so we can return success.
@@ -41,18 +61,8 @@ pub async fn sys_faccessat2(
         return Ok(0);
     }
 
-    let attrs = node.getattr().await?;
-    let creds = task.creds.lock_save_irq();
-
-    // Determine which user and group IDs to use for the check. By default, use
-    // the real UID and GID. If AT_EACCESS is set, use effective IDs.
-    let (uid, gid) = if at_flags.contains(AtFlags::AT_EACCESS) {
-        (creds.euid(), creds.egid())
-    } else {
-        (creds.uid(), creds.gid())
-    };
-
-    attrs
-        .check_access(uid, gid, creds.caps(), access_mode)
+    creds
+        .check_inode_access(node.as_ref(), access_mode)
+        .await
         .map(|_| 0)
 }

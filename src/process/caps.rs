@@ -92,14 +92,10 @@ pub async fn sys_capset(
     let mut header = copy_from_user(hdrp).await?;
 
     let caller_caps = ctx.shared().creds.lock_save_irq().caps();
-    let task = if header.pid == 0 {
-        ctx.shared().clone()
-    } else {
-        caller_caps.check_capable(CapabilitiesFlags::CAP_SETPCAP)?;
-        find_task_by_tid(Tid::from_pid_t(header.pid))
-            .map(|x| (*x).clone())
-            .ok_or(KernelError::NoProcess)?
-    };
+    if header.pid != 0 && header.pid != ctx.shared().tid.value() as PidT {
+        return Err(KernelError::NotPermitted);
+    }
+    let task = ctx.shared();
 
     let (effective, permitted, inheritable) = match header.version {
         LINUX_CAPABILITY_VERSION_1 => {

@@ -2,7 +2,7 @@ use core::ffi::c_char;
 
 use libkernel::{
     error::{FsError, KernelError, Result},
-    fs::{FileType, path::Path},
+    fs::{FileType, attr::AccessMode, path::Path},
     memory::address::TUA,
     proc::caps::CapabilitiesFlags,
 };
@@ -29,6 +29,9 @@ pub async fn sys_linkat(
     let mut buf2 = [0; 1024];
 
     let task = ctx.shared().clone();
+    if flags & !(AtFlags::AT_EMPTY_PATH | AtFlags::AT_SYMLINK_FOLLOW).bits() != 0 {
+        return Err(KernelError::InvalidValue);
+    }
     let mut flags = AtFlags::from_bits_retain(flags);
 
     // following symlinks is implied for any other syscall.
@@ -36,16 +39,6 @@ pub async fn sys_linkat(
     // linkat implicitly does not follow symlinks unless specified.
     if !flags.contains(AtFlags::AT_SYMLINK_FOLLOW) {
         flags.insert(AtFlags::AT_SYMLINK_NOFOLLOW);
-    }
-
-    if flags.contains(AtFlags::AT_EMPTY_PATH)
-        && !task
-            .creds
-            .lock_save_irq()
-            .caps()
-            .is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH)
-    {
-        return Err(FsError::NotFound.into()); // weird error but thats what linkat(2) says
     }
 
     let old_path = Path::new(
@@ -58,6 +51,19 @@ pub async fn sys_linkat(
             .copy_from_user(&mut buf2)
             .await?,
     );
+    if old_path.as_str().is_empty()
+        && flags.contains(AtFlags::AT_EMPTY_PATH)
+        && !task
+            .creds
+            .lock_save_irq()
+            .caps()
+            .is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH)
+    {
+        return Err(FsError::NotFound.into());
+    }
+    if new_path.as_str().is_empty() {
+        return Err(FsError::NotFound.into());
+    }
     let old_start_node = resolve_at_start_node(ctx, old_dirfd, old_path, flags).await?;
     let new_start_node = resolve_at_start_node(ctx, new_dirfd, new_path, flags).await?;
 
@@ -86,9 +92,13 @@ pub async fn sys_linkat(
         new_start_node
     };
 
-    if parent_inode.getattr().await?.file_type != FileType::Directory {
+    let parent_attr = parent_inode.getattr().await?;
+    if parent_attr.file_type != FileType::Directory {
         return Err(FsError::NotADirectory.into());
     }
+    task.creds
+        .lock_save_irq()
+        .check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
 
     VFS.link(
         target_inode,
