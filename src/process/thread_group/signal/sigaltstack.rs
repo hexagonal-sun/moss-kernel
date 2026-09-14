@@ -65,7 +65,7 @@ impl From<Option<AltSigStack>> for UserSigAltStack {
         } else {
             Self {
                 ss_sp: UA::null(),
-                ss_flags: SigAltStackFlags::empty(),
+                ss_flags: SigAltStackFlags::SS_DISABLE,
                 ss_size: 0,
             }
         }
@@ -90,7 +90,9 @@ pub async fn sys_sigaltstack(
         let old_ss_value = signals.alt_stack.clone();
 
         if let Some(ss) = ss {
-            if ss.ss_size < MIN_STACK_SZ {
+            // Disabling ignores ss_sp/ss_size, including the zero-sized
+            // disabled state returned when no alternate stack is installed.
+            if !ss.ss_flags.contains(SigAltStackFlags::SS_DISABLE) && ss.ss_size < MIN_STACK_SZ {
                 Err(KernelError::NoMemory)?;
             }
 

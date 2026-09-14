@@ -1,3 +1,7 @@
+// Only this context-save assembly uses FP registers. Rust kernel code keeps
+// the project's aarch64-unknown-none-softfloat target.
+.arch_extension fp
+
 // Load an absolute 64-bit address in a relocatable way
 .macro adr_a register, symbol
     movz	\register, #:abs_g3:\symbol
@@ -33,6 +37,31 @@
     stp     x2,  x3,  [sp, #(16 * 16)]
     str     x4,       [sp, #(16 * 17)]
 
+    // Preserve the complete userspace FP/SIMD context, not just the ABI's
+    // callee-saved D registers. Interrupts may occur at any instruction.
+    stp     q0,  q1,  [sp, #({fpsimd} + 32 * 0)]
+    stp     q2,  q3,  [sp, #({fpsimd} + 32 * 1)]
+    stp     q4,  q5,  [sp, #({fpsimd} + 32 * 2)]
+    stp     q6,  q7,  [sp, #({fpsimd} + 32 * 3)]
+    stp     q8,  q9,  [sp, #({fpsimd} + 32 * 4)]
+    stp     q10, q11, [sp, #({fpsimd} + 32 * 5)]
+    stp     q12, q13, [sp, #({fpsimd} + 32 * 6)]
+    stp     q14, q15, [sp, #({fpsimd} + 32 * 7)]
+    stp     q16, q17, [sp, #({fpsimd} + 32 * 8)]
+    stp     q18, q19, [sp, #({fpsimd} + 32 * 9)]
+    stp     q20, q21, [sp, #({fpsimd} + 32 * 10)]
+    stp     q22, q23, [sp, #({fpsimd} + 32 * 11)]
+    stp     q24, q25, [sp, #({fpsimd} + 32 * 12)]
+    stp     q26, q27, [sp, #({fpsimd} + 32 * 13)]
+    stp     q28, q29, [sp, #({fpsimd} + 32 * 14)]
+    stp     q30, q31, [sp, #({fpsimd} + 32 * 15)]
+    mrs     x1, FPCR
+    mrs     x2, FPSR
+    str     w1, [sp, #{fpcr}]
+    str     w2, [sp, #{fpsr}]
+    str     xzr, [sp, #{reserved}]
+    str     xzr, [sp, #{fp_reserved}]
+
     mov     x0, sp
 
     // Call handler
@@ -45,7 +74,7 @@
 
 .macro vector_handler handler
 __vector_\handler:
-    sub     sp, sp, #(16 * 18)
+    sub     sp, sp, #{frame_size}
 
     b       __impl_\handler
 
@@ -57,7 +86,7 @@ __impl_\handler:
 
 .macro kvector_handler handler
 __vector_\handler:
-    sub     sp, sp, #(16 * 18)
+    sub     sp, sp, #{frame_size}
 
     // Detect stack overflow without clobbering GP registers.
     msr     SP_EL0, x0
@@ -73,7 +102,7 @@ __vector_\handler:
     ldr     x0, =EMERG_STACK_END
     ldr     x0, [x0]
     mov     sp, x0
-    sub     sp, sp, #(16 * 18)
+    sub     sp, sp, #{frame_size}
     mrs     x0, TPIDR_EL1
     b       __impl_\handler
 
@@ -119,7 +148,27 @@ exception_vectors:
 .section .vectors.impl, "ax"
 .global restore_ctx_and_eret
 restore_ctx_and_eret:
-    add     sp, sp, #(0x10 * 18)
+    add     sp, sp, #{frame_size}
+    ldp     q0,  q1,  [x0, #({fpsimd} + 32 * 0)]
+    ldp     q2,  q3,  [x0, #({fpsimd} + 32 * 1)]
+    ldp     q4,  q5,  [x0, #({fpsimd} + 32 * 2)]
+    ldp     q6,  q7,  [x0, #({fpsimd} + 32 * 3)]
+    ldp     q8,  q9,  [x0, #({fpsimd} + 32 * 4)]
+    ldp     q10, q11, [x0, #({fpsimd} + 32 * 5)]
+    ldp     q12, q13, [x0, #({fpsimd} + 32 * 6)]
+    ldp     q14, q15, [x0, #({fpsimd} + 32 * 7)]
+    ldp     q16, q17, [x0, #({fpsimd} + 32 * 8)]
+    ldp     q18, q19, [x0, #({fpsimd} + 32 * 9)]
+    ldp     q20, q21, [x0, #({fpsimd} + 32 * 10)]
+    ldp     q22, q23, [x0, #({fpsimd} + 32 * 11)]
+    ldp     q24, q25, [x0, #({fpsimd} + 32 * 12)]
+    ldp     q26, q27, [x0, #({fpsimd} + 32 * 13)]
+    ldp     q28, q29, [x0, #({fpsimd} + 32 * 14)]
+    ldp     q30, q31, [x0, #({fpsimd} + 32 * 15)]
+    ldr     w1, [x0, #{fpcr}]
+    ldr     w2, [x0, #{fpsr}]
+    msr     FPCR, x1
+    msr     FPSR, x2
     ldp     lr,  x1,  [x0, #(16 * 15)]
     ldp     x2,  x3,  [x0, #(16 * 16)]
     ldr     x4,       [x0, #(16 * 17)]
@@ -153,3 +202,4 @@ exception_return:
     adr_a   x1 restore_ctx_and_eret
     br      x1
 
+.arch_extension nofp

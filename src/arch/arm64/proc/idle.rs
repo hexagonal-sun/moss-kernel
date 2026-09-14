@@ -52,6 +52,7 @@ pub fn create_idle_task() -> OwnedTask {
         spsr_el1: 0,
         sp_el0: 0,
         tpid_el0: 0,
+        ..Default::default()
     };
 
     let code_map = VMArea::new(

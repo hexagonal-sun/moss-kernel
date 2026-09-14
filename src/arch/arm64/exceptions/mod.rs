@@ -10,8 +10,11 @@ use crate::{
     sched::{syscall_ctx::ProcessCtx, uspc_ret::dispatch_userspace_task},
     spawn_kernel_work,
 };
-use aarch64_cpu::registers::{CPACR_EL1, ReadWriteable, VBAR_EL1};
-use core::{arch::global_asm, fmt::Display};
+use aarch64_cpu::{
+    asm::barrier::{SY, isb},
+    registers::{CPACR_EL1, ReadWriteable, VBAR_EL1},
+};
+use core::{arch::global_asm, fmt::Display, mem::offset_of};
 use esr::{Esr, Exception};
 use libkernel::{
     error::Result,
@@ -37,14 +40,32 @@ unsafe extern "C" {
 pub static EMERG_STACK_END: VA = VA::from_value(0xffff_c000_0000_0000);
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
+pub struct FpSimdState {
+    q: [[u64; 2]; 32],
+    fpcr: u32,
+    fpsr: u32,
+    reserved: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct ExceptionState {
     pub x: [u64; 31],  // x0-x30
     pub elr_el1: u64,  // Exception link register
     pub spsr_el1: u64, // Saved program status register
     pub sp_el0: u64,   // Stack pointer of EL0
     pub tpid_el0: u64, // Thread process ID
+    // Explicit padding keeps the stack frame and Q-register area 16-byte
+    // aligned without leaving uninitialized bytes in signal/clone contexts.
+    pub(crate) reserved: u64,
+    pub fpsimd: FpSimdState,
 }
+
+const _: () = {
+    assert!(size_of::<ExceptionState>().is_multiple_of(16));
+    assert!(offset_of!(ExceptionState, fpsimd).is_multiple_of(16));
+};
 
 impl Display for ExceptionState {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -79,7 +100,15 @@ impl Display for ExceptionState {
     }
 }
 
-global_asm!(include_str!("exceptions.s"));
+global_asm!(
+    include_str!("exceptions.s"),
+    frame_size = const size_of::<ExceptionState>(),
+    reserved = const offset_of!(ExceptionState, reserved),
+    fpsimd = const offset_of!(ExceptionState, fpsimd),
+    fpcr = const offset_of!(ExceptionState, fpsimd) + offset_of!(FpSimdState, fpcr),
+    fpsr = const offset_of!(ExceptionState, fpsimd) + offset_of!(FpSimdState, fpsr),
+    fp_reserved = const offset_of!(ExceptionState, fpsimd) + offset_of!(FpSimdState, reserved),
+);
 
 pub fn default_handler(state: &ExceptionState) {
     panic!("Unhandled CPU exception.  Program state:\n{state}");
@@ -171,11 +200,6 @@ extern "C" fn el0_sync(state_ptr: *mut ExceptionState) -> *const ExceptionState 
             let mut ctx2 = unsafe { ctx.clone() };
             spawn_kernel_work(&mut ctx2, handle_syscall(ctx));
         }
-        Exception::TrappedFP(_) => {
-            CPACR_EL1.modify(CPACR_EL1::FPEN::TrapNothing);
-            // TODO: Flag to start saving FP/SIMD context for this task and,
-            // save the state.
-        }
         _ => default_handler(state),
     }
 
@@ -251,5 +275,10 @@ pub fn exceptions_init() -> Result<()> {
 }
 
 pub fn secondary_exceptions_init() {
+    // Save FP/SIMD eagerly in every exception frame, including on secondary
+    // CPUs. The kernel itself remains compiled for the soft-float target.
+    CPACR_EL1.modify(CPACR_EL1::FPEN::TrapNothing);
+    isb(SY);
     VBAR_EL1.set(EXCEPTION_BASE.value() as u64);
+    isb(SY);
 }

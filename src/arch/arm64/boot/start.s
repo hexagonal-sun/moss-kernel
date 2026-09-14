@@ -76,7 +76,7 @@ _start:
 1:  mov     sp, x0
 
     // Allocate a context switch frame
-    sub     sp, sp, #(16 * 18)
+    sub     sp, sp, #{frame_size}
 
     // Jump to the main kernel bring-up path
     mov     x0, sp  // context switch frame ptr.
