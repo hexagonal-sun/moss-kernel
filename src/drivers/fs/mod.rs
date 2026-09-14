@@ -13,6 +13,7 @@ pub mod cgroup;
 pub mod dev;
 pub mod ext4;
 pub mod fat32;
+pub mod pidfs;
 pub mod proc;
 pub mod sys;
 pub mod tmpfs;

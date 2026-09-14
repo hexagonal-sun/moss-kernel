@@ -40,6 +40,12 @@ macro_rules! process_iovec {
 
 #[async_trait]
 pub trait FileOps: Send + Sync {
+    /// Display name for `/proc/<pid>/fd` links to anonymous files. This is not
+    /// a pathname: following the link uses the open file's inode instead.
+    fn anonymous_name(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Reads data from the current file position into `buf`.
     /// The file's cursor is advanced by the number of bytes read.
     async fn read(&mut self, ctx: &mut FileCtx, buf: UA, count: usize) -> Result<usize> {

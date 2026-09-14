@@ -125,6 +125,12 @@ impl VFS {
         }
     }
 
+    /// Registers a kernel-only filesystem without exposing a userspace mount.
+    pub(crate) fn register_internal_fs(&self, fs: Arc<dyn Filesystem>) {
+        assert!(fs.id() < FS_ID_START);
+        self.state.lock_save_irq().filesystems.insert(fs.id(), fs);
+    }
+
     /// Creates an instance of a filesystem from a registered driver.
     ///
     /// This does not mount the filesystem, but prepares an instance that can
@@ -277,7 +283,13 @@ impl VFS {
         let mut current_inode = root;
         let mut symlink_count = 0;
 
-        let mut components: Vec<_> = path.components().map(|s| s.to_owned()).collect();
+        // Preserve `.` so a non-directory followed by `/.` fails with ENOTDIR.
+        let mut components: Vec<_> = path
+            .as_str()
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_owned())
+            .collect();
         components.reverse();
 
         while let Some(component) = components.pop() {
@@ -291,6 +303,12 @@ impl VFS {
                 current_inode = mount_root;
             }
 
+            if current_inode.getattr().await?.file_type != FileType::Directory {
+                return Err(FsError::NotADirectory.into());
+            }
+            if component == "." {
+                continue;
+            }
             let next_inode = current_inode.lookup(&component).await?;
 
             let attr = next_inode.getattr().await?;
@@ -301,9 +319,21 @@ impl VFS {
                     return Err(FsError::Loop.into()); // prevent infinite looping
                 }
 
+                if let Some(target) = next_inode.follow_link().await? {
+                    current_inode = target;
+                    continue;
+                }
+
                 let target = next_inode.readlink().await?;
-                let mut new_components: Vec<_> =
-                    target.components().map(|s| s.to_owned()).collect();
+                let mut new_components: Vec<_> = target
+                    .as_str()
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_owned())
+                    .collect();
+                if target.as_str().ends_with('/') {
+                    new_components.push(".".to_owned());
+                }
                 new_components.reverse();
                 for comp in new_components {
                     components.push(comp);
@@ -328,6 +358,12 @@ impl VFS {
             .get_mount_root(&current_inode.id())
         {
             current_inode = mount_root;
+        }
+
+        if path.as_str().ends_with('/')
+            && current_inode.getattr().await?.file_type != FileType::Directory
+        {
+            return Err(FsError::NotADirectory.into());
         }
 
         Ok(current_inode)

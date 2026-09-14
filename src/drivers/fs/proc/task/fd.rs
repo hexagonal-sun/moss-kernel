@@ -1,7 +1,6 @@
 use crate::drivers::fs::proc::{get_inode_id, procfs};
 use crate::process::fd_table::Fd;
 use crate::process::{Tid, find_task_by_tid};
-use crate::sched::current_work;
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::format;
@@ -55,7 +54,7 @@ impl Inode for ProcFdInode {
 
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
         let fd: i32 = name.parse().map_err(|_| FsError::NotFound)?;
-        let task = current_work();
+        let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
         let fd_table = task.fd_table.lock_save_irq();
         if fd_table.get(Fd(fd)).is_none() {
             return Err(FsError::NotFound.into());
@@ -101,8 +100,6 @@ impl Inode for ProcFdInode {
         self
     }
 }
-
-// TODO: Support fd links in /proc/[pid]/fd/
 
 pub struct ProcFdFile {
     id: InodeId,
@@ -167,10 +164,10 @@ impl SimpleFile for ProcFdFile {
                 if let Some(path) = file.path() {
                     Ok(path.to_owned())
                 } else {
-                    // TODO: Find file type
-                    todo!(
-                        "Implement readlink for /proc/[pid]/fd/[fd] when fd doesn't refer to a file with an inode"
-                    )
+                    let (ops, _) = &*file.lock().await;
+                    ops.anonymous_name()
+                        .map(PathBuf::from)
+                        .ok_or(KernelError::NotSupported)
                 }
             } else {
                 Err(FsError::NotFound.into())
@@ -178,5 +175,18 @@ impl SimpleFile for ProcFdFile {
         } else {
             Err(KernelError::NotSupported)
         }
+    }
+
+    async fn follow_link(&self) -> Result<Option<Arc<dyn Inode>>> {
+        if self.fd_info {
+            return Ok(None);
+        }
+        let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
+        let file = task
+            .fd_table
+            .lock_save_irq()
+            .get(Fd(self.fd))
+            .ok_or(FsError::NotFound)?;
+        Ok(file.inode())
     }
 }
