@@ -38,7 +38,7 @@ pub async fn sys_utimensat(
             .lock_save_irq()
             .get(dirfd)
             .ok_or(KernelError::BadFd)?
-            .inode()
+            .vfs_path()
             .ok_or(KernelError::BadFd)?
     } else {
         let mut buf = [0; 1024];

@@ -232,6 +232,7 @@ pub struct Task {
     pub process: Arc<ThreadGroup>,
     pub vm: Arc<VmHandle>,
     pub fs: SpinLock<Arc<fs_context::FsContext>>,
+    pub mount_ns: SpinLock<Arc<crate::fs::mount::MountNamespace>>,
     pub creds: SpinLock<Credentials>,
     pub i_timers: SpinLock<ITimers>,
     pub fd_table: Arc<SpinLock<FileDescriptorTable>>,
@@ -245,6 +246,9 @@ pub struct Task {
 }
 
 impl Task {
+    pub fn mount_ns(&self) -> Arc<crate::fs::mount::MountNamespace> {
+        self.mount_ns.lock_save_irq().clone()
+    }
     pub fn fs(&self) -> Arc<fs_context::FsContext> {
         self.fs.lock_save_irq().clone()
     }

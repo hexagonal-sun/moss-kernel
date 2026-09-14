@@ -67,6 +67,7 @@ impl OwnedTask {
             comm: Arc::new(SpinLock::new(Comm::new("idle"))),
             process: thread_group_builder.build(),
             fs: SpinLock::new(super::fs_context::FsContext::new()),
+            mount_ns: SpinLock::new(crate::fs::mount::MountNamespace::initial()),
             creds: SpinLock::new(Credentials::new_root()),
             vm: Arc::new(VmHandle::new(vm)),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
@@ -96,6 +97,7 @@ impl OwnedTask {
             comm: Arc::new(SpinLock::new(Comm::new("init"))),
             process: ThreadGroupBuilder::new(Tgid::init()).build(),
             fs: SpinLock::new(super::fs_context::FsContext::new()),
+            mount_ns: SpinLock::new(crate::fs::mount::MountNamespace::initial()),
             creds: SpinLock::new(Credentials::new_root()),
             vm: Arc::new(VmHandle::new(
                 ProcessVM::empty().expect("Could not create init process's VM"),

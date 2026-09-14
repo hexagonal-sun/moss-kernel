@@ -230,8 +230,8 @@ Threads:\t{tasks}\n{credentials}",
                     output.push('\n');
                     output
                 }
-                TaskFileType::Cwd => task.fs().cwd.lock_save_irq().clone().1.as_str().to_string(),
-                TaskFileType::Root => task.fs().root.lock_save_irq().1.as_str().to_string(),
+                TaskFileType::Cwd => self.display_link()?.as_str().to_string(),
+                TaskFileType::Root => self.display_link()?.as_str().to_string(),
                 TaskFileType::Maps => {
                     let mut output = String::new();
                     let proc_vm = task.vm.shared_vm();
@@ -253,14 +253,7 @@ Threads:\t{tasks}\n{credentials}",
 
                     output
                 }
-                TaskFileType::Exe => {
-                    if let Some(exe) = task.process.executable.lock_save_irq().clone() {
-                        // TODO: Check if exists
-                        exe.as_str().to_string()
-                    } else {
-                        "(deleted)".to_string()
-                    }
-                }
+                TaskFileType::Exe => self.display_link()?.as_str().to_string(),
                 TaskFileType::Cgroup => {
                     format!("0::{}\n", cgroup_path_for_thread_group(task.process.tgid))
                 }
@@ -272,46 +265,47 @@ Threads:\t{tasks}\n{credentials}",
     }
 
     async fn readlink(&self) -> libkernel::error::Result<PathBuf> {
-        if matches!(
+        self.display_link()
+    }
+}
+
+impl ProcTaskFileInode {
+    fn display_link(&self) -> libkernel::error::Result<PathBuf> {
+        let path = self.path_link()?.ok_or(KernelError::NotSupported)?;
+        let caller = crate::sched::current_work().task.t_shared.clone();
+        let root = caller.fs().root.lock_save_irq().clone();
+        Ok(path.display_path(&root))
+    }
+    fn path_link(&self) -> libkernel::error::Result<Option<crate::fs::VfsPath>> {
+        if !matches!(
             self.file_type,
             TaskFileType::Cwd | TaskFileType::Root | TaskFileType::Exe
         ) {
-            let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
-            let caller = crate::sched::current_work().task.t_shared.clone();
-            crate::process::access::ptrace_may_access(&caller, &task, true)
-                .map_err(|_| FsError::PermissionDenied)?;
+            return Ok(None);
         }
-        if let TaskFileType::Cwd = self.file_type {
-            let task = find_task_by_tid(self.tid);
-            return if let Some(task) = task {
-                let fs = task.fs();
-                let cwd = fs.cwd.lock_save_irq();
-                Ok(cwd.1.clone())
-            } else {
-                Err(FsError::NotFound.into())
-            };
-        } else if let TaskFileType::Root = self.file_type {
-            let task = find_task_by_tid(self.tid);
-            return if let Some(task) = task {
-                let fs = task.fs();
-                let root = fs.root.lock_save_irq();
-                Ok(root.1.clone())
-            } else {
-                Err(FsError::NotFound.into())
-            };
-        } else if let TaskFileType::Exe = self.file_type {
-            let task_details = find_task_by_tid(self.tid);
-
-            return if let Some(task) = task_details {
-                if let Some(exe) = task.process.executable.lock_save_irq().clone() {
-                    Ok(exe.as_str().to_string().into())
-                } else {
-                    Err(FsError::NotFound.into())
-                }
-            } else {
-                Err(FsError::NotFound.into())
-            };
-        }
-        Err(KernelError::NotSupported)
+        let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
+        let caller = crate::sched::current_work().task.t_shared.clone();
+        crate::process::access::ptrace_may_access(&caller, &task, true)
+            .map_err(|_| FsError::PermissionDenied)?;
+        Ok(Some(match self.file_type {
+            TaskFileType::Cwd => task.fs().cwd.lock_save_irq().clone(),
+            TaskFileType::Root => task.fs().root.lock_save_irq().clone(),
+            TaskFileType::Exe => task
+                .process
+                .executable
+                .lock_save_irq()
+                .clone()
+                .ok_or(FsError::NotFound)?,
+            _ => return Ok(None),
+        }))
+    }
+}
+pub(super) fn follow_path(
+    inode: &dyn libkernel::fs::Inode,
+) -> libkernel::error::Result<Option<crate::fs::VfsPath>> {
+    if let Some(node) = inode.as_any().downcast_ref::<ProcTaskFileInode>() {
+        node.path_link()
+    } else {
+        Ok(None)
     }
 }

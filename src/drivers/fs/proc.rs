@@ -5,7 +5,16 @@ mod meminfo;
 mod root;
 mod stat;
 mod task;
-pub use task::id_map::open as open_control;
+pub fn open_control(
+    inode: &dyn libkernel::fs::Inode,
+    opener: &crate::process::creds::Credentials,
+) -> libkernel::error::Result<Option<alloc::boxed::Box<dyn crate::fs::fops::FileOps>>> {
+    if let Some(ops) = task::id_map::open(inode, opener)? {
+        return Ok(Some(ops));
+    }
+    task::mounts::open(inode)
+}
+pub(crate) use task::follow_path;
 
 use crate::drivers::{Driver, FilesystemDriver};
 use crate::sync::OnceLock;

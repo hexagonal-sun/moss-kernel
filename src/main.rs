@@ -127,17 +127,23 @@ async fn launch_init(mut ctx: ProcessCtx, mut opts: KOptions) {
     // Process all automounts.
     for (path, fs) in opts.automounts.iter() {
         let mount_point = VFS
-            .resolve_path_absolute(path, VFS.root_inode())
+            .resolve_path_absolute(path, VFS.root_path())
             .await
             .unwrap_or_else(|e| panic!("Could not find automount path: {}. {e}", path.as_str()));
 
-        VFS.mount(mount_point, fs, None)
-            .await
-            .unwrap_or_else(|e| panic!("Automount failed: {e}"));
+        VFS.mount(
+            &crate::fs::mount::MountNamespace::initial(),
+            mount_point,
+            fs,
+            None,
+            None,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("Automount failed: {e}"));
     }
 
     let inode = VFS
-        .resolve_path_absolute(&init, VFS.root_inode())
+        .resolve_path_absolute(&init, VFS.root_path())
         .await
         .expect("Unable to find init");
 
@@ -148,14 +154,14 @@ async fn launch_init(mut ctx: ProcessCtx, mut opts: KOptions) {
 
     // Now that the root fs has been mounted, set the real root inode as the
     // cwd and root.
-    *task.fs().cwd.lock_save_irq() = (VFS.root_inode(), PathBuf::from("/"));
-    *task.fs().root.lock_save_irq() = (VFS.root_inode(), PathBuf::from("/"));
+    *task.fs().cwd.lock_save_irq() = VFS.root_path();
+    *task.fs().root.lock_save_irq() = VFS.root_path();
 
     let console = VFS
         .open(
             Path::new("/dev/console"),
             OpenFlags::O_RDWR,
-            VFS.root_inode(),
+            VFS.root_path(),
             FilePermissions::empty(),
             &task,
         )

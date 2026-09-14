@@ -817,14 +817,8 @@ fn test_statx() {
         pub stx_atomic_write_unit_min: u32,
         pub stx_atomic_write_unit_max: u32,
         pub stx_atomic_write_segments_max: u32,
-        pub stx_dio_read_offset_align: u32,
-        pub stx_atomic_write_unit_max_opt: u32,
-        pub __unused1: u64,
-        pub __unused2: u64,
-        pub __unused3: u64,
-        pub __unused4: u64,
-        pub __unused5: u64,
-        pub __unused6: u64,
+        pub __spare1: u32,
+        pub __spare3: [u64; 9],
     }
 
     #[repr(C)]
@@ -836,6 +830,8 @@ fn test_statx() {
     }
 
     let file = "/tmp/statx_test";
+    assert_eq!(std::mem::size_of::<StatX>(), 256);
+    assert_eq!(std::mem::offset_of!(StatX, stx_mnt_id), 144);
     let c_file = CString::new(file).unwrap();
     let data = b"Hello, world!";
     let mut buffer = MaybeUninit::uninit();

@@ -51,52 +51,115 @@ pub async fn sys_mount(
     dir_name: TUA<c_char>,
     type_: TUA<c_char>,
     flags: i64,
-    _data: UA,
+    data: UA,
 ) -> Result<usize> {
-    ctx.shared().creds.lock_save_irq().check_capable_in(
-        &crate::process::user_namespace::UserNamespace::initial(),
+    let task = ctx.shared();
+    let creds = task.creds.lock_save_irq().clone();
+    let ns = task.mount_ns();
+    creds.check_capable_in(
+        &ns.owner,
         libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN,
     )?;
-    // Mount options are not enforced by the global mount table yet. In
-    // particular, never silently accept security flags or propagation changes.
-    let harmless = MountFlags::MS_SILENT.bits();
-    if flags as u64 & !harmless != 0 {
+    let flags = flags as u64 & !MountFlags::MS_SILENT.bits();
+    let bind = flags == MountFlags::MS_BIND.bits();
+    let private = flags == MountFlags::MS_PRIVATE.bits()
+        || flags == (MountFlags::MS_PRIVATE | MountFlags::MS_REC).bits();
+    if flags != 0 && !bind && !private {
         return Err(KernelError::NotSupported);
     }
-    let mut buf = [0u8; 1024];
-    let dev_name = if dev_name.is_null() {
+    let mut dir_buf = [0u8; 1024];
+    let dir = Path::new(
+        UserCStr::from_ptr(dir_name)
+            .copy_from_user(&mut dir_buf)
+            .await?,
+    );
+    let cwd = task.fs().cwd.lock_save_irq().clone();
+    let target = VFS.resolve_path(dir, cwd.clone(), task).await?;
+    if !ns.contains(&target) {
+        return Err(KernelError::InvalidValue);
+    }
+    if private {
+        let target = crate::fs::mount::MountNamespace::follow(target);
+        if !target.is_mount_root() {
+            return Err(KernelError::InvalidValue);
+        }
+        // Every supported mount is already private. No shared/slave request is accepted.
+        return Ok(0);
+    }
+    let mut source_buf = [0u8; 1024];
+    let source = if dev_name.is_null() {
         None
     } else {
         Some(
             UserCStr::from_ptr(dev_name)
-                .copy_from_user(&mut buf)
+                .copy_from_user(&mut source_buf)
                 .await?,
         )
     };
-    let mut buf = [0u8; 1024];
-    let dir_name = UserCStr::from_ptr(dir_name)
-        .copy_from_user(&mut buf)
-        .await?;
-    let cwd = ctx.shared().fs().cwd.lock_save_irq().0.clone();
-    let mount_point = VFS
-        .resolve_path(Path::new(dir_name), cwd, ctx.shared())
-        .await?;
-    let mut buf = [0u8; 1024];
+    if bind {
+        let source = source.ok_or(KernelError::Fault)?;
+        let source = VFS.resolve_path(Path::new(source), cwd, task).await?;
+        VFS.bind(&ns, source, target).await?;
+        return Ok(0);
+    }
+    let mut type_buf = [0u8; 128];
     let fs_type = if type_.is_null() {
         None
     } else {
-        Some(UserCStr::from_ptr(type_).copy_from_user(&mut buf).await?)
+        Some(
+            UserCStr::from_ptr(type_)
+                .copy_from_user(&mut type_buf)
+                .await?,
+        )
     };
-
-    let fs_name = fs_type.or(dev_name).ok_or(KernelError::NotSupported)?;
-    let fs_name = match fs_name {
+    let fs_name = match fs_type.or(source).ok_or(KernelError::NotSupported)? {
         "proc" => "procfs",
         "devtmpfs" => "devfs",
-        "sysfs" => "sysfs",
         "cgroup2" => "cgroupfs",
         s => s,
     };
+    // Global pseudo-filesystems do not yet have userns-safe superblocks.
+    if creds.user_ns() != crate::process::user_namespace::UserNamespace::initial()
+        && fs_name != "tmpfs"
+    {
+        return Err(KernelError::NotPermitted);
+    }
+    if !data.is_null() {
+        let mut options = [0u8; 4096];
+        if !UserCStr::from_ptr(TUA::from_value(data.value()))
+            .copy_from_user(&mut options)
+            .await?
+            .is_empty()
+        {
+            return Err(KernelError::NotSupported);
+        }
+    }
+    VFS.mount(&ns, target, fs_name, None, Some(&creds)).await?;
+    Ok(0)
+}
 
-    VFS.mount(mount_point, fs_name, None).await?;
+pub async fn sys_umount2(ctx: &ProcessCtx, target: TUA<c_char>, flags: u32) -> Result<usize> {
+    if flags & !15 != 0 {
+        return Err(KernelError::InvalidValue);
+    }
+    if flags & (1 | 4) != 0 {
+        return Err(KernelError::NotSupported);
+    }
+    let task = ctx.shared();
+    let ns = task.mount_ns();
+    task.creds.lock_save_irq().check_capable_in(
+        &ns.owner,
+        libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN,
+    )?;
+    let mut buf = [0; 1024];
+    let name = Path::new(UserCStr::from_ptr(target).copy_from_user(&mut buf).await?);
+    let cwd = task.fs().cwd.lock_save_irq().clone();
+    let target = if flags & 8 != 0 {
+        VFS.resolve_path_nofollow(name, cwd, task).await?
+    } else {
+        VFS.resolve_path(name, cwd, task).await?
+    };
+    let target = crate::fs::mount::MountNamespace::follow(target);
+    ns.unmount(&target, flags & 2 != 0)?;
     Ok(0)
 }

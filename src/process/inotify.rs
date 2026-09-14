@@ -554,7 +554,7 @@ pub async fn sys_inotify_add_watch(
             .copy_from_user(&mut buf)
             .await?,
     );
-    let cwd = task.fs().cwd.lock_save_irq().0.clone();
+    let cwd = task.fs().cwd.lock_save_irq().clone();
 
     let inode = if mask & IN_DONT_FOLLOW != 0 {
         VFS.resolve_path_nofollow(path, cwd, &task).await?
@@ -584,7 +584,7 @@ pub async fn sys_inotify_add_watch(
     let (ops, _) = &mut *inotify_file.lock().await;
     let inotify = ops.as_inotify().ok_or(KernelError::InvalidValue)?;
 
-    Ok(inotify.add_watch(inode, mask).await? as usize)
+    Ok(inotify.add_watch(inode.inode(), mask).await? as usize)
 }
 
 pub async fn sys_inotify_rm_watch(ctx: &ProcessCtx, fd: Fd, wd: i32) -> Result<usize> {

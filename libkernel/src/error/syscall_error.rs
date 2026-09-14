@@ -66,10 +66,11 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::Fs(FsError::AlreadyExists) => EEXIST,
         KernelError::Fs(FsError::DirectoryNotEmpty) => ENOTEMPTY,
         KernelError::Fs(FsError::Busy) => EBUSY,
+        KernelError::Fs(FsError::CrossDevice) => EXDEV,
         KernelError::Fs(FsError::InvalidInput) => EINVAL, // TODO: Is this right?
         KernelError::Fs(FsError::PermissionDenied) => EACCES,
         KernelError::Fs(FsError::TooManyFiles) => EMFILE,
-        KernelError::Fs(FsError::NoDevice) => ENODEV,
+        KernelError::Fs(FsError::NoDevice | FsError::DriverNotFound) => ENODEV,
         KernelError::Fs(FsError::Loop) => ELOOP,
         KernelError::NotATty => ENOTTY,
         KernelError::SeekPipe => ESPIPE,

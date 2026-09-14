@@ -12,6 +12,7 @@ mod fs;
 mod futex;
 mod futex2;
 mod inotify;
+mod mountns;
 mod opath;
 mod permissions;
 mod pidfd;

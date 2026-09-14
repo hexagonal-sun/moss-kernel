@@ -64,14 +64,14 @@ pub async fn sys_clone(
     tls: usize,
 ) -> Result<usize> {
     let flags = CloneFlags::from_bits_truncate(flags);
-    let unsupported_namespaces = CloneFlags::CLONE_NEWNS
-        | CloneFlags::CLONE_NEWCGROUP
+    let unsupported_namespaces = CloneFlags::CLONE_NEWCGROUP
         | CloneFlags::CLONE_NEWUTS
         | CloneFlags::CLONE_NEWIPC
         | CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWNET;
     // Unsupported namespace kinds must not silently share the global domain.
     if flags.intersects(unsupported_namespaces)
+        || flags.contains(CloneFlags::CLONE_NEWNS | CloneFlags::CLONE_FS)
         || (flags.contains(CloneFlags::CLONE_NEWUSER)
             && flags.intersects(CloneFlags::CLONE_FS | CloneFlags::CLONE_THREAD))
         || (flags.contains(CloneFlags::CLONE_SIGHAND) && !flags.contains(CloneFlags::CLONE_VM))
@@ -86,6 +86,11 @@ pub async fn sys_clone(
         super::namespace::check_userns_create(ctx.shared())?;
         let ns = super::user_namespace::UserNamespace::create(&creds)?;
         creds.enter_user_ns(ns);
+    }
+    if flags.contains(CloneFlags::CLONE_NEWNS) {
+        creds
+            .caps()
+            .check_capable(libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN)?;
     }
 
     let trace_point = if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -172,6 +177,12 @@ pub async fn sys_clone(
         } else {
             current_task.fs().duplicate()
         };
+        let mut mount_ns = current_task.mount_ns();
+        if flags.contains(CloneFlags::CLONE_NEWNS) {
+            let (new_ns, map) = mount_ns.duplicate(creds.user_ns());
+            fs.remap_mounts(&map);
+            mount_ns = new_ns;
+        }
 
         let ptrace = if flags.contains(CloneFlags::CLONE_PTRACE) || should_trace_new_tsk {
             current_task.ptrace.lock_save_irq().clone()
@@ -208,6 +219,7 @@ pub async fn sys_clone(
                 vm,
                 fd_table: files,
                 fs: SpinLock::new(fs),
+                mount_ns: SpinLock::new(mount_ns),
                 i_timers: SpinLock::new(ITimers::default()),
                 creds: SpinLock::new(creds),
                 ptrace: SpinLock::new(ptrace),

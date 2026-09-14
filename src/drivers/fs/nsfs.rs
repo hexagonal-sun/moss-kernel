@@ -49,19 +49,44 @@ impl Filesystem for NsFs {
     }
 }
 
-pub struct UserNsInode {
-    pub ns: Arc<UserNamespace>,
+#[derive(Clone)]
+pub enum Namespace {
+    User(Arc<UserNamespace>),
+    Mount(Arc<crate::fs::mount::MountNamespace>),
 }
-pub fn new_inode(ns: Arc<UserNamespace>) -> Arc<dyn Inode> {
+impl Namespace {
+    pub fn id(&self) -> u64 {
+        match self {
+            Self::User(n) => n.id,
+            Self::Mount(n) => n.id,
+        }
+    }
+    pub fn kind(&self) -> u32 {
+        match self {
+            Self::User(_) => CloneFlags::CLONE_NEWUSER.bits(),
+            Self::Mount(_) => CloneFlags::CLONE_NEWNS.bits(),
+        }
+    }
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::User(_) => "user",
+            Self::Mount(_) => "mnt",
+        }
+    }
+}
+pub struct NamespaceInode {
+    pub ns: Namespace,
+}
+pub fn namespace_inode(ns: Namespace) -> Arc<dyn Inode> {
     static REGISTERED: OnceLock<()> = OnceLock::new();
     REGISTERED.get_or_init(|| VFS.register_internal_fs(Arc::new(NsFs)));
-    Arc::new(UserNsInode { ns })
+    Arc::new(NamespaceInode { ns })
 }
 
 #[async_trait]
-impl Inode for UserNsInode {
+impl Inode for NamespaceInode {
     fn id(&self) -> InodeId {
-        InodeId::from_fsid_and_inodeid(NSFS_ID, self.ns.id)
+        InodeId::from_fsid_and_inodeid(NSFS_ID, self.ns.id())
     }
     async fn getattr(&self) -> Result<FileAttr> {
         Ok(FileAttr {
@@ -77,15 +102,18 @@ impl Inode for UserNsInode {
 }
 
 pub fn open(inode: &dyn Inode) -> Option<Box<dyn FileOps>> {
-    inode.as_any().downcast_ref::<UserNsInode>().map(|inode| {
-        Box::new(NsFile {
-            ns: inode.ns.clone(),
-        }) as Box<dyn FileOps>
-    })
+    inode
+        .as_any()
+        .downcast_ref::<NamespaceInode>()
+        .map(|inode| {
+            Box::new(NsFile {
+                ns: inode.ns.clone(),
+            }) as Box<dyn FileOps>
+        })
 }
-fn install_fd(ns: Arc<UserNamespace>) -> Result<usize> {
+fn install_fd(ns: Namespace) -> Result<usize> {
     let mut file = OpenFile::new(Box::new(NsFile { ns: ns.clone() }), OpenFlags::O_RDONLY);
-    file.set_inode(new_inode(ns));
+    file.set_inode(namespace_inode(ns));
     Ok(crate::sched::current_work()
         .task
         .fd_table
@@ -95,7 +123,7 @@ fn install_fd(ns: Arc<UserNamespace>) -> Result<usize> {
 }
 
 struct NsFile {
-    ns: Arc<UserNamespace>,
+    ns: Namespace,
 }
 #[async_trait]
 impl FileOps for NsFile {
@@ -113,20 +141,23 @@ impl FileOps for NsFile {
             .clone();
         match request {
             0xb701 | 0xb702 => {
-                let parent = self.ns.parent.as_ref().ok_or(KernelError::NotPermitted)?;
+                let parent = match &self.ns {
+                    Namespace::User(ns) => ns.parent.clone().ok_or(KernelError::NotPermitted)?,
+                    Namespace::Mount(ns) if request == 0xb701 => ns.owner.clone(),
+                    Namespace::Mount(_) => return Err(KernelError::InvalidValue),
+                };
                 let mut ns = parent.as_ref();
                 while ns != creds.user_ns().as_ref() {
                     ns = ns.parent.as_deref().ok_or(KernelError::NotPermitted)?;
                 }
-                install_fd(parent.clone())
+                install_fd(Namespace::User(parent))
             }
-            0xb703 => Ok(CloneFlags::CLONE_NEWUSER.bits() as usize),
+            0xb703 => Ok(self.ns.kind() as usize),
             0xb704 => {
-                copy_to_user(
-                    TUA::from_value(arg),
-                    creds.user_ns().show_uid(self.ns.owner),
-                )
-                .await?;
+                let Namespace::User(ns) = &self.ns else {
+                    return Err(KernelError::InvalidValue);
+                };
+                copy_to_user(TUA::from_value(arg), creds.user_ns().show_uid(ns.owner)).await?;
                 Ok(0)
             }
             _ => Err(KernelError::NotATty),

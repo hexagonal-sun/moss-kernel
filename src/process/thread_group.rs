@@ -16,7 +16,7 @@ use alloc::{
 use builder::ThreadGroupBuilder;
 use core::sync::atomic::AtomicUsize;
 use core::{fmt::Display, sync::atomic::Ordering};
-use libkernel::{fs::pathbuf::PathBuf, sync::condvar::WakeupType};
+use libkernel::sync::condvar::WakeupType;
 use pid::PidT;
 use rsrc_lim::ResourceLimits;
 use signal::{SigId, SigSet, SignalActionState};
@@ -118,7 +118,7 @@ pub struct ThreadGroup {
     pub utime: AtomicUsize,
     pub stime: AtomicUsize,
     pub last_account: AtomicUsize,
-    pub executable: SpinLock<Option<PathBuf>>,
+    pub executable: SpinLock<Option<crate::fs::VfsPath>>,
 }
 
 unsafe impl Send for ThreadGroup {}

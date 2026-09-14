@@ -105,9 +105,12 @@ pub async fn sys_mmap(
             .get(fd)
             .ok_or(KernelError::BadFd)?;
 
-        fd.lock().await.1.require_readable()
+        fd.lock()
+            .await
+            .1
+            .require_readable()
             .map_err(|_| libkernel::error::FsError::PermissionDenied)?;
-        let inode = fd.inode().ok_or(KernelError::BadFd)?;
+        let inode = fd.vfs_path().ok_or(KernelError::BadFd)?.pinned_inode();
         let name = fd
             .path()
             .map(|x| x.as_str().to_string())

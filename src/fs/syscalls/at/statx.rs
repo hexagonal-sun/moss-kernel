@@ -1,8 +1,5 @@
 use crate::{
-    fs::{
-        VFS,
-        syscalls::at::{resolve_at_start_node, resolve_path_flags},
-    },
+    fs::syscalls::at::{resolve_at_start_node, resolve_path_flags},
     memory::uaccess::{UserCopyable, copy_to_user, cstr::UserCStr},
     process::fd_table::Fd,
     sched::syscall_ctx::ProcessCtx,
@@ -70,30 +67,29 @@ pub struct StatX {
     pub stx_btime: StatXTimestamp, // Creation time
     pub stx_ctime: StatXTimestamp, // Change time
     pub stx_mtime: StatXTimestamp, // Modification time
-    pub stx_mnt_id: u64,           // Mount ID
 
     // Currently not supported on any current filesystems
     pub stx_rdev_major: u32,                // Device major ID
     pub stx_rdev_minor: u32,                // Device minor ID
     pub stx_dev_major: u32,                 // Filesystem major ID
     pub stx_dev_minor: u32,                 // Filesystem minor ID
+    pub stx_mnt_id: u64,                    // Mount ID at Linux UAPI offset 0x90
     pub stx_dio_mem_align: u32,             // Alignment of memory for direct I/O
     pub stx_dio_offset_align: u32,          // Alignment of offset for direct I/O
     pub stx_subvol: u64,                    // Subvolume ID
     pub stx_atomic_write_unit_min: u32,     // Minimum atomic write direct I/O size
     pub stx_atomic_write_unit_max: u32,     // Maximum atomic write direct I/O size
     pub stx_atomic_write_segments_max: u32, // Maximum number of segments for atomic writes
-    pub stx_dio_read_offset_align: u32,     // Alignment of offset for direct I/O read
-    pub stx_atomic_write_unit_max_opt: u32, // Maximum size optimized for atomic writes
-
-    // Unused
-    pub __unused1: u64,
-    pub __unused2: u64,
-    pub __unused3: u64,
-    pub __unused4: u64,
-    pub __unused5: u64,
-    pub __unused6: u64,
+    pub __spare1: u32,
+    pub __spare3: [u64; 9],
 }
+
+// Validate the userspace layout in every kernel build.
+const _: () = {
+    assert!(core::mem::size_of::<StatX>() == 256);
+    assert!(core::mem::offset_of!(StatX, stx_dev_major) == 136);
+    assert!(core::mem::offset_of!(StatX, stx_mnt_id) == 144);
+};
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
@@ -136,6 +132,11 @@ pub async fn sys_statx(
     let attr = node.getattr().await?;
 
     let mut stat_x = StatX::default();
+    stat_x.stx_blksize = attr.block_size;
+    // Decode the same Linux dev_t that ordinary stat returns.
+    let dev = attr.id.fs_id();
+    stat_x.stx_dev_major = (((dev >> 8) & 0xfff) | ((dev >> 32) & 0xfffff000)) as u32;
+    stat_x.stx_dev_minor = ((dev & 0xff) | ((dev >> 12) & 0xffffff00)) as u32;
 
     // TODO: right now, the attr is applied unconditionally even if the data is not supported, as
     // long as the input mask is set. at some point, the fs should be checked if these attributes
@@ -212,11 +213,11 @@ pub async fn sys_statx(
 
     if mask.contains(StatXMask::STATX_MNT_ID) {
         stat_x.stx_mask |= StatXMask::STATX_MNT_ID.bits();
-        stat_x.stx_mnt_id = attr.id.fs_id();
+        stat_x.stx_mnt_id = node.mount_id();
     }
 
     stat_x.stx_attributes_mask = StatXAttr::STATX_ATTR_MOUNT_ROOT.bits();
-    if VFS.is_mount_root(attr.id) {
+    if node.is_mount_root() {
         stat_x.stx_attributes |= StatXAttr::STATX_ATTR_MOUNT_ROOT.bits();
     }
 

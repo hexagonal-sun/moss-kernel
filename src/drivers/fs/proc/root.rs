@@ -4,7 +4,7 @@ use crate::drivers::fs::proc::meminfo::ProcMeminfoInode;
 use crate::drivers::fs::proc::stat::ProcStatInode;
 use crate::drivers::fs::proc::task::ProcTaskInode;
 use crate::process::thread_group::pid::PidT;
-use crate::process::{TASK_LIST, TaskDescriptor, Tid, find_task_by_tid};
+use crate::process::{TASK_LIST, Tid, find_task_by_tid};
 use crate::sched::current_work;
 use alloc::boxed::Box;
 use alloc::string::ToString;
@@ -26,6 +26,7 @@ impl ProcRootInode {
         Self {
             id: InodeId::from_fsid_and_inodeid(PROCFS_ID, 0),
             attr: FileAttr {
+                id: InodeId::from_fsid_and_inodeid(PROCFS_ID, 0),
                 file_type: FileType::Directory,
                 permissions: FilePermissions::from_bits_retain(0o555),
                 ..FileAttr::default()
@@ -41,15 +42,14 @@ impl Inode for ProcRootInode {
     }
 
     async fn lookup(&self, name: &str) -> error::Result<Arc<dyn Inode>> {
-        let current = current_work();
-
+        if matches!(name, "self" | "thread-self" | "mounts") {
+            return Ok(Arc::new(ProcAlias {
+                id: InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[name])),
+                name: name.into(),
+            }));
+        }
         // Lookup a PID directory.
-        let desc = if name == "self" {
-            // FIXME: The group leader may have exited.
-            TaskDescriptor::from_tgid_tid(current.pgid(), Tid::from_tgid(current.pgid()))
-        } else if name == "thread-self" {
-            current.descriptor()
-        } else if name == "stat" {
+        let desc = if name == "stat" {
             return Ok(Arc::new(ProcStatInode::new(
                 InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["stat"])),
             )));
@@ -102,26 +102,14 @@ impl Inode for ProcRootInode {
             ));
         }
 
-        let current = current_work();
-
-        entries.push(Dirent::new(
-            "self".to_string(),
-            InodeId::from_fsid_and_inodeid(
-                PROCFS_ID,
-                get_inode_id(&[&current.descriptor().tgid().value().to_string()]),
-            ),
-            FileType::Directory,
-            (entries.len() + 1) as u64,
-        ));
-        entries.push(Dirent::new(
-            "thread-self".to_string(),
-            InodeId::from_fsid_and_inodeid(
-                PROCFS_ID,
-                get_inode_id(&[&current.descriptor().tid().value().to_string()]),
-            ),
-            FileType::Directory,
-            (entries.len() + 1) as u64,
-        ));
+        for name in ["self", "thread-self", "mounts"] {
+            entries.push(Dirent::new(
+                name.into(),
+                InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[name])),
+                FileType::Symlink,
+                (entries.len() + 1) as u64,
+            ));
+        }
         entries.push(Dirent::new(
             "stat".to_string(),
             InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["stat"])),
@@ -144,6 +132,40 @@ impl Inode for ProcRootInode {
         Ok(Box::new(SimpleDirStream::new(entries, start_offset)))
     }
 
+    fn as_any(&self) -> &dyn core::any::Any {
+        self
+    }
+}
+
+// Stable alias inodes compute their target for each lookup. Caching a task
+// directory under the name "self" would retain another caller's captured TID.
+struct ProcAlias {
+    id: InodeId,
+    name: alloc::string::String,
+}
+#[async_trait]
+impl Inode for ProcAlias {
+    fn id(&self) -> InodeId {
+        self.id
+    }
+    async fn getattr(&self) -> error::Result<FileAttr> {
+        Ok(FileAttr {
+            id: self.id,
+            file_type: FileType::Symlink,
+            permissions: FilePermissions::from_bits_retain(0o777),
+            ..Default::default()
+        })
+    }
+    async fn readlink(&self) -> error::Result<libkernel::fs::pathbuf::PathBuf> {
+        let task = current_work();
+        Ok(match self.name.as_str() {
+            "self" => task.process.tgid.value().to_string().into(),
+            "thread-self" => {
+                alloc::format!("{}/task/{}", task.process.tgid.value(), task.tid.value()).into()
+            }
+            _ => "self/mounts".into(),
+        })
+    }
     fn as_any(&self) -> &dyn core::any::Any {
         self
     }

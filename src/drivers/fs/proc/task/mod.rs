@@ -1,10 +1,20 @@
 mod fd;
 pub(super) mod id_map;
+pub(super) mod mounts;
 mod ns;
 // TODO: allowlist this across the codebase
 #[expect(clippy::module_inception)]
 mod task;
 mod task_file;
+
+pub(crate) fn follow_path(
+    inode: &dyn libkernel::fs::Inode,
+) -> libkernel::error::Result<Option<crate::fs::VfsPath>> {
+    if let Some(path) = fd::follow_path(inode)? {
+        return Ok(Some(path));
+    }
+    task_file::follow_path(inode)
+}
 
 use crate::drivers::fs::proc::task::task_file::{ProcTaskFileInode, TaskFileType};
 use crate::drivers::fs::proc::{get_inode_id, procfs};
@@ -66,6 +76,13 @@ impl Inode for ProcTaskInode {
             return Ok(Arc::new(ns::NsDir {
                 tid: self.tid,
                 id: inode_id,
+            }));
+        }
+        if name == "mounts" || name == "mountinfo" {
+            return Ok(Arc::new(mounts::MountsInode {
+                tid: self.tid,
+                id: inode_id,
+                info: name == "mountinfo",
             }));
         }
         if name == "fdinfo" {
@@ -169,7 +186,7 @@ impl Inode for ProcTaskInode {
             FileType::Directory,
             entries.len() as u64 + 1,
         ));
-        for name in ["uid_map", "gid_map", "setgroups"] {
+        for name in ["uid_map", "gid_map", "setgroups", "mounts", "mountinfo"] {
             entries.push(Dirent::new(
                 name.into(),
                 InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, name])),

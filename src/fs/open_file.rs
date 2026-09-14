@@ -43,6 +43,7 @@ pub struct OpenFile {
     path_only: bool,
     inode: Option<Arc<dyn Inode>>,
     path: Option<PathBuf>,
+    location: Option<super::VfsPath>,
     state: Mutex<(Box<dyn FileOps>, FileCtx)>,
 }
 
@@ -53,11 +54,13 @@ impl OpenFile {
             state: Mutex::new((ops, FileCtx::new(flags))),
             inode: None,
             path: None,
+            location: None,
         }
     }
 
-    pub fn update(&mut self, inode: Arc<dyn Inode>, path: PathBuf) {
-        self.inode = Some(inode);
+    pub fn update(&mut self, location: super::VfsPath, path: PathBuf) {
+        self.inode = Some(location.inode());
+        self.location = Some(location);
         self.path = Some(path);
     }
 
@@ -68,6 +71,12 @@ impl OpenFile {
 
     pub fn inode(&self) -> Option<Arc<dyn Inode>> {
         self.inode.clone()
+    }
+
+    pub fn vfs_path(&self) -> Option<super::VfsPath> {
+        self.location
+            .clone()
+            .or_else(|| self.inode().map(super::VfsPath::anonymous))
     }
 
     /// Immutable handle kind, readable while the fd table is locked.

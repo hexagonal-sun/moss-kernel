@@ -103,9 +103,9 @@ pub async fn sys_statfs(
         return Err(FsError::NotFound.into());
     }
     let task = ctx.shared().clone();
-    let cwd = task.fs().cwd.lock_save_irq().0.clone();
+    let cwd = task.fs().cwd.lock_save_irq().clone();
     let inode = VFS.resolve_path(path, cwd, &task).await?;
-    let statfs = statfs_impl(inode).await?;
+    let statfs = statfs_impl(inode.inode()).await?;
     copy_to_user(stat, statfs).await?;
     Ok(0)
 }
@@ -121,8 +121,8 @@ pub async fn sys_fstatfs(
         .lock_save_irq()
         .get_raw(fd)
         .ok_or(KernelError::BadFd)?;
-    let inode = fd.inode().ok_or(KernelError::InvalidValue)?;
-    let statfs = statfs_impl(inode).await?;
+    let inode = fd.vfs_path().ok_or(KernelError::InvalidValue)?;
+    let statfs = statfs_impl(inode.inode()).await?;
     copy_to_user(stat, statfs).await?;
     Ok(0)
 }

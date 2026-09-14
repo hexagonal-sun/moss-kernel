@@ -191,7 +191,7 @@ fn test_userns_creation_and_atomic_errors() {
         );
     }
     error(
-        unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNS) } as _,
+        unsafe { libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNET) } as _,
         libc::EINVAL,
     );
     assert_eq!(ns_id(), parent_ns);

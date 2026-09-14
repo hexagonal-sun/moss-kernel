@@ -27,7 +27,6 @@ use libkernel::{
     fs::{
         FileType, Inode, InodeId, OpenFlags, SeekFrom,
         attr::{FileAttr, FilePermissions},
-        pathbuf::PathBuf,
     },
     memory::{
         PAGE_SIZE,
@@ -323,8 +322,8 @@ pub async fn sys_pipe2(ctx: &ProcessCtx, fds: TUA<[Fd; 2]>, flags: u32) -> Resul
         let mut read_file = OpenFile::new(Box::new(reader), flags | OpenFlags::O_RDONLY);
         let mut write_file = OpenFile::new(Box::new(writer), flags | OpenFlags::O_WRONLY);
 
-        read_file.update(inode.clone(), PathBuf::new());
-        write_file.update(inode, PathBuf::new());
+        read_file.set_inode(inode.clone());
+        write_file.set_inode(inode);
 
         let read_fd = fds.insert(Arc::new(read_file))?;
         let write_fd = fds.insert(Arc::new(write_file))?;

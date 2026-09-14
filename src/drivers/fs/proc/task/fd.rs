@@ -197,7 +197,13 @@ impl SimpleFile for ProcFdFile {
             .get_raw(Fd(self.fd))
             .ok_or(FsError::NotFound)?;
         let (_, ctx) = &mut *fd_entry.lock().await;
-        let info_string = format!("pos: {}\nflags: {}", ctx.pos, ctx.flags.bits());
+        let mount_id = fd_entry.vfs_path().map_or(0, |p| p.mount_id());
+        let info_string = format!(
+            "pos: {}\nflags: {}\nmnt_id: {}\n",
+            ctx.pos,
+            ctx.flags.bits(),
+            mount_id
+        );
         if self.fd_info {
             Ok(info_string.into_bytes())
         } else {
@@ -212,7 +218,22 @@ impl SimpleFile for ProcFdFile {
                 let Some(file) = task.fd_table.lock_save_irq().get_raw(Fd(self.fd)) else {
                     return Err(FsError::NotFound.into());
                 };
-                if let Some(path) = file.path() {
+                if let Some(inode) = file.inode()
+                    && let Some(node) = inode
+                        .as_any()
+                        .downcast_ref::<crate::drivers::fs::nsfs::NamespaceInode>()
+                {
+                    return Ok(format!("{}:[{}]", node.ns.name(), node.ns.id()).into());
+                }
+                if let Some(path) = file.vfs_path().filter(|p| p.mount.is_some()) {
+                    let root = crate::sched::current_work()
+                        .task
+                        .fs()
+                        .root
+                        .lock_save_irq()
+                        .clone();
+                    Ok(path.display_path(&root))
+                } else if let Some(path) = file.path() {
                     Ok(path.to_owned())
                 } else {
                     let (ops, _) = &*file.lock().await;
@@ -241,4 +262,21 @@ impl SimpleFile for ProcFdFile {
             .ok_or(FsError::NotFound)?;
         Ok(file.inode())
     }
+}
+
+pub(super) fn follow_path(inode: &dyn libkernel::fs::Inode) -> Result<Option<crate::fs::VfsPath>> {
+    let Some(node) = inode.as_any().downcast_ref::<ProcFdFile>() else {
+        return Ok(None);
+    };
+    if node.fd_info {
+        return Ok(None);
+    }
+    let task = find_task_by_tid(node.tid).ok_or(FsError::NotFound)?;
+    check_access(&task)?;
+    let file = task
+        .fd_table
+        .lock_save_irq()
+        .get_raw(Fd(node.fd))
+        .ok_or(FsError::NotFound)?;
+    Ok(file.vfs_path())
 }

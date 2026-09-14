@@ -2,7 +2,6 @@
 //! IDs. Maps are immutable once installed; credentials and inodes always store
 //! kernel IDs, so entering a namespace never changes ownership of an object.
 use alloc::{format, string::String, sync::Arc, vec, vec::Vec};
-use core::sync::atomic::{AtomicU64, Ordering};
 
 use super::creds::Credentials;
 use crate::sync::{OnceLock, SpinLock};
@@ -82,7 +81,6 @@ impl UserNamespace {
     }
 
     pub fn create(creator: &Credentials) -> Result<Arc<Self>> {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(2);
         let parent = creator.user_ns();
         if parent.level >= 32 {
             return Err(KernelError::NoSpace);
@@ -92,7 +90,7 @@ impl UserNamespace {
         }
         let allow_setgroups = parent.maps.lock_save_irq().allow_setgroups;
         Ok(Arc::new(Self {
-            id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
+            id: super::namespace::next_namespace_id(),
             parent: Some(parent.clone()),
             owner: creator.euid(),
             level: parent.level + 1,

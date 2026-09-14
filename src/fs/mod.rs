@@ -8,7 +8,13 @@ use crate::{
     },
     sync::SpinLock,
 };
-use alloc::{borrow::ToOwned, boxed::Box, collections::btree_map::BTreeMap, sync::Arc, vec::Vec};
+use alloc::{
+    borrow::ToOwned,
+    boxed::Box,
+    collections::btree_map::BTreeMap,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 use async_trait::async_trait;
 use core::any::Any;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -26,7 +32,12 @@ use reg::RegFile;
 
 pub mod dir;
 pub mod fops;
+pub mod location;
 pub mod memfd;
+pub mod mount;
+use location::Dentry;
+pub use location::VfsPath;
+use mount::MountNamespace;
 pub mod open_file;
 mod path_file;
 pub mod pipe;
@@ -48,13 +59,6 @@ impl Inode for DummyInode {
     }
 }
 
-/// Represents a mounted filesystem.
-struct Mount {
-    fs: Arc<dyn Filesystem>,
-    root_inode: Arc<dyn Inode>,
-    covered_inode: Arc<dyn Inode>,
-}
-
 /// This trait represents a type of filesystem, like "ext4" or "tmpfs". It acts
 /// as a factory for creating mounted instances.
 #[async_trait]
@@ -66,49 +70,23 @@ pub trait FilesystemDriver: Driver + Send + Sync {
     ) -> Result<Arc<dyn Filesystem>>;
 }
 
-/// The internal state of the VFS.
-///
-/// This struct consolidates the filesystem-wide collections (the list of all
-/// registered filesystem instances and the mapping of mount points).
 struct VfsState {
-    /// A map from an InodeId of a directory to the Mount that is mounted there.
-    mounts: BTreeMap<InodeId, Mount>,
-    /// A map from a filesystem ID to the corresponding filesystem instance.
-    filesystems: BTreeMap<u64, Arc<dyn Filesystem>>,
+    filesystems: BTreeMap<u64, Weak<dyn Filesystem>>,
+    internal: BTreeMap<u64, Arc<dyn Filesystem>>,
+    roots: BTreeMap<u64, Weak<Dentry>>,
 }
-
 impl VfsState {
-    /// Creates a new, empty VfsState.
     const fn new() -> Self {
         Self {
-            mounts: BTreeMap::new(),
             filesystems: BTreeMap::new(),
+            internal: BTreeMap::new(),
+            roots: BTreeMap::new(),
         }
     }
-
-    /// Registers a new filesystem and its mount point.
-    fn add_mount(&mut self, mount_point_id: InodeId, mount: Mount) {
-        self.filesystems.insert(mount.fs.id(), mount.fs.clone());
-        self.mounts.insert(mount_point_id, mount);
-    }
-
-    /// Removes a mount point by its inode ID.
-    fn remove_mount(&mut self, mount_point_id: &InodeId) -> Option<()> {
-        let mount = self.mounts.remove(mount_point_id)?;
-        self.filesystems.remove(&mount.fs.id())?;
-        Some(())
-    }
-
-    /// Checks if an inode is a mount point and returns the root inode of the
-    /// mounted filesystem if it is.
-    fn get_mount_root(&self, inode_id: &InodeId) -> Option<Arc<dyn Inode>> {
-        self.mounts
-            .get(inode_id)
-            .map(|mount| mount.root_inode.clone())
-    }
-
     fn get_fs(&self, inode_id: InodeId) -> Option<Arc<dyn Filesystem>> {
-        self.filesystems.get(&inode_id.fs_id()).cloned()
+        self.filesystems
+            .get(&inode_id.fs_id())
+            .and_then(Weak::upgrade)
     }
 }
 
@@ -116,7 +94,7 @@ impl VfsState {
 pub struct VFS {
     next_fs_id: AtomicU64,
     state: SpinLock<VfsState>,
-    root_inode: SpinLock<Option<Arc<dyn Inode>>>,
+    path_ops: crate::sync::Mutex<()>,
 }
 
 impl VFS {
@@ -124,14 +102,16 @@ impl VFS {
         Self {
             next_fs_id: AtomicU64::new(FS_ID_START),
             state: SpinLock::new(VfsState::new()),
-            root_inode: SpinLock::new(None),
+            path_ops: crate::sync::Mutex::new(()),
         }
     }
 
     /// Registers a kernel-only filesystem without exposing a userspace mount.
     pub(crate) fn register_internal_fs(&self, fs: Arc<dyn Filesystem>) {
         assert!(fs.id() < FS_ID_START);
-        self.state.lock_save_irq().filesystems.insert(fs.id(), fs);
+        let mut state = self.state.lock_save_irq();
+        state.filesystems.insert(fs.id(), Arc::downgrade(&fs));
+        state.internal.insert(fs.id(), fs);
     }
 
     /// Creates an instance of a filesystem from a registered driver.
@@ -152,73 +132,83 @@ impl VFS {
 
         let id = self.next_fs_id.fetch_add(1, Ordering::SeqCst);
 
-        driver.construct(id, blkdev).await
+        let fs = driver.construct(id, blkdev).await?;
+        let mut state = self.state.lock_save_irq();
+        state.filesystems.retain(|_, fs| fs.strong_count() != 0);
+        state.filesystems.insert(fs.id(), Arc::downgrade(&fs));
+        Ok(fs)
     }
 
-    /// Mounts the root filesystem.
+    async fn fs_root(&self, fs: &Arc<dyn Filesystem>) -> Result<Arc<Dentry>> {
+        let inode = fs.root_inode().await?;
+        let mut state = self.state.lock_save_irq();
+        if let Some(root) = state.roots.get(&fs.id()).and_then(Weak::upgrade) {
+            return Ok(root);
+        }
+        state.roots.retain(|_, d| d.strong_count() != 0);
+        let root = Dentry::root(inode);
+        state.roots.insert(fs.id(), Arc::downgrade(&root));
+        Ok(root)
+    }
+
     pub async fn mount_root(
         &self,
         driver_name: &str,
         blkdev: Option<Box<dyn BlockDevice>>,
     ) -> Result<()> {
         let fs = self.create_fs_instance(driver_name, blkdev).await?;
-        let root_inode = fs.root_inode().await?;
-
-        let mount = Mount {
-            fs,
-            root_inode: root_inode.clone(),
-            covered_inode: root_inode.clone(),
-        };
-
-        // Lock the state to add the new mount and filesystem.
-        self.state.lock_save_irq().add_mount(root_inode.id(), mount);
-
-        // Set the global root inode.
-        *self.root_inode.lock_save_irq() = Some(root_inode);
-
+        let root = self.fs_root(&fs).await?;
+        MountNamespace::initial().install_root(fs, root, driver_name);
         Ok(())
     }
 
-    /// Mounts a filesystem at a given directory (mount point).
     pub async fn mount(
         &self,
-        mount_point: Arc<dyn Inode>,
+        ns: &Arc<MountNamespace>,
+        target: VfsPath,
         driver_name: &str,
         blkdev: Option<Box<dyn BlockDevice>>,
+        creds: Option<&Credentials>,
     ) -> Result<()> {
-        if mount_point.getattr().await?.file_type != FileType::Directory {
+        if target.getattr().await?.file_type != FileType::Directory {
             return Err(FsError::NotADirectory.into());
         }
-
         let fs = self.create_fs_instance(driver_name, blkdev).await?;
-        let mount_point_id = mount_point.id();
-        let root_inode = fs.root_inode().await?;
-
-        let new_mount = Mount {
-            fs,
-            root_inode,
-            covered_inode: mount_point,
-        };
-
-        // Lock the state and insert the new mount.
-        self.state
-            .lock_save_irq()
-            .add_mount(mount_point_id, new_mount);
-
-        Ok(())
+        let root = self.fs_root(&fs).await?;
+        if driver_name == "tmpfs"
+            && let Some(creds) = creds
+        {
+            let mut attr = root.inode.getattr().await?;
+            attr.uid = creds.fsuid();
+            attr.gid = creds.fsgid();
+            root.inode.setattr(attr).await?;
+        }
+        let _guard = self.path_ops.lock().await;
+        let target = MountNamespace::follow(target);
+        ns.attach(&target, fs, root, driver_name)
     }
 
-    #[expect(unused)]
-    pub async fn unmount(&self, mount_point: Arc<dyn Inode>) -> Result<()> {
-        let mount_point_id = mount_point.id();
-
-        // Lock the state and remove the mount.
-        self.state
-            .lock_save_irq()
-            .remove_mount(&mount_point_id)
-            .ok_or(FsError::NotFound)?;
-
-        Ok(())
+    pub async fn bind(
+        &self,
+        ns: &Arc<MountNamespace>,
+        source: VfsPath,
+        target: VfsPath,
+    ) -> Result<()> {
+        let m = source.mount.as_ref().ok_or(KernelError::InvalidValue)?;
+        if !ns.contains(&source) || !ns.contains(&target) {
+            return Err(KernelError::InvalidValue);
+        }
+        if (source.getattr().await?.file_type == FileType::Directory)
+            != (target.getattr().await?.file_type == FileType::Directory)
+        {
+            return Err(FsError::NotADirectory.into());
+        }
+        let _guard = self.path_ops.lock().await;
+        if ns.has_locked_children(&source) {
+            return Err(KernelError::InvalidValue);
+        }
+        let target = MountNamespace::follow(target);
+        ns.attach(&target, m.fs.clone(), source.dentry.clone(), &m.fs_name)
     }
 
     pub async fn get_fs(&self, inode: Arc<dyn Inode>) -> Result<Arc<dyn Filesystem>> {
@@ -233,9 +223,9 @@ impl VFS {
     pub async fn resolve_path(
         &self,
         path: &Path,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         task: &Arc<Task>,
-    ) -> Result<Arc<dyn Inode>> {
+    ) -> Result<VfsPath> {
         let creds = task.creds.lock_save_irq().clone();
         self.resolve_with_credentials(path, root, task, true, &creds)
             .await
@@ -246,9 +236,9 @@ impl VFS {
     pub async fn resolve_path_nofollow(
         &self,
         path: &Path,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         task: &Arc<Task>,
-    ) -> Result<Arc<dyn Inode>> {
+    ) -> Result<VfsPath> {
         let creds = task.creds.lock_save_irq().clone();
         self.resolve_with_credentials(path, root, task, false, &creds)
             .await
@@ -257,15 +247,15 @@ impl VFS {
     pub(crate) async fn resolve_with_credentials(
         &self,
         path: &Path,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         task: &Arc<Task>,
         follow: bool,
         creds: &Credentials,
-    ) -> Result<Arc<dyn Inode>> {
+    ) -> Result<VfsPath> {
         if path.as_str().is_empty() {
             return Err(FsError::NotFound.into());
         }
-        let process_root = task.fs().root.lock_save_irq().0.clone();
+        let process_root = task.fs().root.lock_save_irq().clone();
         let root = if path.is_absolute() {
             process_root.clone()
         } else {
@@ -277,37 +267,27 @@ impl VFS {
 
     /// Resolves a path string to an Inode, starting from a given root for
     /// relative paths, and using the filesystem root inode for absolute paths.
-    pub async fn resolve_path_absolute(
-        &self,
-        path: &Path,
-        root: Arc<dyn Inode>,
-    ) -> Result<Arc<dyn Inode>> {
+    pub async fn resolve_path_absolute(&self, path: &Path, root: VfsPath) -> Result<VfsPath> {
         let root = if path.is_absolute() {
-            self.root_inode
-                .lock_save_irq()
-                .as_ref()
-                .cloned()
-                .ok_or(FsError::NotFound)?
+            self.root_path()
         } else {
             root
         };
-
-        self.resolve_path_internal(path, root, true, self.root_inode(), None)
+        self.resolve_path_internal(path, root, true, self.root_path(), None)
             .await
     }
 
     async fn resolve_path_internal(
         &self,
         path: &Path,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         follow_last_sym: bool,
-        process_root: Arc<dyn Inode>,
+        process_root: VfsPath,
         creds: Option<&Credentials>,
-    ) -> Result<Arc<dyn Inode>> {
-        let mut current_inode = root;
+    ) -> Result<VfsPath> {
+        let _guard = self.path_ops.lock().await;
+        let mut current = root;
         let mut symlink_count = 0;
-
-        // Preserve `.` so a non-directory followed by `/.` fails with ENOTDIR.
         let mut components: Vec<_> = path
             .as_str()
             .split('/')
@@ -315,132 +295,75 @@ impl VFS {
             .map(|s| s.to_owned())
             .collect();
         components.reverse();
-
         while let Some(component) = components.pop() {
-            // Before looking up the component, check if the current inode is a
-            // mount point. If so, traverse into the mounted filesystem's root.
-            if let Some(mount_root) = self
-                .state
-                .lock_save_irq()
-                .get_mount_root(&current_inode.id())
-            {
-                current_inode = mount_root;
-            }
-
-            let current_attr = current_inode.getattr().await?;
-            if current_attr.file_type != FileType::Directory {
+            if current.getattr().await?.file_type != FileType::Directory {
                 return Err(FsError::NotADirectory.into());
             }
             if let Some(creds) = creds {
                 creds
-                    .check_inode_access(current_inode.as_ref(), AccessMode::X_OK)
+                    .check_inode_access(current.as_ref(), AccessMode::X_OK)
                     .await?;
-            }
-            if component == ".." && current_inode.id() == process_root.id() {
-                continue;
-            }
-            if component == ".." {
-                // Leave mount roots through their covered directory before
-                // asking the parent filesystem for `..` (never through a
-                // virtual filesystem's synthetic root entry).
-                loop {
-                    let covered = self
-                        .state
-                        .lock_save_irq()
-                        .mounts
-                        .values()
-                        .find(|m| m.root_inode.id() == current_inode.id())
-                        .map(|m| m.covered_inode.clone());
-                    let Some(covered) = covered else {
-                        break;
-                    };
-                    if covered.id() == current_inode.id() {
-                        break;
-                    }
-                    current_inode = covered;
-                    if current_inode.id() == process_root.id() {
-                        break;
-                    }
-                }
-                if current_inode.id() == process_root.id() {
-                    continue;
-                }
             }
             if component == "." {
                 continue;
             }
-            let next_inode = current_inode.lookup(&component).await?;
-
-            let attr = next_inode.getattr().await?;
-
-            if attr.file_type == FileType::Symlink
+            if component == ".." {
+                current = MountNamespace::follow(current.parent(&process_root));
+                continue;
+            }
+            // Traverse mounts when looking up a named child, not when starting
+            // from a pinned cwd/dirfd or jumping through a proc magic link.
+            let next = MountNamespace::follow(current.lookup(&component).await?);
+            if next.getattr().await?.file_type == FileType::Symlink
                 && (follow_last_sym || !components.is_empty() || path.as_str().ends_with('/'))
             {
                 symlink_count += 1;
                 if symlink_count > MAX_SYMLINK {
-                    return Err(FsError::Loop.into()); // prevent infinite looping
+                    return Err(FsError::Loop.into());
                 }
-
-                if let Some(target) = next_inode.follow_link().await? {
-                    current_inode = target;
+                if let Some(target) = crate::drivers::fs::proc::follow_path(next.as_ref())? {
+                    current = target;
                     continue;
                 }
-
-                let target = next_inode.readlink().await?;
-                let mut new_components: Vec<_> = target
+                if let Some(inode) = next.follow_link().await? {
+                    current = VfsPath::anonymous(inode);
+                    continue;
+                }
+                let target = next.readlink().await?;
+                let mut more: Vec<_> = target
                     .as_str()
                     .split('/')
                     .filter(|s| !s.is_empty())
                     .map(|s| s.to_owned())
                     .collect();
                 if target.as_str().ends_with('/') {
-                    new_components.push(".".to_owned());
+                    more.push(".".to_owned());
                 }
-                new_components.reverse();
-                for comp in new_components {
-                    components.push(comp);
-                }
-
+                more.reverse();
+                components.extend(more);
                 if target.is_absolute() {
-                    // if absolute, restart from root
-                    current_inode = process_root.clone();
+                    current = process_root.clone();
                 }
-
                 continue;
             }
-
-            // Delegate the lookup to the underlying filesystem.
-            current_inode = next_inode;
+            current = next;
         }
-
-        // After the final lookup, check if the destination is itself a mount point.
-        if let Some(mount_root) = self
-            .state
-            .lock_save_irq()
-            .get_mount_root(&current_inode.id())
-        {
-            current_inode = mount_root;
-        }
-
-        if path.as_str().ends_with('/')
-            && current_inode.getattr().await?.file_type != FileType::Directory
+        if path.as_str().ends_with('/') && current.getattr().await?.file_type != FileType::Directory
         {
             return Err(FsError::NotADirectory.into());
         }
-
-        Ok(current_inode)
+        Ok(current)
     }
 
-    /// Returns a clone of the root inode.
-    pub fn root_inode(&self) -> Arc<dyn Inode> {
-        self.root_inode.lock_save_irq().as_ref().unwrap().clone()
+    pub fn root_path(&self) -> VfsPath {
+        MountNamespace::initial().root()
     }
 
     pub async fn open(
         &self,
         path: &Path,
         flags: OpenFlags,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         mode: FilePermissions,
         task: &Arc<Task>,
     ) -> Result<Arc<OpenFile>> {
@@ -503,6 +426,7 @@ impl VFS {
                     let target_inode = parent_inode
                         .create(file_name, FileType::File, mode, Some(date()))
                         .await?;
+                    let target_inode = parent_inode.child(file_name, target_inode);
                     let mut attr = target_inode.getattr().await?;
                     attr.uid = creds.fsuid();
                     attr.gid = if parent_attr.permissions.contains(FilePermissions::S_ISGID) {
@@ -573,7 +497,7 @@ impl VFS {
             FileType::File => {
                 let ops = crate::drivers::fs::proc::open_control(target_inode.as_ref(), &creds)?
                     .or_else(|| crate::drivers::fs::nsfs::open(target_inode.as_ref()))
-                    .unwrap_or_else(|| Box::new(RegFile::new(target_inode.clone())));
+                    .unwrap_or_else(|| Box::new(RegFile::new(target_inode.inode())));
                 let mut open_file = OpenFile::new(ops, flags);
                 open_file.update(target_inode, path.to_owned());
 
@@ -581,7 +505,7 @@ impl VFS {
             }
             FileType::Directory => {
                 let mut open_file =
-                    OpenFile::new(Box::new(DirFile::new(target_inode.clone())), flags);
+                    OpenFile::new(Box::new(DirFile::new(target_inode.inode())), flags);
                 open_file.update(target_inode, path.to_owned());
 
                 Ok(Arc::new(open_file))
@@ -613,7 +537,7 @@ impl VFS {
     pub async fn mkdir(
         &self,
         path: &Path,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         mode: FilePermissions,
         task: &Arc<Task>,
     ) -> Result<()> {
@@ -671,7 +595,7 @@ impl VFS {
     pub async fn unlink(
         &self,
         path: &Path,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         remove_dir: bool,
         task: &Arc<Task>,
     ) -> Result<()> {
@@ -716,7 +640,12 @@ impl VFS {
         // Extract the final component (name) and perform the unlink on the parent.
         let name = path.file_name().ok_or(FsError::InvalidInput)?;
 
+        let _guard = self.path_ops.lock().await;
+        if self.is_mountpoint_any(&target_inode) {
+            return Err(FsError::Busy.into());
+        }
         parent_inode.unlink(name).await?;
+        Dentry::unlink(&parent_inode.dentry, name);
         let is_dir = attr.file_type == FileType::Directory;
         notify_delete(parent_inode.id(), name, is_dir).await;
         notify_delete_self(target_inode.id(), is_dir).await;
@@ -724,14 +653,12 @@ impl VFS {
         Ok(())
     }
 
-    pub async fn link(
-        &self,
-        target: Arc<dyn Inode>,
-        new_parent: Arc<dyn Inode>,
-        name: &str,
-    ) -> Result<()> {
+    pub async fn link(&self, target: VfsPath, new_parent: VfsPath, name: &str) -> Result<()> {
         // just delegate to inode only, all handling is done at the syscall level
-        new_parent.link(name, target).await?;
+        if target.mount_id() != new_parent.mount_id() {
+            return Err(FsError::CrossDevice.into());
+        }
+        new_parent.link(name, target.inode()).await?;
         notify_create(new_parent.id(), name, false).await;
         Ok(())
     }
@@ -740,7 +667,7 @@ impl VFS {
         &self,
         target: &Path,
         link: &Path,
-        root: Arc<dyn Inode>,
+        root: VfsPath,
         task: &Arc<Task>,
     ) -> Result<()> {
         match self.resolve_path(link, root.clone(), task).await {
@@ -779,19 +706,48 @@ impl VFS {
 
     pub async fn rename(
         &self,
-        old_parent_inode: Arc<dyn Inode>,
+        old_parent_inode: VfsPath,
         old_name: &str,
-        new_parent_inode: Arc<dyn Inode>,
+        new_parent_inode: VfsPath,
         new_name: &str,
         no_replace: bool,
     ) -> Result<()> {
+        if old_parent_inode.mount_id() != new_parent_inode.mount_id() {
+            return Err(FsError::CrossDevice.into());
+        }
+        let _guard = self.path_ops.lock().await;
         let target_inode = old_parent_inode.lookup(old_name).await?;
         let target_attr = target_inode.getattr().await?;
+        if self.is_mountpoint_any(&target_inode) {
+            return Err(FsError::Busy.into());
+        }
+        if let Ok(victim) = new_parent_inode.lookup(new_name).await
+            && self.is_mountpoint_any(&victim)
+        {
+            return Err(FsError::Busy.into());
+        }
+        if old_parent_inode == new_parent_inode && old_name == new_name {
+            return Ok(());
+        }
+        // POSIX rename of two hard links to the same inode changes neither
+        // directory entry nor the cached paths of their open descriptors.
+        if !no_replace
+            && new_parent_inode
+                .lookup(new_name)
+                .await
+                .is_ok_and(|p| p.id() == target_inode.id())
+        {
+            return Ok(());
+        }
 
         new_parent_inode
-            .rename_from(old_parent_inode.clone(), old_name, new_name, no_replace)
+            .rename_from(old_parent_inode.inode(), old_name, new_name, no_replace)
             .await?;
 
+        Dentry::unlink(&new_parent_inode.dentry, new_name);
+        target_inode
+            .dentry
+            .moved(&new_parent_inode.dentry, new_name);
         notify_move(
             old_parent_inode.id(),
             old_name,
@@ -807,22 +763,32 @@ impl VFS {
 
     pub async fn exchange(
         &self,
-        old_parent_inode: Arc<dyn Inode>,
+        old_parent_inode: VfsPath,
         old_name: &str,
-        new_parent_inode: Arc<dyn Inode>,
+        new_parent_inode: VfsPath,
         new_name: &str,
     ) -> Result<()> {
+        if old_parent_inode.mount_id() != new_parent_inode.mount_id() {
+            return Err(FsError::CrossDevice.into());
+        }
+        let _guard = self.path_ops.lock().await;
+        let old = old_parent_inode.lookup(old_name).await?;
+        let new = new_parent_inode.lookup(new_name).await?;
+        if self.is_mountpoint_any(&old) || self.is_mountpoint_any(&new) {
+            return Err(FsError::Busy.into());
+        }
         old_parent_inode
-            .exchange(old_name, new_parent_inode, new_name)
-            .await
+            .exchange(old_name, new_parent_inode.inode(), new_name)
+            .await?;
+        old.dentry.moved(&new_parent_inode.dentry, new_name);
+        new.dentry.moved(&old_parent_inode.dentry, old_name);
+        // Restore the new-name cache entry removed when moving the second dentry.
+        old.dentry.moved(&new_parent_inode.dentry, new_name);
+        Ok(())
     }
 
-    pub fn is_mount_root(&self, id: InodeId) -> bool {
-        self.state
-            .lock_save_irq()
-            .mounts
-            .values()
-            .any(|mount| mount.root_inode.id() == id)
+    fn is_mountpoint_any(&self, path: &VfsPath) -> bool {
+        path.is_mount_root() || path.dentry.mounted.load(Ordering::Acquire) != 0
     }
 }
 
@@ -835,7 +801,11 @@ impl VFS {
     pub async fn sync_all(&self) -> Result<()> {
         let filesystems: Vec<_> = {
             let state = self.state.lock_save_irq();
-            state.filesystems.values().cloned().collect()
+            state
+                .filesystems
+                .values()
+                .filter_map(Weak::upgrade)
+                .collect()
         };
 
         for fs in filesystems {

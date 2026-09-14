@@ -4,7 +4,7 @@ use crate::{
     process::fd_table::Fd,
     sched::syscall_ctx::ProcessCtx,
 };
-use alloc::{borrow::ToOwned, ffi::CString, string::ToString};
+use alloc::ffi::CString;
 use core::{ffi::c_char, str::FromStr};
 use libkernel::{
     error::{FsError, KernelError, Result},
@@ -15,12 +15,15 @@ use libkernel::{
 
 pub async fn sys_getcwd(ctx: &ProcessCtx, buf: UA, len: usize) -> Result<usize> {
     let task = ctx.shared().clone();
-    let path = task.fs().cwd.lock_save_irq().1.as_str().to_string();
-    let cstr = CString::from_str(&path).map_err(|_| KernelError::InvalidValue)?;
+    let fs = task.fs();
+    let cwd = fs.cwd.lock_save_irq().clone();
+    let root = fs.root.lock_save_irq().clone();
+    let path = cwd.relative_to(&root).ok_or(FsError::NotFound)?;
+    let cstr = CString::from_str(path.as_str()).map_err(|_| KernelError::InvalidValue)?;
     let slice = cstr.as_bytes_with_nul();
 
     if slice.len() > len {
-        return Err(KernelError::TooLarge);
+        return Err(KernelError::RangeError);
     }
 
     copy_to_user_slice(slice, buf).await?;
@@ -35,8 +38,7 @@ pub async fn sys_chdir(ctx: &ProcessCtx, path: TUA<c_char>) -> Result<usize> {
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let task = ctx.shared().clone();
-    let current_path = task.fs().cwd.lock_save_irq().0.clone();
-    let new_path = task.fs().cwd.lock_save_irq().1.join(path);
+    let current_path = task.fs().cwd.lock_save_irq().clone();
 
     let node = VFS.resolve_path(path, current_path, &task).await?;
     let attr = node.getattr().await?;
@@ -47,7 +49,7 @@ pub async fn sys_chdir(ctx: &ProcessCtx, path: TUA<c_char>) -> Result<usize> {
         .lock_save_irq()
         .check_file_access(&attr, AccessMode::X_OK)?;
 
-    *task.fs().cwd.lock_save_irq() = (node, new_path);
+    *task.fs().cwd.lock_save_irq() = node;
 
     Ok(0)
 }
@@ -62,8 +64,7 @@ pub async fn sys_chroot(ctx: &ProcessCtx, path: TUA<c_char>) -> Result<usize> {
     let mut buf = [0; 1024];
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let current_path = task.fs().cwd.lock_save_irq().0.clone();
-    let new_path = task.fs().cwd.lock_save_irq().1.join(path);
+    let current_path = task.fs().cwd.lock_save_irq().clone();
 
     let node = VFS.resolve_path(path, current_path, &task).await?;
     let attr = node.getattr().await?;
@@ -74,7 +75,7 @@ pub async fn sys_chroot(ctx: &ProcessCtx, path: TUA<c_char>) -> Result<usize> {
         .lock_save_irq()
         .check_file_access(&attr, AccessMode::X_OK)?;
 
-    *task.fs().root.lock_save_irq() = (node, new_path);
+    *task.fs().root.lock_save_irq() = node;
 
     Ok(0)
 }
@@ -87,7 +88,7 @@ pub async fn sys_fchdir(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
         .get_raw(fd)
         .ok_or(KernelError::BadFd)?;
 
-    let inode = file.inode().ok_or(KernelError::BadFd)?;
+    let inode = file.vfs_path().ok_or(KernelError::BadFd)?;
     let attr = inode.getattr().await?;
     if attr.file_type != FileType::Directory {
         return Err(FsError::NotADirectory.into());
@@ -96,7 +97,7 @@ pub async fn sys_fchdir(ctx: &ProcessCtx, fd: Fd) -> Result<usize> {
         .lock_save_irq()
         .check_file_access(&attr, AccessMode::X_OK)?;
 
-    *task.fs().cwd.lock_save_irq() = (inode, file.path().ok_or(KernelError::BadFd)?.to_owned());
+    *task.fs().cwd.lock_save_irq() = inode;
 
     Ok(0)
 }

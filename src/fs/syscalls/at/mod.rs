@@ -1,12 +1,12 @@
 use crate::{
-    fs::{DummyInode, VFS},
+    fs::{DummyInode, VFS, VfsPath},
     process::{Task, fd_table::Fd},
     sched::syscall_ctx::ProcessCtx,
 };
 use alloc::sync::Arc;
 use libkernel::{
     error::{FsError, KernelError, Result},
-    fs::{FileType, Inode, path::Path},
+    fs::{FileType, path::Path},
 };
 
 pub mod access;
@@ -42,19 +42,19 @@ async fn resolve_at_start_node(
     dirfd: Fd,
     path: &Path,
     flags: AtFlags,
-) -> Result<Arc<dyn Inode>> {
+) -> Result<VfsPath> {
     if flags.contains(AtFlags::AT_EMPTY_PATH) && path.as_str().is_empty() {
         // just return a dummy, since it'll operate on dirfd anyways
-        return Ok(Arc::new(DummyInode {}));
+        return Ok(VfsPath::anonymous(Arc::new(DummyInode {})));
     }
     let task = ctx.shared().clone();
 
-    let start_node: Arc<dyn Inode> = if path.is_absolute() {
+    let start_node: VfsPath = if path.is_absolute() {
         // Absolute path ignores dirfd.
-        task.fs().root.lock_save_irq().0.clone()
+        task.fs().root.lock_save_irq().clone()
     } else if dirfd.is_atcwd() {
         // Path is relative to the current working directory.
-        task.fs().cwd.lock_save_irq().0.clone()
+        task.fs().cwd.lock_save_irq().clone()
     } else {
         // Path is relative to the directory specified by dirfd.
         let file = task
@@ -63,7 +63,7 @@ async fn resolve_at_start_node(
             .get_raw(dirfd)
             .ok_or(KernelError::BadFd)?;
 
-        let inode = file.inode().ok_or(KernelError::NotSupported)?;
+        let inode = file.vfs_path().ok_or(KernelError::NotSupported)?;
 
         if inode.getattr().await?.file_type != FileType::Directory {
             return Err(FsError::NotADirectory.into());
@@ -78,14 +78,14 @@ async fn resolve_at_start_node(
 async fn resolve_path_flags(
     dirfd: Fd,
     path: &Path,
-    root: Arc<dyn Inode>,
+    root: VfsPath,
     task: &Arc<Task>,
     flags: AtFlags,
-) -> Result<Arc<dyn Inode>> {
+) -> Result<VfsPath> {
     // simply return the inode that dirfd refers to
     if flags.contains(AtFlags::AT_EMPTY_PATH) && path.as_str().is_empty() {
         return Ok(if dirfd.is_atcwd() {
-            task.fs().cwd.lock_save_irq().0.clone()
+            task.fs().cwd.lock_save_irq().clone()
         } else {
             let file = task
                 .fd_table
@@ -93,7 +93,7 @@ async fn resolve_path_flags(
                 .get_raw(dirfd)
                 .ok_or(KernelError::BadFd)?;
 
-            file.inode().ok_or(KernelError::NotSupported)?
+            file.vfs_path().ok_or(KernelError::NotSupported)?
         });
     };
 

@@ -15,7 +15,7 @@ pub async fn sys_truncate(ctx: &ProcessCtx, path: TUA<c_char>, new_size: usize) 
     let task = ctx.shared().clone();
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
 
-    let root = task.fs().cwd.lock_save_irq().0.clone();
+    let root = task.fs().cwd.lock_save_irq().clone();
     let file = VFS
         .open(
             path,

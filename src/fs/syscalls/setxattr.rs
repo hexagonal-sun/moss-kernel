@@ -3,12 +3,10 @@ use crate::memory::uaccess::copy_from_user_slice;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::process::{fd_table::Fd, inotify::notify_attrib};
 use crate::sched::syscall_ctx::ProcessCtx;
-use alloc::sync::Arc;
 use alloc::vec;
 use bitflags::bitflags;
 use core::ffi::c_char;
 use libkernel::error::{KernelError, Result};
-use libkernel::fs::Inode;
 use libkernel::fs::path::Path;
 use libkernel::memory::address::{TUA, UA};
 
@@ -20,7 +18,7 @@ bitflags! {
 }
 
 async fn setxattr(
-    node: Arc<dyn Inode>,
+    node: crate::fs::VfsPath,
     name: &str,
     value: UA,
     size: usize,
@@ -64,7 +62,8 @@ pub async fn sys_setxattr(
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let task = ctx.shared().clone();
 
-    let node = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
+    let cwd = task.fs().cwd.lock_save_irq().clone();
+    let node = VFS.resolve_path(path, cwd, &task).await?;
     let mut buf = [0; 1024];
     setxattr(
         node,
@@ -89,9 +88,8 @@ pub async fn sys_lsetxattr(
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let task = ctx.shared().clone();
 
-    let node = VFS
-        .resolve_path_nofollow(path, VFS.root_inode(), &task)
-        .await?;
+    let cwd = task.fs().cwd.lock_save_irq().clone();
+    let node = VFS.resolve_path_nofollow(path, cwd, &task).await?;
     let mut buf = [0; 1024];
     setxattr(
         node,
@@ -119,7 +117,7 @@ pub async fn sys_fsetxattr(
             .get(fd)
             .ok_or(KernelError::BadFd)?;
 
-        file.inode().ok_or(KernelError::BadFd)?
+        file.vfs_path().ok_or(KernelError::BadFd)?
     };
     let mut buf = [0; 1024];
     setxattr(

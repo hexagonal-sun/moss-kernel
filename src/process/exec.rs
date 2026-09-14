@@ -11,7 +11,6 @@ use crate::{
     },
     process::{ctx::Context, thread_group::signal::SignalActionState},
 };
-use alloc::borrow::ToOwned;
 use alloc::{string::String, vec};
 use alloc::{string::ToString, sync::Arc, vec::Vec};
 use auxv::{AT_BASE, AT_ENTRY, AT_NULL, AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM, AT_RANDOM};
@@ -85,7 +84,7 @@ fn process_prog_headers<E: Endian>(
 
 async fn exec_elf(
     ctx: &mut ProcessCtx,
-    inode: Arc<dyn Inode>,
+    inode: crate::fs::VfsPath,
     path: &Path,
     argv: Vec<String>,
     envp: Vec<String>,
@@ -161,9 +160,14 @@ async fn exec_elf(
     }
 
     // Process the binary program headers.
-    if let Some(hdr_addr) =
-        process_prog_headers(hdrs, &mut vmas, main_bias, inode.clone(), path, endian)
-    {
+    if let Some(hdr_addr) = process_prog_headers(
+        hdrs,
+        &mut vmas,
+        main_bias,
+        inode.pinned_inode(),
+        path,
+        endian,
+    ) {
         auxv.push(AT_PHDR);
         auxv.push(hdr_addr.add_bytes(elf.e_phoff(endian) as _).value() as _);
     }
@@ -227,7 +231,7 @@ async fn exec_elf(
     let mut fd_table = ctx.shared().fd_table.lock_save_irq().clone();
     fd_table.close_cloexec_entries().await;
     *ctx.shared().fd_table.lock_save_irq() = fd_table;
-    *ctx.shared().process.executable.lock_save_irq() = Some(path.to_owned());
+    *ctx.shared().process.executable.lock_save_irq() = Some(inode.clone());
     *ctx.shared().i_timers.lock_save_irq() = ITimers::default();
 
     Ok(())
@@ -236,7 +240,7 @@ async fn exec_elf(
 async fn exec_script(
     ctx: &mut ProcessCtx,
     path: &Path,
-    inode: Arc<dyn Inode>,
+    inode: crate::fs::VfsPath,
     argv: Vec<String>,
     envp: Vec<String>,
 ) -> Result<()> {
@@ -264,9 +268,7 @@ async fn exec_script(
     // Resolve interpreter inode
     let interp_path = Path::new(interp_path);
     let task = ctx.shared();
-    let interp_inode = VFS
-        .resolve_path(interp_path, VFS.root_inode(), task)
-        .await?;
+    let interp_inode = VFS.resolve_path(interp_path, VFS.root_path(), task).await?;
     // Execute interpreter
     exec_elf(ctx, interp_inode, interp_path, new_argv, envp).await?;
     Ok(())
@@ -275,7 +277,7 @@ async fn exec_script(
 pub async fn kernel_exec(
     ctx: &mut ProcessCtx,
     path: &Path,
-    inode: Arc<dyn Inode>,
+    inode: crate::fs::VfsPath,
     argv: Vec<String>,
     envp: Vec<String>,
 ) -> Result<()> {
@@ -412,7 +414,7 @@ async fn process_interp(
     // Resolve interpreter path from root; this assumes interp_path is absolute.
     let task = ctx.shared();
     let path = Path::new(&interp_path);
-    let interp_inode = VFS.resolve_path(path, VFS.root_inode(), task).await?;
+    let interp_inode = VFS.resolve_path(path, VFS.root_path(), task).await?;
     check_execute(ctx, &interp_inode).await?;
 
     // Parse interpreter ELF header
@@ -437,7 +439,7 @@ async fn process_interp(
         interp_hdrs,
         vmas,
         Some(LINKER_BIAS),
-        interp_inode,
+        interp_inode.pinned_inode(),
         path,
         iendian,
     );
@@ -483,7 +485,7 @@ pub async fn sys_execve(
     }
 
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
-    let cwd = task.fs().cwd.lock_save_irq().0.clone();
+    let cwd = task.fs().cwd.lock_save_irq().clone();
     let inode = VFS.resolve_path(path, cwd, &task).await?;
 
     kernel_exec(ctx, path, inode, argv, envp).await?;
@@ -491,7 +493,7 @@ pub async fn sys_execve(
     Ok(0)
 }
 
-async fn check_execute(ctx: &ProcessCtx, inode: &Arc<dyn Inode>) -> Result<()> {
+async fn check_execute(ctx: &ProcessCtx, inode: &crate::fs::VfsPath) -> Result<()> {
     let attr = inode.getattr().await?;
     if attr.file_type != FileType::File {
         return Err(libkernel::error::FsError::PermissionDenied.into());

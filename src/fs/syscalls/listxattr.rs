@@ -3,13 +3,11 @@ use crate::memory::uaccess::copy_to_user_slice;
 use crate::memory::uaccess::cstr::UserCStr;
 use crate::process::fd_table::Fd;
 use crate::sched::syscall_ctx::ProcessCtx;
-use alloc::sync::Arc;
 use libkernel::error::{KernelError, Result};
-use libkernel::fs::Inode;
 use libkernel::fs::path::Path;
 use libkernel::memory::address::{TUA, UA};
 
-async fn listxattr(node: Arc<dyn Inode>, ua: UA, size: usize) -> Result<usize> {
+async fn listxattr(node: crate::fs::VfsPath, ua: UA, size: usize) -> Result<usize> {
     let list = node.listxattr().await?;
     // Join with \0
     let list = list.join("\0");
@@ -33,7 +31,8 @@ pub async fn sys_listxattr(
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let task = ctx.shared().clone();
 
-    let node = VFS.resolve_path(path, VFS.root_inode(), &task).await?;
+    let cwd = task.fs().cwd.lock_save_irq().clone();
+    let node = VFS.resolve_path(path, cwd, &task).await?;
     listxattr(node, list, size).await
 }
 
@@ -48,9 +47,8 @@ pub async fn sys_llistxattr(
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let task = ctx.shared().clone();
 
-    let node = VFS
-        .resolve_path_nofollow(path, VFS.root_inode(), &task)
-        .await?;
+    let cwd = task.fs().cwd.lock_save_irq().clone();
+    let node = VFS.resolve_path_nofollow(path, cwd, &task).await?;
     listxattr(node, list, size).await
 }
 
@@ -63,7 +61,7 @@ pub async fn sys_flistxattr(ctx: &ProcessCtx, fd: Fd, list: UA, size: usize) -> 
             .get(fd)
             .ok_or(KernelError::BadFd)?;
 
-        file.inode().ok_or(KernelError::BadFd)?
+        file.vfs_path().ok_or(KernelError::BadFd)?
     };
     listxattr(node, list, size).await
 }
