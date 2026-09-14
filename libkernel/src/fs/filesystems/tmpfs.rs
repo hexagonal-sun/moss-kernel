@@ -178,9 +178,13 @@ where
         while bytes_to_read > 0 {
             let (blk_idx, blk_offset) = Self::offset_to_block_locus(offset as _);
 
-            // Check if this block is actually allocated (sparse file protection)
-            // though try_alloc_block enforces continuity, so this check is sanity.
+            // Truncate can extend beyond allocated pages. A hole is zero data,
+            // not EOF; the visible file size above already limits this read.
             if blk_idx >= inner.allocated_blocks {
+                unsafe {
+                    buf_ptr.write_bytes(0, bytes_to_read);
+                }
+                total_read += bytes_to_read;
                 break;
             }
 
@@ -298,7 +302,7 @@ where
             // Zero out trailing data in the last retained page. This is POSIX
             // behavior: bytes past the new EOF must appear as zero if we extend
             // the file later.
-            if new_blk_count > 0 {
+            if new_blk_count > 0 && new_blk_count <= inner.allocated_blocks {
                 let last_blk_idx = new_blk_count - 1;
                 let offset_in_block = new_size % BLOCK_SZ;
 
@@ -464,6 +468,7 @@ where
         let index = entries.iter().position(|e| e.name == name);
 
         if let Some(idx) = index {
+            Self::adjust_nlinks(&entries[idx].inode, false)?;
             entries.remove(idx);
             Ok(())
         } else {
@@ -472,16 +477,21 @@ where
     }
 
     async fn link(&self, name: &str, inode: Arc<dyn Inode>) -> Result<()> {
-        let mut attr = inode.getattr().await?;
-        let kind = attr.file_type;
-        attr.nlinks += 1;
-        inode.setattr(attr).await?;
+        if inode.id().fs_id() != self.id().fs_id() {
+            return Err(FsError::CrossDevice.into());
+        }
+        let kind = inode.getattr().await?.file_type;
+        if kind == FileType::Directory {
+            return Err(FsError::IsADirectory.into());
+        }
 
         let mut entries = self.entries.lock_save_irq();
 
         if entries.iter().any(|e| e.name == name) {
             return Err(FsError::AlreadyExists.into());
         }
+
+        Self::adjust_nlinks(&inode, true)?;
 
         entries.push(TmpFsDirEnt {
             name: name.to_string(),
@@ -523,10 +533,9 @@ where
         new_name: &str,
         no_replace: bool,
     ) -> Result<()> {
-        if old_name == new_name && old_parent.id().inode_id() == self.id().inode_id() {
-            return Ok(());
+        if old_parent.id().fs_id() != self.id().fs_id() {
+            return Err(FsError::CrossDevice.into());
         }
-
         let old_parent = Arc::downcast::<TmpFsDirInode<C, G, T>>(old_parent)
             .map_err(|_| FsError::CrossDevice)?;
 
@@ -538,6 +547,18 @@ where
             }
 
             let new_entry = entries.iter().position(|e| e.name == new_name);
+
+            let source = entries
+                .iter()
+                .position(|e| e.name == old_name)
+                .ok_or(FsError::NotFound)?;
+            if let Some(target) = new_entry {
+                if entries[source].id == entries[target].id {
+                    return Ok(());
+                }
+                Self::check_rename_target(&entries[source], &entries[target])?;
+                Self::adjust_nlinks(&entries[target].inode, false)?;
+            }
 
             entries
                 .iter_mut()
@@ -578,17 +599,11 @@ where
         {
             let target = &new_parent[target_idx];
             let source = &old_parent[source_idx];
-
-            if target.kind == FileType::Directory {
-                if !target.inode.dir_is_empty()? {
-                    return Err(FsError::DirectoryNotEmpty.into());
-                } else if source.kind != FileType::Directory {
-                    return Err(FsError::IsADirectory.into());
-                }
-            } else if source.kind != FileType::Directory {
-                return Err(FsError::NotADirectory.into());
+            if source.id == target.id {
+                return Ok(());
             }
-
+            Self::check_rename_target(source, target)?;
+            Self::adjust_nlinks(&target.inode, false)?;
             new_parent.remove(target_idx);
         }
 
@@ -679,6 +694,41 @@ where
     G: PageAllocGetter<C>,
     T: AddressTranslator<()>,
 {
+    // Update only link count under the inode's attribute lock. A getattr +
+    // setattr pair could overwrite the size from a concurrent write/truncate.
+    fn adjust_nlinks(inode: &Arc<dyn Inode>, add: bool) -> Result<()> {
+        let attrs = if let Some(file) = inode.as_any().downcast_ref::<TmpFsReg<C, G, T>>() {
+            &file.attr
+        } else if let Some(link) = inode.as_any().downcast_ref::<TmpFsSymlinkInode<C>>() {
+            &link.attr
+        } else if let Some(dir) = inode.as_any().downcast_ref::<Self>() {
+            &dir.attrs
+        } else {
+            return Err(FsError::CrossDevice.into());
+        };
+        let mut attrs = attrs.lock_save_irq();
+        attrs.nlinks = if add {
+            attrs.nlinks.checked_add(1).ok_or(KernelError::TooLarge)?
+        } else {
+            attrs.nlinks.saturating_sub(1)
+        };
+        Ok(())
+    }
+
+    fn check_rename_target(source: &TmpFsDirEnt, target: &TmpFsDirEnt) -> Result<()> {
+        if target.kind == FileType::Directory {
+            if source.kind != FileType::Directory {
+                return Err(FsError::IsADirectory.into());
+            }
+            if !target.inode.dir_is_empty()? {
+                return Err(FsError::DirectoryNotEmpty.into());
+            }
+        } else if source.kind == FileType::Directory {
+            return Err(FsError::NotADirectory.into());
+        }
+        Ok(())
+    }
+
     pub fn new(id: u64, fs: Weak<TmpFs<C, G, T>>, permissions: FilePermissions) -> Arc<Self> {
         Arc::new_cyclic(|weak_this| Self {
             entries: SpinLockIrq::new(Vec::new()),
@@ -896,6 +946,20 @@ mod tests {
     fn setup_fs() -> Arc<TmpFs<MockCpuOps, TmpFsPgAllocGetter, IdentityTranslator>> {
         init_allocator();
         TmpFs::new(1)
+    }
+
+    #[tokio::test]
+    async fn test_truncate_extension_reads_holes() {
+        let (_, reg) = setup_env();
+        reg.write_at(0, b"abcde").await.unwrap();
+        reg.truncate((BLOCK_SZ * 3 + 1) as u64).await.unwrap();
+        // Shrink while the last retained block is still an unallocated hole.
+        reg.truncate((BLOCK_SZ * 2 + 1) as u64).await.unwrap();
+        let mut bytes = vec![0xff; BLOCK_SZ * 2 + 1];
+        assert_eq!(reg.read_at(0, &mut bytes).await.unwrap(), bytes.len());
+        assert_eq!(&bytes[..5], b"abcde");
+        assert!(bytes[5..].iter().all(|&byte| byte == 0));
+        assert_eq!(reg.inner.lock_save_irq().allocated_blocks, 1);
     }
 
     #[tokio::test]

@@ -25,7 +25,9 @@ pub async fn sys_getcwd(ctx: &ProcessCtx, buf: UA, len: usize) -> Result<usize> 
 
     copy_to_user_slice(slice, buf).await?;
 
-    Ok(buf.value())
+    // Linux returns the length of the copied pathname, including the trailing
+    // NUL. libc uses this value to validate the result before returning `buf`.
+    Ok(slice.len())
 }
 
 pub async fn sys_chdir(ctx: &ProcessCtx, path: TUA<c_char>) -> Result<usize> {

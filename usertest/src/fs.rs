@@ -1,7 +1,28 @@
 use crate::register_test;
 use std::ffi::{CStr, CString};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, Write};
 use std::mem::MaybeUninit;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{FileExt, MetadataExt, symlink};
+use std::path::Path;
+use std::sync::{Arc, Barrier, mpsc};
+use std::thread;
+
+// Exercise the guest's ext4 root and tmpfs /tmp; verify the backing filesystem.
+fn on_test_filesystem(root: &str, name: &str, test: fn(&Path)) {
+    let c_root = CString::new(root).unwrap();
+    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+    assert_eq!(unsafe { libc::statfs(c_root.as_ptr(), &mut stat) }, 0);
+    assert_eq!(
+        stat.f_type as u64,
+        if root == "/" { 0xef53 } else { 0x0102_1994 }
+    );
+    let dir = Path::new(root).join(name);
+    fs::create_dir(&dir).unwrap();
+    test(&dir);
+    fs::remove_dir_all(dir).unwrap();
+}
 
 fn test_opendir() {
     let path = CString::new("/").unwrap();
@@ -291,6 +312,63 @@ fn test_link() {
 
 register_test!(test_link);
 
+fn check_unlink_write_race(dir: &Path) {
+    let path = dir.join("data");
+    let alias = dir.join("alias");
+    let file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    thread::scope(|scope| {
+        // Dropping requests on assertion failure releases the writer instead
+        // of stranding it at a barrier and hiding the original failure.
+        let (request, requests) = mpsc::sync_channel::<usize>(0);
+        let (complete, completions) = mpsc::sync_channel(0);
+        let file_ref = &file;
+        let writer = scope.spawn(move || {
+            for round in requests {
+                let result = file_ref.set_len(0).and_then(|()| {
+                    let bytes = vec![(round + 1) as u8; 8193 + round];
+                    file_ref.write_all_at(&bytes, 0)
+                });
+                if complete.send(result).is_err() {
+                    break;
+                }
+            }
+        });
+        for round in 0..64 {
+            fs::hard_link(&path, &alias).unwrap();
+            request.send(round).unwrap();
+            fs::remove_file(&alias).unwrap();
+            completions.recv().unwrap().unwrap();
+            let expected = vec![(round + 1) as u8; 8193 + round];
+            assert_eq!(file.metadata().unwrap().nlink(), 1);
+            assert_eq!(file.metadata().unwrap().len(), expected.len() as u64);
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                expected,
+                "unlink/write round {round}"
+            );
+        }
+        drop(request);
+        writer.join().unwrap();
+    });
+}
+
+fn test_ext4_unlink_write_race() {
+    on_test_filesystem("/", "fs-unlink-race", check_unlink_write_race);
+}
+
+register_test!(test_ext4_unlink_write_race);
+
+fn test_tmpfs_unlink_write_race() {
+    on_test_filesystem("/tmp", "fs-unlink-race", check_unlink_write_race);
+}
+
+register_test!(test_tmpfs_unlink_write_race);
+
 fn test_symlink() {
     use std::fs::{self, File};
     use std::io::{Read, Write};
@@ -322,7 +400,7 @@ fn test_symlink() {
         if ret < 0 {
             panic!("readlink failed");
         }
-        if buffer != *b"/tmp/symlink_test" {
+        if buffer[..ret as usize] != *b"/tmp/symlink_test" {
             panic!("readlink failed");
         }
     }
@@ -331,6 +409,40 @@ fn test_symlink() {
 }
 
 register_test!(test_symlink);
+
+fn check_symlink_boundaries(dir: &Path) {
+    for len in [1, 13, 59, 60, 61, 120] {
+        let target = "t".repeat(len);
+        let link = dir.join(format!("symlink-{len}"));
+        let alias = dir.join(format!("alias-{len}"));
+        symlink(&target, &link).unwrap();
+        assert_eq!(fs::read_link(&link).unwrap(), Path::new(&target));
+        fs::hard_link(&link, &alias).unwrap();
+        assert_eq!(fs::symlink_metadata(&link).unwrap().nlink(), 2);
+        fs::remove_file(&link).unwrap();
+        assert_eq!(fs::symlink_metadata(&alias).unwrap().nlink(), 1);
+        assert_eq!(fs::read_link(&alias).unwrap(), Path::new(&target));
+        fs::remove_file(&alias).unwrap();
+    }
+    // Reuse freed inode/block numbers after removing the links.
+    fs::write(dir.join("after-unlink"), vec![0x5a; 8192]).unwrap();
+    assert_eq!(
+        fs::read(dir.join("after-unlink")).unwrap(),
+        vec![0x5a; 8192]
+    );
+}
+
+fn test_ext4_symlink_boundaries() {
+    on_test_filesystem("/", "fs-symlink", check_symlink_boundaries);
+}
+
+register_test!(test_ext4_symlink_boundaries);
+
+fn test_tmpfs_symlink_boundaries() {
+    on_test_filesystem("/tmp", "fs-symlink", check_symlink_boundaries);
+}
+
+register_test!(test_tmpfs_symlink_boundaries);
 
 fn test_rename() {
     use std::fs::{self, File};
@@ -368,6 +480,132 @@ fn test_rename() {
 
 register_test!(test_rename);
 
+fn check_rename_inode_consistency(dir: &Path) {
+    let old = dir.join("old");
+    let new = dir.join("new");
+    fs::write(&old, b"payload").unwrap();
+    let mut opened = File::open(&old).unwrap();
+    let ino = opened.metadata().unwrap().ino();
+    fs::rename(&old, &new).unwrap();
+    assert!(!old.exists());
+    assert_eq!(fs::metadata(&new).unwrap().ino(), ino);
+    let mut bytes = Vec::new();
+    opened.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, b"payload");
+    assert_eq!(opened.metadata().unwrap().nlink(), 1);
+
+    // Renaming two names of the same inode is a no-op, not an unlink.
+    fs::hard_link(&new, &old).unwrap();
+    fs::rename(&old, &new).unwrap();
+    assert_eq!(fs::metadata(&old).unwrap().ino(), ino);
+    assert_eq!(opened.metadata().unwrap().nlink(), 2);
+    let c_old = CString::new(old.as_os_str().as_encoded_bytes()).unwrap();
+    let c_new = CString::new(new.as_os_str().as_encoded_bytes()).unwrap();
+    assert_eq!(
+        unsafe {
+            libc::syscall(
+                libc::SYS_renameat2,
+                libc::AT_FDCWD,
+                c_old.as_ptr(),
+                libc::AT_FDCWD,
+                c_new.as_ptr(),
+                1,
+            )
+        },
+        -1
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EEXIST)
+    );
+    fs::remove_file(&old).unwrap();
+    assert_eq!(opened.metadata().unwrap().nlink(), 1);
+
+    fs::create_dir(dir.join("other")).unwrap();
+    let dst = dir.join("other/dst");
+    fs::write(&dst, b"replaced").unwrap();
+    fs::hard_link(&dst, &old).unwrap();
+    let replaced = File::open(&old).unwrap();
+    fs::rename(&new, &dst).unwrap();
+    assert!(!new.exists());
+    assert_eq!(fs::read(&dst).unwrap(), b"payload");
+    assert_eq!(replaced.metadata().unwrap().nlink(), 1);
+    assert_eq!(fs::read(&old).unwrap(), b"replaced");
+
+    // Opposing cross-directory moves must not invert directory lock order.
+    fs::create_dir(dir.join("left")).unwrap();
+    fs::create_dir(dir.join("right")).unwrap();
+    thread::scope(|scope| {
+        let barrier = Arc::new(Barrier::new(2));
+        for worker in 0..2 {
+            let barrier = barrier.clone();
+            scope.spawn(move || {
+                let a = dir.join(format!("left/{worker}"));
+                let b = dir.join(format!("right/{worker}"));
+                let (a, b) = if worker == 0 { (a, b) } else { (b, a) };
+                fs::write(&a, [worker as u8]).unwrap();
+                barrier.wait();
+                for _ in 0..32 {
+                    fs::rename(&a, &b).unwrap();
+                    fs::rename(&b, &a).unwrap();
+                }
+                assert_eq!(fs::read(&a).unwrap(), [worker as u8]);
+            });
+        }
+    });
+}
+
+fn test_ext4_rename_inode_consistency() {
+    on_test_filesystem("/", "fs-rename", check_rename_inode_consistency);
+}
+
+register_test!(test_ext4_rename_inode_consistency);
+
+fn test_tmpfs_rename_inode_consistency() {
+    on_test_filesystem("/tmp", "fs-rename", check_rename_inode_consistency);
+}
+
+register_test!(test_tmpfs_rename_inode_consistency);
+
+fn test_ext4_directory_rename() {
+    on_test_filesystem("/", "fs-directory", |dir| {
+        let base_links = fs::metadata(dir).unwrap().nlink();
+        let source = dir.join("source");
+        let parent = dir.join("parent");
+        fs::create_dir(&source).unwrap();
+        fs::create_dir(&parent).unwrap();
+        assert_eq!(fs::metadata(dir).unwrap().nlink(), base_links + 2);
+        fs::write(source.join("file"), b"directory payload").unwrap();
+        let opened = File::open(&source).unwrap();
+        let ino = opened.metadata().unwrap().ino();
+        let renamed = dir.join("renamed");
+        fs::rename(&source, &renamed).unwrap();
+        assert_eq!(fs::metadata(&renamed).unwrap().ino(), ino);
+        let destination = parent.join("child");
+        fs::rename(&renamed, &destination).unwrap();
+        assert_eq!(
+            fs::read(destination.join("file")).unwrap(),
+            b"directory payload"
+        );
+        assert_eq!(fs::metadata(dir).unwrap().nlink(), base_links + 1);
+        assert_eq!(fs::metadata(&parent).unwrap().nlink(), 3);
+        // Use the pre-rename directory fd: path normalization cannot fake "..".
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::fstatat(opened.as_raw_fd(), c"..".as_ptr(), &mut stat, 0) },
+            0
+        );
+        assert_eq!(stat.st_ino, fs::metadata(&parent).unwrap().ino());
+        assert!(fs::rename(&parent, destination.join("invalid")).is_err());
+        assert!(fs::remove_dir(&destination).is_err());
+        fs::remove_file(destination.join("file")).unwrap();
+        fs::remove_dir(&destination).unwrap();
+        assert_eq!(fs::metadata(&parent).unwrap().nlink(), 2);
+    });
+}
+
+register_test!(test_ext4_directory_rename);
+
 fn test_truncate() {
     use std::fs::{self, File};
     use std::io::{Read, Seek, Write};
@@ -377,7 +615,13 @@ fn test_truncate() {
     file.write_all(b"Hello, world!")
         .expect("Failed to write to file");
     unsafe {
-        libc::truncate(CString::new(path).unwrap().as_ptr(), 5);
+        let result = libc::truncate(CString::new(path).unwrap().as_ptr(), 5);
+        assert_eq!(
+            result,
+            0,
+            "truncate failed: {}",
+            std::io::Error::last_os_error()
+        );
     }
 
     let mut string = String::new();
@@ -424,6 +668,65 @@ fn test_ftruncate() {
 }
 
 register_test!(test_ftruncate);
+
+fn check_truncate_boundaries(dir: &Path) {
+    let path = dir.join("file");
+    let link = dir.join("link");
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    fs::hard_link(&path, &link).unwrap();
+    let other = File::open(&link).unwrap();
+    let data: Vec<u8> = (0..16385).map(|n| (n % 251 + 1) as u8).collect();
+    // Include EOF in a retained block, exact block boundaries, and zero.
+    for size in [5, 4095, 4096, 4097, 0] {
+        file.set_len(0).unwrap();
+        file.rewind().unwrap();
+        file.write_all(&data).unwrap();
+        let c_path = CString::new(link.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(
+            unsafe { libc::truncate(c_path.as_ptr(), size as libc::off_t) },
+            0
+        );
+        for metadata in [
+            file.metadata().unwrap(),
+            other.metadata().unwrap(),
+            fs::metadata(&path).unwrap(),
+        ] {
+            assert_eq!(metadata.len(), size as u64);
+            assert_eq!(metadata.nlink(), 2);
+        }
+        let mut bytes = vec![0xff; data.len()];
+        assert_eq!(other.read_at(&mut bytes, 0).unwrap(), size);
+        assert_eq!(&bytes[..size], &data[..size]);
+        assert_eq!(fs::read(&path).unwrap(), data[..size]);
+        file.set_len(data.len() as u64).unwrap();
+        let mut expected = data[..size].to_vec();
+        expected.resize(data.len(), 0);
+        let actual = fs::read(&link).unwrap();
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "shrink/extend length at {size}"
+        );
+        assert!(actual == expected, "shrink/extend content at {size}");
+    }
+}
+
+fn test_ext4_truncate_boundaries() {
+    on_test_filesystem("/", "fs-truncate", check_truncate_boundaries);
+}
+
+register_test!(test_ext4_truncate_boundaries);
+
+fn test_tmpfs_truncate_boundaries() {
+    on_test_filesystem("/tmp", "fs-truncate", check_truncate_boundaries);
+}
+
+register_test!(test_tmpfs_truncate_boundaries);
 
 fn test_utimens() {
     let file = "/tmp/utimens_test";

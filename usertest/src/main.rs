@@ -74,7 +74,17 @@ fn test_fork() {
         } else {
             // Parent process
             let mut status = 0;
-            libc::waitpid(pid, &mut status, 0);
+            loop {
+                let waited = libc::waitpid(pid, &mut status, 0);
+                if waited == pid {
+                    break;
+                }
+                let error = std::io::Error::last_os_error();
+                if waited == -1 && error.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                panic!("waitpid({pid}) failed: {error}");
+            }
         }
     }
 }
@@ -373,7 +383,17 @@ fn run_test(test_fn: fn()) -> Result<(), i32> {
         } else {
             // Parent process
             let mut status = 0;
-            libc::waitpid(pid, &mut status, 0);
+            loop {
+                let waited = libc::waitpid(pid, &mut status, 0);
+                if waited == pid {
+                    break;
+                }
+                let error = std::io::Error::last_os_error();
+                if waited == -1 && error.raw_os_error() == Some(libc::EINTR) {
+                    continue;
+                }
+                panic!("waitpid({pid}) failed: {error}");
+            }
             if !libc::WIFEXITED(status) || libc::WEXITSTATUS(status) != 0 {
                 Err(status)
             } else {
@@ -390,6 +410,7 @@ fn main() {
     let filter = args.get(1).map(|s| s.as_str());
     let start = std::time::Instant::now();
     let mut failures = 0;
+    let mut executed = 0;
     for test in inventory::iter::<Test> {
         if let Some(filter) = filter
             && !test.test_text.contains(filter)
@@ -397,17 +418,36 @@ fn main() {
             continue;
         }
         print!("{} ...", test.test_text);
+        executed += 1;
         let _ = stdout().flush();
         match run_test(test.test_fn) {
             Ok(()) => println!("{}", " OK".green()),
-            Err(code) => {
+            Err(status) => {
                 println!(" {}", "FAILED".red());
-                eprintln!("Test '{}' failed with exit code {}", test.test_text, code);
+                if libc::WIFSIGNALED(status) {
+                    eprintln!(
+                        "Test '{}' terminated by signal {} (wait status {status})",
+                        test.test_text,
+                        libc::WTERMSIG(status)
+                    );
+                } else if libc::WIFEXITED(status) {
+                    eprintln!(
+                        "Test '{}' failed with exit code {}",
+                        test.test_text,
+                        libc::WEXITSTATUS(status)
+                    );
+                } else {
+                    eprintln!("Test '{}' failed with wait status {status}", test.test_text);
+                }
                 failures += 1;
             }
         }
     }
     let end = std::time::Instant::now();
+    if executed == 0 {
+        eprintln!("No tests matched filter {filter:?}");
+        std::process::exit(1);
+    }
     if failures > 0 {
         eprintln!(
             "{failures} tests failed in {} ms",
