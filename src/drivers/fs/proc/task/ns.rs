@@ -29,12 +29,17 @@ impl Inode for NsDir {
         })
     }
     async fn lookup(&self, name: &str) -> Result<Arc<dyn Inode>> {
-        if name != "user" && name != "mnt" {
+        if !matches!(name, "user" | "mnt" | "pid" | "pid_for_children") {
             return Err(FsError::NotFound.into());
         }
         Ok(Arc::new(NsLink {
             tid: self.tid,
-            mount: name == "mnt",
+            kind: match name {
+                "mnt" => 1,
+                "pid" => 2,
+                "pid_for_children" => 3,
+                _ => 0,
+            },
             id: InodeId::from_fsid_and_inodeid(
                 self.id.fs_id(),
                 super::super::get_inode_id(&[&format!("{}", self.tid.value()), "ns", name]),
@@ -43,7 +48,10 @@ impl Inode for NsDir {
     }
     async fn readdir(&self, start_offset: u64) -> Result<Box<dyn DirStream>> {
         let mut entries = vec![];
-        for (i, name) in ["user", "mnt"].iter().enumerate() {
+        for (i, name) in ["user", "mnt", "pid", "pid_for_children"]
+            .iter()
+            .enumerate()
+        {
             let node = self.lookup(name).await?;
             entries.push(Dirent::new(
                 (*name).into(),
@@ -61,7 +69,7 @@ impl Inode for NsDir {
 
 struct NsLink {
     tid: Tid,
-    mount: bool,
+    kind: u8,
     id: InodeId,
 }
 impl NsLink {
@@ -70,10 +78,17 @@ impl NsLink {
         let caller = crate::sched::current_work().task.t_shared.clone();
         crate::process::access::ptrace_may_access(&caller, &task, true)
             .map_err(|_| FsError::PermissionDenied)?;
-        Ok(if self.mount {
-            Namespace::Mount(task.mount_ns())
-        } else {
-            Namespace::User(task.creds.lock_save_irq().user_ns())
+        Ok(match self.kind {
+            1 => Namespace::Mount(task.mount_ns()),
+            2 => Namespace::Pid(task.pid_ns()),
+            3 => {
+                let ns = task.child_pid_ns();
+                if !ns.initialized() {
+                    return Err(FsError::NotFound.into());
+                }
+                Namespace::Pid(ns)
+            }
+            _ => Namespace::User(task.creds.lock_save_irq().user_ns()),
         })
     }
 }

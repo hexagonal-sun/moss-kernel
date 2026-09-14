@@ -199,11 +199,13 @@ where
             return Poll::Ready(result);
         }
 
-        // If the condition is not met, register our waker if we haven't already.
-        if this.token.is_none() {
-            let waker_set = (this.get_waker_set)(&mut inner);
-            let id = waker_set.register(cx.waker());
-            this.token = Some(id);
+        // Wake consumes a registration, not necessarily the awaited condition.
+        // A spurious/competing wake must re-arm the future before it can sleep.
+        let waker_set = (this.get_waker_set)(&mut inner);
+        if this.token.is_none_or(|id| !waker_set.contains_token(id)) {
+            this.token = Some(waker_set.register(cx.waker()));
+        } else if let Some((waker, ())) = this.token.and_then(|id| waker_set.waiters.get_mut(&id)) {
+            waker.clone_from(cx.waker());
         }
 
         Poll::Pending
@@ -285,6 +287,34 @@ mod wait_until_tests {
     struct SharedState {
         condition_met: bool,
         waker_set: WakerSet,
+    }
+
+    #[test]
+    fn wait_until_rearms_after_unmatched_wakes() {
+        let lock = Arc::new(SpinLockIrq::<_, MockCpuOps>::new(SharedState {
+            condition_met: false,
+            waker_set: WakerSet::new(),
+        }));
+        let mut future = std::pin::pin!(wait_until(
+            lock.clone(),
+            |s| &mut s.waker_set,
+            |s| s.condition_met.then_some(())
+        ));
+        let mut cx = Context::from_waker(Waker::noop());
+        for _ in 0..4 {
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            let mut s = lock.lock_save_irq();
+            assert_eq!(s.waker_set.len(), 1);
+            assert!(s.waker_set.wake_one());
+            assert!(s.waker_set.is_empty());
+        }
+        assert!(future.as_mut().poll(&mut cx).is_pending());
+        {
+            let mut s = lock.lock_save_irq();
+            s.condition_met = true;
+            assert!(s.waker_set.wake_one());
+        }
+        assert!(future.as_mut().poll(&mut cx).is_ready());
     }
 
     #[tokio::test]

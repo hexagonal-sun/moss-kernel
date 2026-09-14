@@ -397,14 +397,20 @@ impl CgroupControlInode {
             CgroupFileKind::Procs => {
                 let mut out = String::new();
                 for tgid in fs.direct_tgids(&self.node) {
-                    out.push_str(&format!("{}\n", tgid.value()));
+                    let n = current_work().pid_ns().visible(Tid(tgid.0));
+                    if n != 0 {
+                        out.push_str(&format!("{n}\n"));
+                    }
                 }
                 out.into_bytes()
             }
             CgroupFileKind::Threads => {
                 let mut out = String::new();
                 for tid in fs.direct_tids(&self.node) {
-                    out.push_str(&format!("{}\n", tid.value()));
+                    let n = current_work().pid_ns().visible(tid);
+                    if n != 0 {
+                        out.push_str(&format!("{n}\n"));
+                    }
                 }
                 out.into_bytes()
             }
@@ -516,7 +522,15 @@ impl Inode for CgroupControlInode {
                         .parse::<u32>()
                         .map_err(|_| KernelError::InvalidValue)?
                 };
-                let tgid = Tgid(pid);
+                let tgid = Tgid(if value == "0" {
+                    pid
+                } else {
+                    current_work()
+                        .pid_ns()
+                        .resolve(pid)
+                        .ok_or(FsError::NotFound)?
+                        .0
+                });
                 ThreadGroup::get(tgid).ok_or(FsError::NotFound)?;
                 cgroupfs().move_thread_group(tgid, self.node.clone())?;
             }
@@ -528,7 +542,15 @@ impl Inode for CgroupControlInode {
                         .parse::<u32>()
                         .map_err(|_| KernelError::InvalidValue)?
                 };
-                let task = find_task_by_tid(Tid(tid)).ok_or(FsError::NotFound)?;
+                let tid = if value == "0" {
+                    Tid(tid)
+                } else {
+                    current_work()
+                        .pid_ns()
+                        .resolve(tid)
+                        .ok_or(FsError::NotFound)?
+                };
+                let task = find_task_by_tid(tid).ok_or(FsError::NotFound)?;
                 cgroupfs().move_thread_group(task.process.tgid, self.node.clone())?;
             }
             CgroupFileKind::SubtreeControl => {

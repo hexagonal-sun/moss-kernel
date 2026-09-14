@@ -17,7 +17,6 @@ use builder::ThreadGroupBuilder;
 use core::sync::atomic::AtomicUsize;
 use core::{fmt::Display, sync::atomic::Ordering};
 use libkernel::sync::condvar::WakeupType;
-use pid::PidT;
 use rsrc_lim::ResourceLimits;
 use signal::{SigId, SigSet, SignalActionState};
 use wait::Notifiers;
@@ -56,10 +55,6 @@ impl Tgid {
 
     fn from_tid(tid: Tid) -> Tgid {
         Self(tid.0)
-    }
-
-    fn from_pid_t(pid: PidT) -> Tgid {
-        Self(pid as _)
     }
 }
 
@@ -100,10 +95,14 @@ pub enum ProcessState {
 
 pub struct ThreadGroup {
     pub tgid: Tgid,
+    pub pid: Arc<super::pid_namespace::PidIdentity>,
+    pub pgid_ref: SpinLock<Arc<super::pid_namespace::PidIdentity>>,
+    pub sid_ref: SpinLock<Arc<super::pid_namespace::PidIdentity>>,
     pub pgid: SpinLock<Pgid>,
     pub sid: SpinLock<Sid>,
     pub state: SpinLock<ProcessState>,
     pub dumpable: AtomicUsize,
+    pub did_exec: core::sync::atomic::AtomicBool,
     pub parent: SpinLock<Option<Weak<ThreadGroup>>>,
     pub children: SpinLock<BTreeMap<Tgid, Arc<ThreadGroup>>>,
     pub tasks: SpinLock<BTreeMap<Tid, Weak<Work>>>,
@@ -124,8 +123,15 @@ pub struct ThreadGroup {
 unsafe impl Send for ThreadGroup {}
 
 impl ThreadGroup {
-    pub fn new_child(self: Arc<Self>, share_state: bool, tid: Tid) -> Arc<ThreadGroup> {
-        let mut builder = ThreadGroupBuilder::new(Tgid::from_tid(tid)).with_parent(self.clone());
+    pub fn new_child(
+        self: Arc<Self>,
+        share_state: bool,
+        tid: Tid,
+        pid: Arc<super::pid_namespace::PidIdentity>,
+    ) -> Arc<ThreadGroup> {
+        let mut builder = ThreadGroupBuilder::new(Tgid::from_tid(tid))
+            .with_parent(self.clone())
+            .with_pid(pid);
 
         if share_state {
             builder = builder
@@ -142,10 +148,6 @@ impl ThreadGroup {
         }
 
         let new_tg = builder.build();
-
-        self.children
-            .lock_save_irq()
-            .insert(new_tg.tgid, new_tg.clone());
 
         new_tg.clone()
     }
@@ -257,4 +259,5 @@ impl Drop for ThreadGroup {
     }
 }
 
-static TG_LIST: SpinLock<BTreeMap<Tgid, Weak<ThreadGroup>>> = SpinLock::new(BTreeMap::new());
+pub(crate) static TG_LIST: SpinLock<BTreeMap<Tgid, Weak<ThreadGroup>>> =
+    SpinLock::new(BTreeMap::new());

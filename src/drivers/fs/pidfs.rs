@@ -1,6 +1,6 @@
 //! The single, kernel-only filesystem backing pidfds.
 
-use crate::{fs::VFS, process::Tid, sync::OnceLock};
+use crate::{fs::VFS, process::pid_namespace::PidIdentity, sync::OnceLock};
 use alloc::{boxed::Box, sync::Arc};
 use async_trait::async_trait;
 use libkernel::{
@@ -50,7 +50,7 @@ impl Filesystem for PidFs {
 
 static PIDFS_INSTANCE: OnceLock<Arc<PidFs>> = OnceLock::new();
 
-pub fn new_inode(pid: Tid) -> Arc<dyn Inode> {
+pub fn new_inode(pid: Arc<PidIdentity>) -> Arc<dyn Inode> {
     PIDFS_INSTANCE.get_or_init(|| {
         let fs = Arc::new(PidFs);
         VFS.register_internal_fs(fs.clone());
@@ -59,12 +59,14 @@ pub fn new_inode(pid: Tid) -> Arc<dyn Inode> {
     Arc::new(PidInode {
         // MOSS allocates task IDs monotonically. Keep the inode independent
         // of the task table so an open pidfd survives target exit/reaping.
-        id: InodeId::from_fsid_and_inodeid(PIDFS_ID, pid.value() as u64),
+        id: InodeId::from_fsid_and_inodeid(PIDFS_ID, pid.global.0 as u64),
+        _pid: pid,
     })
 }
 
 struct PidInode {
     id: InodeId,
+    _pid: Arc<PidIdentity>,
 }
 
 #[async_trait]

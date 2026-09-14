@@ -696,7 +696,7 @@ pub async fn sys_setgroups(ctx: &ProcessCtx, size: usize, list: TUA<Gid>) -> Res
 }
 
 pub fn sys_gettid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
-    let tid: u32 = ctx.shared().tid.0;
+    let tid: u32 = ctx.shared().pid.local();
 
     Ok(tid as _)
 }
@@ -731,17 +731,40 @@ pub async fn sys_getresgid(
     Ok(0)
 }
 
-pub async fn sys_getsid(ctx: &ProcessCtx) -> Result<usize> {
-    let sid: u32 = ctx.shared().process.sid.lock_save_irq().value();
-
-    Ok(sid as _)
+pub async fn sys_getsid(ctx: &ProcessCtx, pid: i32) -> Result<usize> {
+    let process = if pid == 0 {
+        ctx.shared().process.clone()
+    } else {
+        super::pid_namespace::find_task(ctx.shared(), pid as u32)
+            .ok_or(KernelError::NoProcess)?
+            .process
+            .clone()
+    };
+    Ok(process
+        .sid_ref
+        .lock_save_irq()
+        .in_ns(&ctx.shared().pid_ns()) as usize)
 }
 
 pub async fn sys_setsid(ctx: &ProcessCtx) -> Result<usize> {
+    let _pid_op = super::pid_namespace::PID_OPS.lock_save_irq();
     let process = ctx.shared().process.clone();
 
     let new_sid = process.tgid.value();
+    let groups: Vec<_> = super::thread_group::TG_LIST
+        .lock_save_irq()
+        .values()
+        .filter_map(|tg| tg.upgrade())
+        .collect();
+    if groups
+        .iter()
+        .any(|tg| tg.pgid.lock_save_irq().value() == new_sid)
+    {
+        return Err(KernelError::NotPermitted);
+    }
     *process.sid.lock_save_irq() = Sid(new_sid);
-
-    Ok(new_sid as _)
+    *process.pgid.lock_save_irq() = super::thread_group::Pgid(new_sid);
+    *process.sid_ref.lock_save_irq() = process.pid.clone();
+    *process.pgid_ref.lock_save_irq() = process.pid.clone();
+    Ok(process.pid.local() as _)
 }

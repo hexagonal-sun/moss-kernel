@@ -110,7 +110,12 @@ pub async fn sys_mmap(
             .1
             .require_readable()
             .map_err(|_| libkernel::error::FsError::PermissionDenied)?;
-        let inode = fd.vfs_path().ok_or(KernelError::BadFd)?.pinned_inode();
+        let path = fd.vfs_path().ok_or(KernelError::BadFd)?;
+        if prot & PROT_EXEC != 0 {
+            path.check_exec_mount()
+                .map_err(|_| KernelError::NotPermitted)?;
+        }
+        let inode = path.pinned_inode();
         let name = fd
             .path()
             .map(|x| x.as_str().to_string())
@@ -242,7 +247,19 @@ pub fn sys_mprotect(ctx: &ProcessCtx, addr: VA, len: usize, prot: u64) -> Result
     let region = VirtMemoryRegion::new(addr, len);
 
     let proc_vm = ctx.shared().vm.shared_vm();
-    proc_vm.lock_save_irq().mm_mut().mprotect(region, perms)?;
+    let mut vm = proc_vm.lock_save_irq();
+    if prot & PROT_EXEC != 0 {
+        for area in vm
+            .mm()
+            .iter_vmas()
+            .filter(|area| area.region().overlaps(region))
+        {
+            if let VMAreaKind::File(mapping) = area.kind() {
+                crate::fs::location::check_mapping_exec(mapping.file().as_ref())?;
+            }
+        }
+    }
+    vm.mm_mut().mprotect(region, perms)?;
 
     Ok(0)
 }

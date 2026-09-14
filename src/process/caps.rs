@@ -10,7 +10,7 @@ use libkernel::{
     proc::caps::{Capabilities, CapabilitiesFlags},
 };
 
-use super::{Tid, find_task_by_tid, thread_group::pid::PidT};
+use super::thread_group::pid::PidT;
 
 const LINUX_CAPABILITY_VERSION_1: u32 = 0x19980330;
 const LINUX_CAPABILITY_VERSION_3: u32 = 0x20080522;
@@ -60,7 +60,7 @@ pub async fn sys_capget(
     let task = if header.pid == 0 {
         ctx.shared().clone()
     } else {
-        find_task_by_tid(Tid::from_pid_t(header.pid))
+        super::pid_namespace::find_task(ctx.shared(), header.pid as u32)
             .map(|x| (*x).clone())
             .ok_or(KernelError::NoProcess)?
     };
@@ -92,7 +92,7 @@ pub async fn sys_capset(
     let mut header = copy_from_user(hdrp).await?;
 
     let caller_caps = ctx.shared().creds.lock_save_irq().caps();
-    if header.pid != 0 && header.pid != ctx.shared().tid.value() as PidT {
+    if header.pid != 0 && header.pid != ctx.shared().pid.local() as PidT {
         return Err(KernelError::NotPermitted);
     }
     let task = ctx.shared();

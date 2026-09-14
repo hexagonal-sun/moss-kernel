@@ -22,7 +22,10 @@ pub fn check_userns_create(task: &Task) -> Result<()> {
 }
 
 pub fn sys_unshare(ctx: &ProcessCtx, flags: usize) -> Result<usize> {
-    let supported = (CloneFlags::CLONE_FS | CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS)
+    let supported = (CloneFlags::CLONE_FS
+        | CloneFlags::CLONE_NEWUSER
+        | CloneFlags::CLONE_NEWNS
+        | CloneFlags::CLONE_NEWPID)
         .bits() as usize;
     if flags & !supported != 0 {
         return Err(KernelError::InvalidValue);
@@ -40,7 +43,25 @@ pub fn sys_unshare(ctx: &ProcessCtx, flags: usize) -> Result<usize> {
         let ns = UserNamespace::create(&creds)?;
         creds.enter_user_ns(ns);
     }
-    let fs = task.fs().duplicate();
+    let mut pid_ns = task.child_pid_ns();
+    if flags & CloneFlags::CLONE_NEWPID.bits() as usize != 0 {
+        if pid_ns.id != task.pid_ns().id || task.process.tasks.lock_save_irq().len() != 1 {
+            return Err(KernelError::InvalidValue);
+        }
+        creds
+            .caps()
+            .check_capable(CapabilitiesFlags::CAP_SYS_ADMIN)?;
+        pid_ns = super::pid_namespace::PidNamespace::create(pid_ns, creds.user_ns())?;
+    }
+    let fs = if flags
+        & (CloneFlags::CLONE_FS | CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS).bits()
+            as usize
+        != 0
+    {
+        task.fs().duplicate()
+    } else {
+        task.fs()
+    };
     let mut mount_ns = task.mount_ns();
     if flags & CloneFlags::CLONE_NEWNS.bits() as usize != 0 {
         creds
@@ -53,6 +74,7 @@ pub fn sys_unshare(ctx: &ProcessCtx, flags: usize) -> Result<usize> {
     *task.fs.lock_save_irq() = fs;
     *task.creds.lock_save_irq() = creds;
     *task.mount_ns.lock_save_irq() = mount_ns;
+    *task.pid_for_children.lock_save_irq() = pid_ns;
     Ok(0)
 }
 
@@ -71,11 +93,23 @@ pub fn sys_setns(ctx: &ProcessCtx, fd: Fd, kind: u32) -> Result<usize> {
     if kind != 0 && kind != inode.ns.kind() {
         return Err(KernelError::InvalidValue);
     }
-    if Arc::strong_count(&task.fs.lock_save_irq()) != 1 {
+    if !matches!(inode.ns, crate::drivers::fs::nsfs::Namespace::Pid(_))
+        && Arc::strong_count(&task.fs.lock_save_irq()) != 1
+    {
         return Err(KernelError::InvalidValue);
     }
     let mut creds = task.creds.lock_save_irq().clone();
     match &inode.ns {
+        crate::drivers::fs::nsfs::Namespace::Pid(ns) => {
+            creds.check_capable_in(&ns.owner, CapabilitiesFlags::CAP_SYS_ADMIN)?;
+            creds
+                .caps()
+                .check_capable(CapabilitiesFlags::CAP_SYS_ADMIN)?;
+            if !ns.within(&task.pid_ns()) {
+                return Err(KernelError::InvalidValue);
+            }
+            *task.pid_for_children.lock_save_irq() = ns.clone();
+        }
         crate::drivers::fs::nsfs::Namespace::User(ns) => {
             if creds.user_ns() == *ns || task.process.tasks.lock_save_irq().len() != 1 {
                 return Err(KernelError::InvalidValue);

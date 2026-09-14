@@ -5,7 +5,6 @@ use libkernel::{
 
 use crate::{
     memory::uaccess::{UserCopyable, copy_from_user, copy_to_user},
-    process::{Tid, find_task_by_tid},
     sched::syscall_ctx::ProcessCtx,
 };
 
@@ -196,7 +195,8 @@ pub async fn sys_prlimit64(
     let task = if pid == 0 {
         ctx.shared().process.clone()
     } else {
-        let target = find_task_by_tid(Tid::from_pid_t(pid)).ok_or(KernelError::NoProcess)?;
+        let target = crate::process::pid_namespace::find_task(ctx.shared(), pid as u32)
+            .ok_or(KernelError::NoProcess)?;
         let creds = target.creds.lock_save_irq().clone();
         if !caller.capable_in(
             &creds.user_ns(),

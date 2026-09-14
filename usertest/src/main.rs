@@ -16,6 +16,7 @@ mod mountns;
 mod opath;
 mod permissions;
 mod pidfd;
+mod pidns;
 mod sched;
 mod signalfd;
 mod signals;

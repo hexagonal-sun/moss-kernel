@@ -14,7 +14,7 @@ pub fn sys_set_tid_address(ctx: &mut ProcessCtx, tidptr: TUA<u32>) -> Result<usi
 
     task.child_tid_ptr = Some(tidptr);
 
-    Ok(task.tid.value() as _)
+    Ok(task.pid.local() as _)
 }
 
 #[repr(C)]

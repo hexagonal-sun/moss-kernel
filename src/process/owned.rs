@@ -62,10 +62,13 @@ impl OwnedTask {
             .with_priority(i8::MIN)
             .with_sigstate(Arc::new(SpinLock::new(SignalActionState::new_ignore())));
 
+        let process = thread_group_builder.build();
         let task = Task {
+            pid: process.pid.clone(),
+            pid_for_children: SpinLock::new(process.pid.namespace()),
             tid: Tid::idle_for_cpu(),
             comm: Arc::new(SpinLock::new(Comm::new("idle"))),
-            process: thread_group_builder.build(),
+            process,
             fs: SpinLock::new(super::fs_context::FsContext::new()),
             mount_ns: SpinLock::new(crate::fs::mount::MountNamespace::initial()),
             creds: SpinLock::new(Credentials::new_root()),
@@ -92,10 +95,13 @@ impl OwnedTask {
     }
 
     pub fn create_init_task() -> Self {
+        let process = ThreadGroupBuilder::new(Tgid::init()).build();
         let task = Task {
+            pid: process.pid.clone(),
+            pid_for_children: SpinLock::new(process.pid.namespace()),
             tid: Tid(1),
             comm: Arc::new(SpinLock::new(Comm::new("init"))),
-            process: ThreadGroupBuilder::new(Tgid::init()).build(),
+            process,
             fs: SpinLock::new(super::fs_context::FsContext::new()),
             mount_ns: SpinLock::new(crate::fs::mount::MountNamespace::initial()),
             creds: SpinLock::new(Credentials::new_root()),

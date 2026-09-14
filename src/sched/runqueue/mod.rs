@@ -140,10 +140,22 @@ impl RunQueue {
             }
         }
 
-        if let Some(mut next_task) = next_task.or_else(|| self.find_next_task(&mut deferred_drops))
-        {
-            next_task.about_to_execute(now);
-
+        let mut candidate = next_task;
+        loop {
+            let Some(mut next) = candidate
+                .take()
+                .or_else(|| self.find_next_task(&mut deferred_drops))
+            else {
+                break;
+            };
+            if next.about_to_execute(now) {
+                candidate = Some(next);
+                break;
+            }
+            self.total_weight = self.total_weight.saturating_sub(next.weight() as u64);
+            deferred_drops.push(next);
+        }
+        if let Some(next_task) = candidate {
             if Arc::as_ptr(&next_task.work) != prev_task {
                 // If we scheduled a different task than before, context switch.
                 NUM_CONTEXT_SWITCHES.fetch_add(1, Ordering::Relaxed);

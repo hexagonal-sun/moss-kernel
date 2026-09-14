@@ -96,6 +96,17 @@ pub fn dispatch_userspace_task(frame: *mut UserCtx) {
                 state = State::ProcessKernelWork;
             }
             State::ProcessKernelWork => {
+                if ctx
+                    .shared()
+                    .process
+                    .state
+                    .lock_save_irq()
+                    .eq(&crate::process::thread_group::ProcessState::Exiting)
+                    && current_work().state.load(Ordering::Acquire).is_finished()
+                {
+                    state = State::PickNewTask;
+                    continue;
+                }
                 // First, let's handle signals. If there is any scheduled signal
                 // work (this has to be async to handle faults, etc).
                 let signal_work = ctx.task_mut().ctx.take_signal_work();
@@ -119,10 +130,10 @@ pub fn dispatch_userspace_task(frame: *mut UserCtx) {
                             // If we errored, then we *cannot* progress the task.
                             // Delivery of the signal failed. Force the process to
                             // terminate.
-                            kernel_exit_with_signal(ctx.shared().clone(), SigId::SIGSEGV, true);
+                            kernel_exit_with_signal(&mut ctx, SigId::SIGSEGV, true);
 
-                            // Look for another task, this one is now dead.
-                            state = State::PickNewTask;
+                            // Poll the exit future before returning to userspace.
+                            state = State::ProcessKernelWork;
                             continue;
                         }
                         Poll::Pending => {
@@ -221,9 +232,13 @@ pub fn dispatch_userspace_task(frame: *mut UserCtx) {
                         None => continue,
                         Some(KSignalAction::Term | KSignalAction::Core) => {
                             // Terminate the process, and find a new task.
-                            kernel_exit_with_signal(ctx.shared().clone(), signal, false);
+                            kernel_exit_with_signal(
+                                &mut ctx,
+                                signal,
+                                matches!(sigaction, Some(KSignalAction::Core)),
+                            );
 
-                            state = State::PickNewTask;
+                            state = State::ProcessKernelWork;
                             continue 'dispatch;
                         }
                         Some(KSignalAction::Stop) => {
@@ -239,7 +254,7 @@ pub fn dispatch_userspace_task(frame: *mut UserCtx) {
                             {
                                 parent
                                     .child_notifiers
-                                    .child_update(process.tgid, ChildState::Stop { signal });
+                                    .child_update(ctx.shared(), ChildState::Stop { signal });
 
                                 parent.deliver_signal(SigId::SIGCHLD);
                             }
@@ -272,7 +287,7 @@ pub fn dispatch_userspace_task(frame: *mut UserCtx) {
                             {
                                 parent
                                     .child_notifiers
-                                    .child_update(process.tgid, ChildState::Continue);
+                                    .child_update(ctx.shared(), ChildState::Continue);
 
                                 parent.deliver_signal(SigId::SIGCHLD);
                             }

@@ -4,7 +4,7 @@ use super::{
     PageOffsetTranslator,
     uaccess::{copy_obj_array_from_user, copy_to_user_slice},
 };
-use crate::process::{Tid, find_task_by_tid};
+use crate::process::Tid;
 use crate::{fs::syscalls::iov::IoVec, process::thread_group::pid::PidT};
 use libkernel::{
     error::{KernelError, Result},
@@ -24,7 +24,8 @@ pub async fn sys_process_vm_readv(
         return Err(KernelError::InvalidValue);
     }
     let tgid = Tid::from_pid_t(pid);
-    let remote_proc = find_task_by_tid(tgid).ok_or(KernelError::NoProcess)?;
+    let remote_proc = crate::process::pid_namespace::find_task(ctx.shared(), tgid.0)
+        .ok_or(KernelError::NoProcess)?;
     crate::process::access::ptrace_may_access(ctx.shared(), &remote_proc, false)?;
     let local_iovs = copy_obj_array_from_user(local_iov, liov_count).await?;
     let remote_iovs = copy_obj_array_from_user(remote_iov, riov_count).await?;

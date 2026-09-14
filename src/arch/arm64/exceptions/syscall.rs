@@ -625,7 +625,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x98 => sys_setfsgid(&ctx, arg1 as _).map_err(|e| match e {}),
         0x9a => sys_setpgid(&ctx, arg1 as _, Pgid(arg2 as _)),
         0x9b => sys_getpgid(&ctx, arg1 as _),
-        0x9c => sys_getsid(&ctx).await,
+        0x9c => sys_getsid(&ctx, arg1 as _).await,
         0x9d => sys_setsid(&ctx).await,
         0x9e => sys_getgroups(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,
         0x9f => sys_setgroups(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,

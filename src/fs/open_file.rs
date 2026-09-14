@@ -44,6 +44,7 @@ pub struct OpenFile {
     inode: Option<Arc<dyn Inode>>,
     path: Option<PathBuf>,
     location: Option<super::VfsPath>,
+    write_lease: Option<super::mount::attributes::WriteLease>,
     state: Mutex<(Box<dyn FileOps>, FileCtx)>,
 }
 
@@ -55,6 +56,7 @@ impl OpenFile {
             inode: None,
             path: None,
             location: None,
+            write_lease: None,
         }
     }
 
@@ -62,6 +64,9 @@ impl OpenFile {
         self.inode = Some(location.inode());
         self.location = Some(location);
         self.path = Some(path);
+    }
+    pub fn retain_write(&mut self, lease: Option<super::mount::attributes::WriteLease>) {
+        self.write_lease = lease;
     }
 
     /// Attaches an inode for a kernel-created file with no pathname.

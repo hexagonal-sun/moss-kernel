@@ -315,9 +315,9 @@ fn test_permissions_namespace_requests_do_not_fake_success() {
     // Reject unimplemented mount options before any path copying or mount
     // mutation. POSIXACL (1 << 16) must not alias MS_SILENT (1 << 15).
     for flags in [
-        libc::MS_RDONLY,
-        libc::MS_NOEXEC,
-        libc::MS_SHARED,
+        libc::MS_MOVE,
+        libc::MS_SYNCHRONOUS,
+        libc::MS_DIRSYNC,
         libc::MS_REC,
         1 << 16,
     ] {
@@ -327,7 +327,6 @@ fn test_permissions_namespace_requests_do_not_fake_success() {
         );
     }
     for flag in [
-        libc::CLONE_NEWPID,
         libc::CLONE_NEWNET,
         libc::CLONE_NEWUTS,
         libc::CLONE_NEWIPC,

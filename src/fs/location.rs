@@ -138,6 +138,85 @@ impl Deref for VfsPath {
     }
 }
 impl VfsPath {
+    pub fn mount_flags(&self) -> u64 {
+        self.mount.as_ref().map_or(0, |m| m.attrs.effective_flags())
+    }
+    pub fn begin_write(&self) -> Result<Option<super::mount::attributes::WriteLease>> {
+        self.mount
+            .as_ref()
+            .map(super::mount::attributes::WriteLease::acquire)
+            .transpose()
+    }
+    pub fn check_exec_mount(&self) -> Result<()> {
+        if self.mount_flags() & super::mount::attributes::NOEXEC != 0 {
+            return Err(libkernel::error::FsError::PermissionDenied.into());
+        }
+        Ok(())
+    }
+    pub async fn setattr(&self, attr: FileAttr) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.setattr(attr).await
+    }
+    pub async fn truncate(&self, size: u64) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.truncate(size).await
+    }
+    pub async fn create(
+        &self,
+        name: &str,
+        kind: libkernel::fs::FileType,
+        mode: libkernel::fs::attr::FilePermissions,
+        time: Option<core::time::Duration>,
+    ) -> Result<Arc<dyn Inode>> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.create(name, kind, mode, time).await
+    }
+    pub async fn unlink(&self, name: &str) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.unlink(name).await
+    }
+    pub async fn link(&self, name: &str, inode: Arc<dyn Inode>) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.link(name, inode).await
+    }
+    pub async fn symlink(&self, name: &str, target: &libkernel::fs::path::Path) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.symlink(name, target).await
+    }
+    pub async fn rename_from(
+        &self,
+        parent: Arc<dyn Inode>,
+        old: &str,
+        new: &str,
+        no_replace: bool,
+    ) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry
+            .inode
+            .rename_from(parent, old, new, no_replace)
+            .await
+    }
+    pub async fn exchange(&self, first: &str, parent: Arc<dyn Inode>, second: &str) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.exchange(first, parent, second).await
+    }
+    pub async fn setxattr(
+        &self,
+        name: &str,
+        value: &[u8],
+        create: bool,
+        replace: bool,
+    ) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry
+            .inode
+            .setxattr(name, value, create, replace)
+            .await
+    }
+    pub async fn removexattr(&self, name: &str) -> Result<()> {
+        let _lease = self.begin_write()?;
+        self.dentry.inode.removexattr(name).await
+    }
     pub fn new(mount: Option<Arc<Mount>>, dentry: Arc<Dentry>) -> Self {
         if let Some(m) = &mount {
             m.path_refs.fetch_add(1, Ordering::AcqRel);
@@ -244,11 +323,22 @@ impl VfsPath {
     }
     /// VMAs must pin the mount too: filesystem inodes can hold only a Weak fs.
     pub fn pinned_inode(&self) -> Arc<dyn Inode> {
-        Arc::new(PinnedInode(self.clone()))
+        Arc::new(PinnedInode(
+            self.clone(),
+            self.mount_flags() & super::mount::attributes::NOEXEC == 0,
+        ))
     }
 }
 
-struct PinnedInode(VfsPath);
+struct PinnedInode(VfsPath, bool);
+pub fn check_mapping_exec(inode: &dyn Inode) -> Result<()> {
+    if let Some(pinned) = inode.as_any().downcast_ref::<PinnedInode>()
+        && !pinned.1
+    {
+        return Err(libkernel::error::FsError::PermissionDenied.into());
+    }
+    Ok(())
+}
 #[async_trait]
 impl Inode for PinnedInode {
     fn id(&self) -> InodeId {

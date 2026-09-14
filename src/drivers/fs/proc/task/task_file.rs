@@ -50,10 +50,17 @@ pub struct ProcTaskFileInode {
     attr: FileAttr,
     tid: Tid,
     process_stats: bool,
+    ns: alloc::sync::Arc<crate::process::pid_namespace::PidNamespace>,
 }
 
 impl ProcTaskFileInode {
-    pub fn new(tid: Tid, file_type: TaskFileType, process_stats: bool, inode_id: InodeId) -> Self {
+    pub fn new(
+        tid: Tid,
+        file_type: TaskFileType,
+        process_stats: bool,
+        ns: alloc::sync::Arc<crate::process::pid_namespace::PidNamespace>,
+        inode_id: InodeId,
+    ) -> Self {
         Self {
             id: inode_id,
             attr: FileAttr {
@@ -70,6 +77,7 @@ impl ProcTaskFileInode {
                 ..FileAttr::default()
             },
             process_stats,
+            ns,
             tid,
             file_type,
         }
@@ -98,6 +106,13 @@ impl SimpleFile for ProcTaskFileInode {
                 crate::process::access::ptrace_may_access(&caller, &task, true)
                     .map_err(|_| FsError::PermissionDenied)?;
             }
+            let ppid = task
+                .process
+                .parent
+                .lock_save_irq()
+                .as_ref()
+                .and_then(|p| p.upgrade())
+                .map_or(0, |p| p.pid.in_ns(&self.ns));
             let state = task.state.load(core::sync::atomic::Ordering::Relaxed);
             let name = task.comm.lock_save_irq();
             match self.file_type {
@@ -107,7 +122,21 @@ impl SimpleFile for ProcTaskFileInode {
                         .creds
                         .lock_save_irq()
                         .user_ns();
-                    let credentials = task.creds.lock_save_irq().proc_status(&viewer);
+                    let mut credentials = task.creds.lock_save_irq().proc_status(&viewer);
+                    credentials.push_str(&format!("PPid:\t{ppid}\n"));
+                    for (name, identity) in [
+                        ("NStgid", task.process.pid.clone()),
+                        ("NSpid", task.pid.clone()),
+                        ("NSpgid", task.process.pgid_ref.lock_save_irq().clone()),
+                        ("NSsid", task.process.sid_ref.lock_save_irq().clone()),
+                    ] {
+                        let ids: Vec<_> = identity
+                            .hierarchy(&self.ns)
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect();
+                        credentials.push_str(&format!("{name}:\t{}\n", ids.join("\t")));
+                    }
                     format!(
                         "Name:\t{name}
 State:\t{state}
@@ -116,9 +145,9 @@ FDSize:\t{fd_size}
 Pid:\t{pid}
 Threads:\t{tasks}\n{credentials}",
                         name = name.as_str(),
-                        tgid = task.process.tgid,
+                        tgid = task.process.pid.in_ns(&self.ns),
                         fd_size = task.fd_table.lock_save_irq().len(),
-                        pid = task.tid.value(),
+                        pid = task.pid.in_ns(&self.ns),
                         tasks = task.process.tasks.lock_save_irq().len(),
                     )
                 }
@@ -162,12 +191,18 @@ Threads:\t{tasks}\n{credentials}",
                     let start_brk = vm.start_brk().value();
 
                     let mut output = String::new();
-                    output.push_str(&format!("{} ", task.process.tgid.value())); // pid
+                    output.push_str(&format!("{} ", task.pid.in_ns(&self.ns))); // pid
                     output.push_str(&format!("({}) ", name.as_str())); // comm
-                    output.push_str(&format!("{state}")); // state
-                    output.push_str(&format!("{} ", 0)); // ppid
-                    output.push_str(&format!("{} ", 0)); // pgrp
-                    output.push_str(&format!("{} ", task.process.sid.lock_save_irq().value())); // session
+                    output.push_str(&format!("{state} ")); // state
+                    output.push_str(&format!("{ppid} ")); // ppid
+                    output.push_str(&format!(
+                        "{} ",
+                        task.process.pgid_ref.lock_save_irq().in_ns(&self.ns)
+                    )); // pgrp
+                    output.push_str(&format!(
+                        "{} ",
+                        task.process.sid_ref.lock_save_irq().in_ns(&self.ns)
+                    )); // session
                     output.push_str(&format!("{} ", 0)); // tty_nr
                     output.push_str(&format!("{} ", 0)); // tpgid
                     output.push_str(&format!("{} ", 0)); // flags

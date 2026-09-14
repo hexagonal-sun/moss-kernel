@@ -1,5 +1,5 @@
 use super::{
-    Task, Tid, find_task_by_tid,
+    Task,
     thread_group::{ThreadGroup, pid::PidT, wait::TraceTrap},
 };
 use crate::{
@@ -305,7 +305,10 @@ pub async fn sys_ptrace(ctx: &ProcessCtx, op: i32, pid: PidT, addr: UA, data: UA
         return Ok(0);
     }
 
-    let target_task = { find_task_by_tid(Tid::from_pid_t(pid)).ok_or(KernelError::NoProcess)? };
+    let target_task = {
+        crate::process::pid_namespace::find_task(ctx.shared(), pid as u32)
+            .ok_or(KernelError::NoProcess)?
+    };
 
     super::access::ptrace_may_access(ctx.shared(), &target_task, false)?;
     // Register/control requests are only valid for an established tracee.

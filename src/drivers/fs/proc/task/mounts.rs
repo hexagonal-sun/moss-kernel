@@ -84,6 +84,17 @@ impl MountsFile {
                 continue;
             };
             if self.info {
+                let (shared, master, unbindable) = mount.propagation_ids();
+                let mut propagation = String::new();
+                if let Some(id) = shared {
+                    propagation.push_str(&format!(" shared:{id}"));
+                }
+                if let Some(id) = master {
+                    propagation.push_str(&format!(" master:{id}"));
+                }
+                if unbindable {
+                    propagation.push_str(" unbindable");
+                }
                 let parent = mount.covered().map_or(mount.id, |p| p.mount_id());
                 let mut fs_root = mount.root.clone();
                 while let Some(parent) = fs_root.parent() {
@@ -96,25 +107,42 @@ impl MountsFile {
                 let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & 0xfffff000);
                 let minor = (dev & 0xff) | ((dev >> 12) & 0xffffff00);
                 text.push_str(&format!(
-                    "{} {} {}:{} {} {} rw - {} none rw\n",
+                    "{} {} {}:{} {} {} {}{} - {} none {}\n",
                     mount.id,
                     parent,
                     major,
                     minor,
                     escape(source.as_str()),
                     escape(target.as_str()),
-                    mount.fs_name
+                    mount_options(mount.attrs.flags()),
+                    propagation,
+                    mount.fs_name,
+                    if mount.attrs.superblock_readonly() {
+                        "ro"
+                    } else {
+                        "rw"
+                    }
                 ));
             } else {
                 text.push_str(&format!(
-                    "none {} {} rw 0 0\n",
+                    "none {} {} {} 0 0\n",
                     escape(target.as_str()),
-                    mount.fs_name
+                    mount.fs_name,
+                    mount_options(mount.attrs.effective_flags())
                 ));
             }
         }
         text
     }
+}
+fn mount_options(flags: u64) -> String {
+    let mut text = String::from(if flags & 1 != 0 { "ro" } else { "rw" });
+    for (bit, name) in [(2, ",nosuid"), (4, ",nodev"), (8, ",noexec")] {
+        if flags & bit != 0 {
+            text.push_str(name);
+        }
+    }
+    text
 }
 #[async_trait]
 impl FileOps for MountsFile {

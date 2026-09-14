@@ -4,7 +4,7 @@ use crate::drivers::fs::proc::meminfo::ProcMeminfoInode;
 use crate::drivers::fs::proc::stat::ProcStatInode;
 use crate::drivers::fs::proc::task::ProcTaskInode;
 use crate::process::thread_group::pid::PidT;
-use crate::process::{TASK_LIST, Tid, find_task_by_tid};
+use crate::process::{TASK_LIST, find_task_by_tid};
 use crate::sched::current_work;
 use alloc::boxed::Box;
 use alloc::string::ToString;
@@ -14,19 +14,21 @@ use async_trait::async_trait;
 use libkernel::error;
 use libkernel::error::FsError;
 use libkernel::fs::attr::{FileAttr, FilePermissions};
-use libkernel::fs::{DirStream, Dirent, FileType, Inode, InodeId, PROCFS_ID, SimpleDirStream};
+use libkernel::fs::{DirStream, Dirent, FileType, Inode, InodeId, SimpleDirStream};
 
 pub struct ProcRootInode {
     id: InodeId,
     attr: FileAttr,
+    ns: Arc<crate::process::pid_namespace::PidNamespace>,
 }
 
 impl ProcRootInode {
-    pub fn new() -> Self {
+    pub fn new(fs_id: u64, ns: Arc<crate::process::pid_namespace::PidNamespace>) -> Self {
         Self {
-            id: InodeId::from_fsid_and_inodeid(PROCFS_ID, 0),
+            ns,
+            id: InodeId::from_fsid_and_inodeid(fs_id, 0),
             attr: FileAttr {
-                id: InodeId::from_fsid_and_inodeid(PROCFS_ID, 0),
+                id: InodeId::from_fsid_and_inodeid(fs_id, 0),
                 file_type: FileType::Directory,
                 permissions: FilePermissions::from_bits_retain(0o555),
                 ..FileAttr::default()
@@ -44,8 +46,9 @@ impl Inode for ProcRootInode {
     async fn lookup(&self, name: &str) -> error::Result<Arc<dyn Inode>> {
         if matches!(name, "self" | "thread-self" | "mounts") {
             return Ok(Arc::new(ProcAlias {
-                id: InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[name])),
+                id: InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[name])),
                 name: name.into(),
+                ns: self.ns.clone(),
             }));
         }
         // Lookup a PID directory.
@@ -64,7 +67,7 @@ impl Inode for ProcRootInode {
         } else {
             let pid: PidT = name.parse().map_err(|_| FsError::NotFound)?;
             // Search for the task descriptor.
-            find_task_by_tid(Tid::from_pid_t(pid))
+            find_task_by_tid(self.ns.resolve(pid as u32).ok_or(FsError::NotFound)?)
                 .ok_or(FsError::NotFound)?
                 .descriptor()
         };
@@ -72,6 +75,7 @@ impl Inode for ProcRootInode {
         Ok(Arc::new(ProcTaskInode::new(
             desc.tid(),
             false,
+            self.ns.clone(),
             InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[name])),
         )))
     }
@@ -84,15 +88,16 @@ impl Inode for ProcRootInode {
         let mut entries: Vec<Dirent> = Vec::new();
         // Gather task list under interrupt-safe lock.
         let task_list = TASK_LIST.lock_save_irq();
-        for (tid, _) in task_list
-            .iter()
-            .filter(|(_, task)| task.upgrade().is_some())
-        {
-            let name = tid.value().to_string();
-            let inode_id = InodeId::from_fsid_and_inodeid(
-                PROCFS_ID,
-                get_inode_id(&[&tid.value().to_string()]),
-            );
+        for (_, task) in task_list.iter() {
+            let Some(task) = task.upgrade() else {
+                continue;
+            };
+            let number = task.pid.in_ns(&self.ns);
+            if number == 0 || task.tid.0 != task.process.tgid.0 {
+                continue;
+            }
+            let name = number.to_string();
+            let inode_id = InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&name]));
             let next_offset = (entries.len() + 1) as u64;
             entries.push(Dirent::new(
                 name,
@@ -105,26 +110,26 @@ impl Inode for ProcRootInode {
         for name in ["self", "thread-self", "mounts"] {
             entries.push(Dirent::new(
                 name.into(),
-                InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[name])),
+                InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[name])),
                 FileType::Symlink,
                 (entries.len() + 1) as u64,
             ));
         }
         entries.push(Dirent::new(
             "stat".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["stat"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["stat"])),
             FileType::File,
             (entries.len() + 1) as u64,
         ));
         entries.push(Dirent::new(
             "meminfo".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["meminfo"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["meminfo"])),
             FileType::File,
             (entries.len() + 1) as u64,
         ));
         entries.push(Dirent::new(
             "cmdline".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&["cmdline"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&["cmdline"])),
             FileType::File,
             (entries.len() + 1) as u64,
         ));
@@ -142,6 +147,7 @@ impl Inode for ProcRootInode {
 struct ProcAlias {
     id: InodeId,
     name: alloc::string::String,
+    ns: Arc<crate::process::pid_namespace::PidNamespace>,
 }
 #[async_trait]
 impl Inode for ProcAlias {
@@ -158,11 +164,14 @@ impl Inode for ProcAlias {
     }
     async fn readlink(&self) -> error::Result<libkernel::fs::pathbuf::PathBuf> {
         let task = current_work();
+        let pid = task.process.pid.in_ns(&self.ns);
+        let tid = task.pid.in_ns(&self.ns);
+        if pid == 0 {
+            return Err(FsError::NotFound.into());
+        }
         Ok(match self.name.as_str() {
-            "self" => task.process.tgid.value().to_string().into(),
-            "thread-self" => {
-                alloc::format!("{}/task/{}", task.process.tgid.value(), task.tid.value()).into()
-            }
+            "self" => pid.to_string().into(),
+            "thread-self" => alloc::format!("{pid}/task/{tid}").into(),
             _ => "self/mounts".into(),
         })
     }

@@ -47,6 +47,7 @@ pub mod fs_context;
 pub mod inotify;
 pub mod namespace;
 pub mod owned;
+pub mod pid_namespace;
 pub mod pidfd;
 pub mod prctl;
 pub mod ptrace;
@@ -76,7 +77,14 @@ impl Tid {
     }
 
     pub fn next_tid() -> Self {
-        Self(NEXT_TID.fetch_add(1, Ordering::Relaxed))
+        // Saturate instead of wrapping into an existing scheduler identity.
+        Self(
+            NEXT_TID
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                    n.checked_add(1).filter(|n| *n <= i32::MAX as u32)
+                })
+                .unwrap_or(i32::MAX as u32),
+        )
     }
 
     pub fn from_pid_t(pid: PidT) -> Self {
@@ -228,6 +236,8 @@ pub struct ITimers {
 
 pub struct Task {
     pub tid: Tid,
+    pub pid: Arc<pid_namespace::PidIdentity>,
+    pub pid_for_children: SpinLock<Arc<pid_namespace::PidNamespace>>,
     pub comm: Arc<SpinLock<Comm>>,
     pub process: Arc<ThreadGroup>,
     pub vm: Arc<VmHandle>,
@@ -246,6 +256,12 @@ pub struct Task {
 }
 
 impl Task {
+    pub fn pid_ns(&self) -> Arc<pid_namespace::PidNamespace> {
+        self.pid.namespace()
+    }
+    pub fn child_pid_ns(&self) -> Arc<pid_namespace::PidNamespace> {
+        self.pid_for_children.lock_save_irq().clone()
+    }
     pub fn mount_ns(&self) -> Arc<crate::fs::mount::MountNamespace> {
         self.mount_ns.lock_save_irq().clone()
     }

@@ -211,9 +211,11 @@ impl RunnableTask {
     }
 
     /// Setup task accounting info such that it is about to be executed.
-    pub fn about_to_execute(&mut self, now: Instant) {
+    pub fn about_to_execute(&mut self, now: Instant) -> bool {
         self.exec_start = Some(now);
-        self.work.state.activate();
+        if !self.work.state.activate() {
+            return false;
+        }
 
         // Deadline logic
         if self.deadline.is_none_or(|d| d <= now + DEFAULT_TIME_SLICE) {
@@ -223,6 +225,7 @@ impl RunnableTask {
         if let Some(d) = self.deadline {
             schedule_preempt(d);
         }
+        true
     }
 
     pub fn switch_context(&self) {

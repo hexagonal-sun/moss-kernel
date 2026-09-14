@@ -17,8 +17,10 @@ pub fn open_control(
 pub(crate) use task::follow_path;
 
 use crate::drivers::{Driver, FilesystemDriver};
-use crate::sync::OnceLock;
+use crate::process::pid_namespace::PidNamespace;
+use crate::sync::SpinLock;
 use alloc::{boxed::Box, sync::Arc};
+use alloc::{collections::BTreeMap, sync::Weak};
 use async_trait::async_trait;
 use core::hash::Hasher;
 use libkernel::{
@@ -43,12 +45,18 @@ fn get_inode_id(path_segments: &[&str]) -> u64 {
 
 pub struct ProcFs {
     root: Arc<ProcRootInode>,
+    id: u64,
+    owner: Arc<crate::process::user_namespace::UserNamespace>,
 }
 
 impl ProcFs {
-    fn new() -> Arc<Self> {
-        let root_inode = Arc::new(ProcRootInode::new());
-        Arc::new(Self { root: root_inode })
+    fn new(id: u64, ns: Arc<PidNamespace>) -> Arc<Self> {
+        let root_inode = Arc::new(ProcRootInode::new(id, ns.clone()));
+        Arc::new(Self {
+            root: root_inode,
+            id,
+            owner: ns.owner.clone(),
+        })
     }
 }
 
@@ -59,7 +67,7 @@ impl Filesystem for ProcFs {
     }
 
     fn id(&self) -> u64 {
-        PROCFS_ID
+        self.id
     }
 
     fn magic(&self) -> u64 {
@@ -67,17 +75,17 @@ impl Filesystem for ProcFs {
     }
 }
 
-static PROCFS_INSTANCE: OnceLock<Arc<ProcFs>> = OnceLock::new();
+// A procfs superblock belongs to the PID namespace active at mount time,
+// not to the reader or to pid_for_children. Bind/retained mounts keep that view.
+static INSTANCES: SpinLock<BTreeMap<u64, Weak<ProcFs>>> = SpinLock::new(BTreeMap::new());
 
-/// Initializes and/or returns the global singleton [`ProcFs`] instance.
-/// This is the main entry point for the rest of the kernel to interact with procfs.
-pub fn procfs() -> Arc<ProcFs> {
-    PROCFS_INSTANCE
-        .get_or_init(|| {
-            log::info!("procfs initialized");
-            ProcFs::new()
-        })
-        .clone()
+pub fn superblock_owner(id: u64) -> Option<Arc<crate::process::user_namespace::UserNamespace>> {
+    INSTANCES
+        .lock_save_irq()
+        .values()
+        .filter_map(Weak::upgrade)
+        .find(|fs| fs.id == id)
+        .map(|fs| fs.owner.clone())
 }
 
 pub struct ProcFsDriver;
@@ -103,13 +111,21 @@ impl Driver for ProcFsDriver {
 impl FilesystemDriver for ProcFsDriver {
     async fn construct(
         &self,
-        _fs_id: u64,
+        fs_id: u64,
         device: Option<Box<dyn BlockDevice>>,
     ) -> Result<Arc<dyn Filesystem>> {
         if device.is_some() {
             warn!("procfs should not be constructed with a block device");
             return Err(KernelError::InvalidValue);
         }
-        Ok(procfs())
+        let ns = crate::sched::current_work().pid_ns();
+        let mut instances = INSTANCES.lock_save_irq();
+        if let Some(fs) = instances.get(&ns.id).and_then(Weak::upgrade) {
+            return Ok(fs);
+        }
+        instances.retain(|_, fs| fs.strong_count() != 0);
+        let fs = ProcFs::new(if ns.level == 0 { PROCFS_ID } else { fs_id }, ns.clone());
+        instances.insert(ns.id, Arc::downgrade(&fs));
+        Ok(fs)
     }
 }

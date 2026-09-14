@@ -61,11 +61,32 @@ pub async fn sys_mount(
         libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN,
     )?;
     let flags = flags as u64 & !MountFlags::MS_SILENT.bits();
-    let bind = flags == MountFlags::MS_BIND.bits();
-    let private = flags == MountFlags::MS_PRIVATE.bits()
-        || flags == (MountFlags::MS_PRIVATE | MountFlags::MS_REC).bits();
-    if flags != 0 && !bind && !private {
-        return Err(KernelError::NotSupported);
+    let attrs = crate::fs::mount::attributes::SUPPORTED;
+    let propagation = flags
+        & (MountFlags::MS_SHARED
+            | MountFlags::MS_SLAVE
+            | MountFlags::MS_PRIVATE
+            | MountFlags::MS_UNBINDABLE)
+            .bits();
+    let remount = flags & MountFlags::MS_REMOUNT.bits() != 0;
+    let bind = flags & MountFlags::MS_BIND.bits() != 0;
+    let recursive = flags & MountFlags::MS_REC.bits() != 0;
+    if propagation != 0 {
+        if propagation.count_ones() != 1 || flags & !(propagation | MountFlags::MS_REC.bits()) != 0
+        {
+            return Err(KernelError::InvalidValue);
+        }
+    } else {
+        let allowed = if remount {
+            MountFlags::MS_REMOUNT.bits() | MountFlags::MS_BIND.bits() | attrs
+        } else if bind {
+            MountFlags::MS_BIND.bits() | MountFlags::MS_REC.bits() | attrs
+        } else {
+            attrs
+        };
+        if flags & !allowed != 0 {
+            return Err(KernelError::NotSupported);
+        }
     }
     let mut dir_buf = [0u8; 1024];
     let dir = Path::new(
@@ -78,12 +99,23 @@ pub async fn sys_mount(
     if !ns.contains(&target) {
         return Err(KernelError::InvalidValue);
     }
-    if private {
+    if propagation != 0 || remount {
         let target = crate::fs::mount::MountNamespace::follow(target);
-        if !target.is_mount_root() {
-            return Err(KernelError::InvalidValue);
+        if propagation != 0 {
+            ns.change_propagation(&target, propagation, recursive)?;
+        } else {
+            if !data.is_null() {
+                let mut options = [0; 4096];
+                if !UserCStr::from_ptr(TUA::from_value(data.value()))
+                    .copy_from_user(&mut options)
+                    .await?
+                    .is_empty()
+                {
+                    return Err(KernelError::NotSupported);
+                }
+            }
+            ns.remount(&target, flags & attrs, bind, &creds)?;
         }
-        // Every supported mount is already private. No shared/slave request is accepted.
         return Ok(0);
     }
     let mut source_buf = [0u8; 1024];
@@ -99,7 +131,7 @@ pub async fn sys_mount(
     if bind {
         let source = source.ok_or(KernelError::Fault)?;
         let source = VFS.resolve_path(Path::new(source), cwd, task).await?;
-        VFS.bind(&ns, source, target).await?;
+        VFS.bind(&ns, source, target, recursive).await?;
         return Ok(0);
     }
     let mut type_buf = [0u8; 128];
@@ -121,8 +153,15 @@ pub async fn sys_mount(
     // Global pseudo-filesystems do not yet have userns-safe superblocks.
     if creds.user_ns() != crate::process::user_namespace::UserNamespace::initial()
         && fs_name != "tmpfs"
+        && fs_name != "procfs"
     {
         return Err(KernelError::NotPermitted);
+    }
+    if fs_name == "procfs" {
+        creds.check_capable_in(
+            &task.pid_ns().owner,
+            libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN,
+        )?;
     }
     if !data.is_null() {
         let mut options = [0u8; 4096];
@@ -134,7 +173,8 @@ pub async fn sys_mount(
             return Err(KernelError::NotSupported);
         }
     }
-    VFS.mount(&ns, target, fs_name, None, Some(&creds)).await?;
+    VFS.mount_flags(&ns, target, fs_name, None, Some(&creds), flags & attrs)
+        .await?;
     Ok(0)
 }
 

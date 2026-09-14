@@ -3,7 +3,7 @@ use crate::fs::fops::FileOps;
 use crate::fs::open_file::OpenFile;
 use crate::process::fd_table::FdFlags;
 use crate::process::thread_group::pid::PidT;
-use crate::process::{Tid, find_task_by_tid};
+use crate::process::{find_task_by_tid, pid_namespace::PidIdentity};
 use crate::sched::syscall_ctx::ProcessCtx;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -22,20 +22,20 @@ bitflags! {
 }
 
 pub struct PidFile {
-    _pid: Tid,
+    _pid: Arc<PidIdentity>,
     _flags: PidfdFlags,
 }
 
 impl PidFile {
-    pub fn new(pid: Tid, flags: PidfdFlags) -> Self {
+    pub fn new(pid: Arc<PidIdentity>, flags: PidfdFlags) -> Self {
         Self {
             _pid: pid,
             _flags: flags,
         }
     }
 
-    pub fn new_open_file(pid: Tid, flags: PidfdFlags) -> Arc<OpenFile> {
-        let file = PidFile::new(pid, flags);
+    pub fn new_open_file(pid: Arc<PidIdentity>, flags: PidfdFlags) -> Arc<OpenFile> {
+        let file = PidFile::new(pid.clone(), flags);
         let mut open_file =
             OpenFile::new(Box::new(file), OpenFlags::from_bits(flags.bits()).unwrap());
         open_file.set_inode(pidfs::new_inode(pid));
@@ -62,14 +62,18 @@ pub async fn sys_pidfd_open(ctx: &ProcessCtx, pid: PidT, flags: u32) -> Result<u
     if pid <= 0 {
         return Err(KernelError::InvalidValue);
     }
-    let pid = Tid::from_pid_t(pid);
+    let pid = ctx
+        .shared()
+        .pid_ns()
+        .resolve(pid as u32)
+        .ok_or(KernelError::NoProcess)?;
     let flags = PidfdFlags::from_bits(flags).ok_or(KernelError::InvalidValue)?;
     let task = find_task_by_tid(pid).ok_or(KernelError::NoProcess)?;
     if !flags.contains(PidfdFlags::PIDFD_THREAD) && task.process.tgid.value() != pid.value() {
         return Err(KernelError::NoProcess);
     }
 
-    let file = PidFile::new_open_file(pid, flags);
+    let file = PidFile::new_open_file(task.pid.clone(), flags);
 
     let fd = ctx
         .task()

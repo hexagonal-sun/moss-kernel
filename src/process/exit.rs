@@ -13,21 +13,15 @@ use libkernel::error::Result;
 use log::warn;
 use ringbuf::Arc;
 
-pub fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
+pub async fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
     let process = Arc::clone(&task.process);
 
     if process.tgid.is_init() {
         panic!("Attempted to kill init");
     }
 
-    let parent = process
-        .parent
-        .lock_save_irq()
-        .as_ref()
-        .and_then(|x| x.upgrade())
-        .unwrap();
-
     {
+        let _pid_op = super::pid_namespace::PID_OPS.lock_save_irq();
         let mut process_state = process.state.lock_save_irq();
 
         // Check if we're already exiting (e.g., two threads call exit_group at
@@ -41,6 +35,12 @@ pub fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
 
         // It's our job to tear it all down. Mark the process as exiting.
         *process_state = ProcessState::Exiting;
+    }
+
+    let ns = process.pid.namespace();
+    let namespace_init = ns.level != 0 && process.pid.local() == 1;
+    if namespace_init {
+        ns.disable();
     }
 
     // Signal all other threads in the group to terminate. We iterate over Weak
@@ -58,19 +58,88 @@ pub fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
         }
     }
 
-    // TODO: For a UMP system, the above is sufficient, however on SMP, we need
-    // to wait for all the processes to have stopped execution before tearing
-    // down the address-space, etc.
+    // A Finished state alone is not an SMP execution barrier: the other CPU
+    // must release its RunnableTask before we notify a waiter or vfork parent.
+    loop {
+        let peers: Vec<_> = process
+            .tasks
+            .lock_save_irq()
+            .values()
+            .filter_map(|w| w.upgrade())
+            .filter(|w| w.tid != task.tid)
+            .collect();
+        if peers.iter().all(|w| w.sched_data.lock_save_irq().is_some()) {
+            break;
+        }
+        drop(peers);
+        crate::drivers::timer::sleep(core::time::Duration::from_millis(1)).await;
+    }
+    if namespace_init {
+        // Allocation/publication is disabled before collecting descendants.
+        // Include processes parented outside this namespace through setns.
+        loop {
+            let groups: Vec<_> = super::thread_group::TG_LIST
+                .lock_save_irq()
+                .values()
+                .filter_map(|w| w.upgrade())
+                .filter(|p| p.tgid != process.tgid && p.pid.in_ns(&ns) != 0)
+                .collect();
+            let mut live = false;
+            for group in groups {
+                let threads: Vec<_> = group
+                    .tasks
+                    .lock_save_irq()
+                    .values()
+                    .filter_map(|t| t.upgrade())
+                    .collect();
+                if threads.iter().any(|t| {
+                    !t.state
+                        .load(core::sync::atomic::Ordering::Acquire)
+                        .is_finished()
+                        || t.sched_data.lock_save_irq().is_none()
+                }) {
+                    live = true;
+                    group.deliver_signal(SigId::SIGKILL);
+                }
+            }
+            process.child_notifiers.clear();
+            if !live {
+                break;
+            }
+            crate::drivers::timer::sleep(core::time::Duration::from_millis(1)).await;
+        }
+    }
 
     // If this process was created with `CLONE_VFORK`, the parent may resume as
     // soon as we are guaranteed not to run in the shared address space again.
     process.complete_vfork();
 
-    // Reparent children to `init`
+    // Serialize reparenting with clone publication and other group exits.
+    let _pid_op = super::pid_namespace::PID_OPS.lock_save_irq();
+    let parent = process
+        .parent
+        .lock_save_irq()
+        .as_ref()
+        .and_then(|p| p.upgrade())
+        .expect("live reaper");
+    // Reparent to the closest living namespace reaper, never a sibling domain.
     {
         let mut our_children = process.children.lock_save_irq();
 
-        let init = ThreadGroup::get(Tgid::init()).expect("Could not find init process");
+        let mut ancestor = Some(ns.clone());
+        let mut reaper = None;
+        while let Some(ns) = ancestor {
+            if let Some(init) = ns.reaper()
+                && init.tgid != process.tgid
+            {
+                reaper = Some(init);
+                break;
+            }
+            ancestor = ns.parent.clone();
+        }
+        let init =
+            reaper.unwrap_or_else(|| ThreadGroup::get(Tgid::init()).expect("initial reaper"));
+        process.child_notifiers.transfer(&init.child_notifiers);
 
         let mut init_children = init.children.lock_save_irq();
 
@@ -85,9 +154,7 @@ pub fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
 
     parent.children.lock_save_irq().remove(&process.tgid);
 
-    parent
-        .child_notifiers
-        .child_update(task.descriptor().tgid(), exit_code);
+    parent.child_notifiers.child_update(task, exit_code);
 
     parent.queue_signal(SigId::SIGCHLD);
 
@@ -98,8 +165,17 @@ pub fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
     // state is set to Finished.
 }
 
-pub fn kernel_exit_with_signal(task: Arc<Task>, signal: SigId, core: bool) {
-    do_exit_group(&task, ChildState::SignalExit { signal, core });
+pub fn kernel_exit_with_signal(ctx: &mut ProcessCtx, signal: SigId, core: bool) {
+    let task = ctx.shared().clone();
+    // Fatal signals replace suspended syscall work; exiting PID 1 may need to
+    // sleep until all namespace descendants have left their run queues.
+    drop(ctx.task_mut().ctx.take_kernel_work());
+    drop(ctx.task_mut().ctx.take_signal_work());
+    ctx.task_mut()
+        .ctx
+        .put_kernel_work(alloc::boxed::Box::pin(async move {
+            do_exit_group(&task, ChildState::SignalExit { signal, core }).await;
+        }));
 }
 
 pub async fn sys_exit_group(ctx: &ProcessCtx, exit_code: usize) -> Result<usize> {
@@ -110,7 +186,8 @@ pub async fn sys_exit_group(ctx: &ProcessCtx, exit_code: usize) -> Result<usize>
         ChildState::NormalExit {
             code: exit_code as _,
         },
-    );
+    )
+    .await;
 
     Ok(0)
 }
@@ -130,46 +207,24 @@ pub async fn sys_exit(ctx: &mut ProcessCtx, exit_code: usize) -> Result<usize> {
             warn!("Failed to get futex wake key on sys_exit");
         }
     }
-
     let task = ctx.shared();
     let process = Arc::clone(&task.process);
-    let mut tasks_lock = process.tasks.lock_save_irq();
-
-    // How many threads are left? We must count live ones.
-    let live_tasks = tasks_lock
-        .values()
-        .filter(|t| t.upgrade().is_some())
-        .count();
-
-    TASK_LIST.lock_save_irq().remove(&task.descriptor().tid());
-
-    if live_tasks <= 1 {
-        // We are the last task. This is equivalent to an exit_group. The exit
-        // code for an implicit exit_group is often 0.
-        drop(tasks_lock);
-
-        // NOTE: We don't need to worry about a race condition here. Since
-        // we've established we're the only thread and we're executing a
-        // sys_exit, there can absolutely be no way that a new thread can be
-        // spawned on this process while the thread_lock is released.
+    let last = {
+        let mut tasks = process.tasks.lock_save_irq();
+        tasks.remove(&task.tid);
+        TASK_LIST.lock_save_irq().remove(&task.tid);
+        !tasks.values().any(|t| t.upgrade().is_some())
+    };
+    if last {
         do_exit_group(
             task,
             ChildState::NormalExit {
                 code: exit_code as _,
             },
-        );
-
-        Ok(0)
+        )
+        .await;
     } else {
-        // Mark our own state as finished.
         sched::current_work().state.finish();
-
-        // Remove ourself from the process's thread list.
-        tasks_lock.remove(&task.tid);
-
-        // 3. This thread stops executing forever. The task struct will be
-        // deallocated when the last Arc<Task> is dropped (e.g., by the
-        // scheduler).
-        Ok(0)
     }
+    Ok(0)
 }

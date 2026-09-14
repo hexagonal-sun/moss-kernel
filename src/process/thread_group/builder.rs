@@ -17,6 +17,7 @@ use super::{
 /// A builder for creating ThreadGroup instances.
 pub struct ThreadGroupBuilder {
     tgid: Tgid,
+    pid: Option<Arc<crate::process::pid_namespace::PidIdentity>>,
     parent: Option<Arc<ThreadGroup>>,
     pri: Option<i8>,
     sigstate: Option<Arc<SpinLock<SignalActionState>>>,
@@ -28,11 +29,17 @@ impl ThreadGroupBuilder {
     pub fn new(tgid: Tgid) -> Self {
         ThreadGroupBuilder {
             tgid,
+            pid: None,
             parent: None,
             sigstate: None,
             rsrc_lim: None,
             pri: None,
         }
+    }
+
+    pub fn with_pid(mut self, pid: Arc<crate::process::pid_namespace::PidIdentity>) -> Self {
+        self.pid = Some(pid);
+        self
     }
 
     /// Sets the parent of the thread group.
@@ -61,15 +68,34 @@ impl ThreadGroupBuilder {
     ///
     /// If a sigstate has not been provided, a default one will be created.
     pub fn build(self) -> Arc<ThreadGroup> {
+        let pid = self.pid.unwrap_or_else(|| {
+            crate::process::pid_namespace::PidIdentity::initial(crate::process::Tid(self.tgid.0))
+        });
+        let init = pid.local() == 1;
+        let pgid_ref = if init {
+            pid.clone()
+        } else {
+            self.parent
+                .as_ref()
+                .map(|p| p.pgid_ref.lock_save_irq().clone())
+                .unwrap_or_else(|| pid.clone())
+        };
+        let sid_ref = if init {
+            pid.clone()
+        } else {
+            self.parent
+                .as_ref()
+                .map(|p| p.sid_ref.lock_save_irq().clone())
+                .unwrap_or_else(|| pid.clone())
+        };
         let ret = Arc::new(ThreadGroup {
             tgid: self.tgid,
-            pgid: SpinLock::new(
-                self.parent
-                    .as_ref()
-                    .map(|x| *x.pgid.lock_save_irq())
-                    .unwrap_or_else(|| Pgid(self.tgid.value())),
-            ),
-            sid: SpinLock::new(Sid(self.tgid.value())),
+            did_exec: core::sync::atomic::AtomicBool::new(false),
+            pid,
+            pgid: SpinLock::new(Pgid(pgid_ref.global.0)),
+            sid: SpinLock::new(Sid(sid_ref.global.0)),
+            pgid_ref: SpinLock::new(pgid_ref),
+            sid_ref: SpinLock::new(sid_ref),
             parent: SpinLock::new(self.parent.as_ref().map(Arc::downgrade)),
             dumpable: AtomicUsize::new(
                 self.parent
@@ -103,6 +129,9 @@ impl ThreadGroupBuilder {
             .lock_save_irq()
             .insert(self.tgid, Arc::downgrade(&ret));
 
+        if self.tgid.is_init() {
+            ret.pid.namespace().publish(&ret);
+        }
         cgroup::register_thread_group(&ret, self.parent.as_ref());
 
         ret

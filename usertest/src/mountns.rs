@@ -666,11 +666,11 @@ fn test_mountns_rejects_unsupported_atomically() {
             libc::ENODEV,
         );
         for flags in [
-            libc::MS_SHARED,
-            libc::MS_SLAVE,
-            libc::MS_RDONLY,
-            libc::MS_REMOUNT,
-            libc::MS_BIND | libc::MS_REC,
+            libc::MS_MOVE,
+            libc::MS_SYNCHRONOUS,
+            libc::MS_DIRSYNC,
+            libc::MS_REMOUNT | libc::MS_REC,
+            libc::MS_BIND | libc::MS_MOVE,
         ] {
             error(
                 unsafe {
@@ -816,3 +816,392 @@ fn test_mountns_mountinfo_and_cross_mount_operations() {
     .join();
 }
 register_test!(test_mountns_mountinfo_and_cross_mount_operations);
+
+fn mount_flags(source: &str, target: &str, flags: libc::c_ulong) {
+    ok(unsafe {
+        libc::mount(
+            c(source).as_ptr(),
+            c(target).as_ptr(),
+            ptr::null(),
+            flags,
+            ptr::null(),
+        )
+    });
+}
+fn propagation(target: &str, flags: libc::c_ulong) {
+    mount_flags("none", target, flags);
+}
+fn mount_line(target: &str) -> String {
+    let id = mount_id(target);
+    std::fs::read_to_string("/proc/self/mountinfo")
+        .unwrap()
+        .lines()
+        .find(|s| s.starts_with(&format!("{id} ")))
+        .unwrap()
+        .into()
+}
+fn marker(target: &str, name: &str) {
+    std::fs::write(format!("{target}/{name}"), b"mounted").unwrap();
+}
+fn visible(target: &str, name: &str) -> bool {
+    std::path::Path::new(&format!("{target}/{name}")).exists()
+}
+
+fn test_mountns_shared_peers_and_namespace_copy() {
+    let fixture = Fixture::new("shared-peers");
+    let a = fixture.sub("a");
+    let b = fixture.sub("b");
+    spawn(libc::CLONE_NEWNS, || {
+        mount(&a, "tmpfs");
+        std::fs::create_dir(format!("{a}/sub")).unwrap();
+        propagation(&a, libc::MS_SHARED);
+        bind(&a, &b);
+        let peer = mount_line(&a)
+            .split_whitespace()
+            .find(|s| s.starts_with("shared:"))
+            .unwrap()
+            .to_string();
+        assert!(mount_line(&b).contains(&peer));
+        spawn(libc::CLONE_NEWNS, || {
+            mount(&format!("{a}/sub"), "tmpfs");
+            marker(&format!("{a}/sub"), "child");
+        })
+        .join();
+        assert!(visible(&format!("{a}/sub"), "child"));
+        assert!(visible(&format!("{b}/sub"), "child"));
+        let busy = open(&format!("{b}/sub/child"), libc::O_RDONLY);
+        error(
+            unsafe { libc::umount2(c(&format!("{a}/sub")).as_ptr(), 0) } as _,
+            libc::EBUSY,
+        );
+        drop(busy);
+        umount(&format!("{a}/sub"), 0);
+        assert!(!visible(&format!("{b}/sub"), "child"));
+        spawn(libc::CLONE_NEWNS, || {
+            propagation(&a, libc::MS_PRIVATE | libc::MS_REC);
+            mount(&format!("{a}/sub"), "tmpfs");
+            marker(&format!("{a}/sub"), "private");
+        })
+        .join();
+        assert!(!visible(&format!("{a}/sub"), "private"));
+        assert!(!visible(&format!("{b}/sub"), "private"));
+    })
+    .join();
+}
+register_test!(test_mountns_shared_peers_and_namespace_copy);
+
+fn test_mountns_slave_and_shared_slave_direction() {
+    let fixture = Fixture::new("slave");
+    let a = fixture.sub("a");
+    let b = fixture.sub("b");
+    let cpath = fixture.sub("c");
+    let d = fixture.sub("d");
+    spawn(libc::CLONE_NEWNS, || {
+        mount(&a, "tmpfs");
+        for name in ["up", "down"] {
+            std::fs::create_dir(format!("{a}/{name}")).unwrap();
+        }
+        propagation(&a, libc::MS_SHARED);
+        bind(&a, &b);
+        propagation(&b, libc::MS_SLAVE);
+        assert!(mount_line(&b).contains(" master:"));
+        assert!(!mount_line(&b).contains(" shared:"));
+        propagation(&b, libc::MS_SHARED);
+        bind(&b, &cpath);
+        bind(&b, &d);
+        propagation(&d, libc::MS_SLAVE);
+        assert!(mount_line(&b).contains(" shared:"));
+        assert!(mount_line(&b).contains(" master:"));
+        mount(&format!("{a}/up"), "tmpfs");
+        marker(&format!("{a}/up"), "up");
+        for target in [&a, &b, &cpath, &d] {
+            assert!(visible(&format!("{target}/up"), "up"));
+        }
+        mount(&format!("{b}/down"), "tmpfs");
+        marker(&format!("{b}/down"), "down");
+        assert!(!visible(&format!("{a}/down"), "down"));
+        for target in [&b, &cpath, &d] {
+            assert!(visible(&format!("{target}/down"), "down"));
+        }
+        umount(&format!("{b}/down"), 0);
+        for target in [&b, &cpath, &d] {
+            assert!(!visible(&format!("{target}/down"), "down"));
+        }
+        umount(&format!("{a}/up"), 0);
+        for target in [&a, &b, &cpath, &d] {
+            assert!(!visible(&format!("{target}/up"), "up"));
+        }
+    })
+    .join();
+}
+register_test!(test_mountns_slave_and_shared_slave_direction);
+
+fn test_mountns_recursive_bind_prunes_unbindable() {
+    let fixture = Fixture::new("rbind");
+    let a = fixture.sub("a");
+    let plain = fixture.sub("plain");
+    let recursive = fixture.sub("recursive");
+    spawn(libc::CLONE_NEWNS, || {
+        mount(&a, "tmpfs");
+        for name in ["kept", "pruned"] {
+            std::fs::create_dir(format!("{a}/{name}")).unwrap();
+        }
+        mount(&format!("{a}/kept"), "tmpfs");
+        marker(&format!("{a}/kept"), "inside");
+        mount(&format!("{a}/pruned"), "tmpfs");
+        marker(&format!("{a}/pruned"), "secret");
+        propagation(&format!("{a}/pruned"), libc::MS_UNBINDABLE);
+        bind(&a, &plain);
+        mount_flags(&a, &recursive, libc::MS_BIND | libc::MS_REC);
+        assert!(!visible(&format!("{plain}/kept"), "inside"));
+        assert!(visible(&format!("{recursive}/kept"), "inside"));
+        assert!(!visible(&format!("{recursive}/pruned"), "secret"));
+        assert_ne!(
+            mount_id(&format!("{a}/kept")),
+            mount_id(&format!("{recursive}/kept"))
+        );
+        error(
+            unsafe {
+                libc::mount(
+                    c(&format!("{a}/pruned")).as_ptr(),
+                    c(&plain).as_ptr(),
+                    ptr::null(),
+                    libc::MS_BIND,
+                    ptr::null(),
+                )
+            } as _,
+            libc::EINVAL,
+        );
+        umount(&format!("{recursive}/kept"), 0);
+        umount(&recursive, 0);
+    })
+    .join();
+}
+register_test!(test_mountns_recursive_bind_prunes_unbindable);
+
+fn test_mountns_less_privileged_shared_copy_is_slave() {
+    let fixture = Fixture::new("locked-shared");
+    let a = fixture.sub("a");
+    spawn(libc::CLONE_NEWNS, || {
+        mount(&a, "tmpfs");
+        for name in ["parent", "child"] {
+            std::fs::create_dir(format!("{a}/{name}")).unwrap();
+        }
+        propagation(&a, libc::MS_SHARED);
+        let ready = Pipe::new();
+        let release = Pipe::new();
+        let child = spawn(libc::CLONE_NEWUSER | libc::CLONE_NEWNS, || {
+            assert!(mount_line(&a).contains(" master:"));
+            assert!(!mount_line(&a).contains(" shared:"));
+            mount(&format!("{a}/child"), "tmpfs");
+            marker(&format!("{a}/child"), "child");
+            ready.send();
+            release.recv();
+            assert!(visible(&format!("{a}/parent"), "parent"));
+            error(
+                unsafe { libc::umount2(c(&a).as_ptr(), libc::MNT_DETACH) } as _,
+                libc::EINVAL,
+            );
+            error(
+                unsafe {
+                    libc::mount(
+                        ptr::null(),
+                        c(&a).as_ptr(),
+                        ptr::null(),
+                        libc::MS_REMOUNT | libc::MS_RDONLY,
+                        ptr::null(),
+                    )
+                } as _,
+                libc::EPERM,
+            );
+        });
+        ready.recv();
+        assert!(!visible(&format!("{a}/child"), "child"));
+        mount(&format!("{a}/parent"), "tmpfs");
+        marker(&format!("{a}/parent"), "parent");
+        release.send();
+        child.join();
+    })
+    .join();
+}
+register_test!(test_mountns_less_privileged_shared_copy_is_slave);
+
+fn test_mountns_remount_readonly_superblock_and_bind() {
+    let fixture = Fixture::new("remount");
+    let a = fixture.sub("a");
+    let b = fixture.sub("b");
+    spawn(libc::CLONE_NEWNS, || {
+        mount(&a, "tmpfs");
+        marker(&a, "file");
+        bind(&a, &b);
+        mount_flags(
+            "none",
+            &b,
+            libc::MS_REMOUNT | libc::MS_BIND | libc::MS_RDONLY,
+        );
+        let file = format!("{b}/file");
+        error(
+            unsafe { libc::open(c(&file).as_ptr(), libc::O_WRONLY) } as _,
+            libc::EROFS,
+        );
+        error(
+            unsafe { libc::chmod(c(&file).as_ptr(), 0o600) } as _,
+            libc::EROFS,
+        );
+        error(unsafe { libc::unlink(c(&file).as_ptr()) } as _, libc::EROFS);
+        error(
+            unsafe { libc::mkdir(c(&format!("{b}/dir")).as_ptr(), 0o700) } as _,
+            libc::EROFS,
+        );
+        let fd = open(&file, libc::O_RDONLY);
+        error(
+            unsafe { libc::fchmod(fd.as_raw_fd(), 0o600) } as _,
+            libc::EROFS,
+        );
+        let mut stats = [0u64; 15];
+        assert_eq!(
+            unsafe { libc::syscall(libc::SYS_fstatfs, fd.as_raw_fd(), stats.as_mut_ptr()) },
+            0
+        );
+        assert_ne!(stats[10] & 1, 0);
+        marker(&a, "writable");
+        let writer = open(&format!("{a}/file"), libc::O_WRONLY);
+        error(
+            unsafe {
+                libc::mount(
+                    ptr::null(),
+                    c(&a).as_ptr(),
+                    ptr::null(),
+                    libc::MS_REMOUNT | libc::MS_RDONLY,
+                    ptr::null(),
+                )
+            } as _,
+            libc::EBUSY,
+        );
+        drop(writer);
+        mount_flags("none", &a, libc::MS_REMOUNT | libc::MS_RDONLY);
+        mount_flags("none", &b, libc::MS_REMOUNT | libc::MS_BIND);
+        error(
+            unsafe { libc::open(c(&file).as_ptr(), libc::O_WRONLY) } as _,
+            libc::EROFS,
+        );
+        assert!(mount_line(&b).contains(" none ro"));
+        mount_flags("none", &a, libc::MS_REMOUNT);
+        marker(&b, "writable-again");
+        mount_flags(
+            "none",
+            &b,
+            libc::MS_REMOUNT | libc::MS_BIND | libc::MS_RDONLY,
+        );
+        let ready = Pipe::new();
+        let release = Pipe::new();
+        let child = spawn(libc::CLONE_NEWUSER | libc::CLONE_NEWNS, || {
+            error(
+                unsafe {
+                    libc::mount(
+                        ptr::null(),
+                        c(&b).as_ptr(),
+                        ptr::null(),
+                        libc::MS_REMOUNT | libc::MS_BIND,
+                        ptr::null(),
+                    )
+                } as _,
+                libc::EPERM,
+            );
+            ready.send();
+            release.recv();
+        });
+        ready.recv();
+        release.send();
+        child.join();
+    })
+    .join();
+}
+register_test!(test_mountns_remount_readonly_superblock_and_bind);
+
+fn test_mountns_remount_noexec_nodev_and_mapping() {
+    let fixture = Fixture::new("mount-flags");
+    let binary = fixture.sub("bin");
+    let device = format!("{}/null", fixture.0);
+    std::fs::write(&device, b"").unwrap();
+    spawn(libc::CLONE_NEWNS, || {
+        bind("/bin", &binary);
+        bind("/dev/null", &device);
+        mount_flags(
+            "none",
+            &binary,
+            libc::MS_REMOUNT | libc::MS_BIND | libc::MS_NOEXEC | libc::MS_NOSUID,
+        );
+        let file = format!("{binary}/busybox");
+        let fd = open(&file, libc::O_RDONLY);
+        let _path = open(&file, libc::O_PATH);
+        error(
+            unsafe { libc::access(c(&file).as_ptr(), libc::X_OK) } as _,
+            libc::EACCES,
+        );
+        assert_eq!(
+            std::process::Command::new(&file)
+                .status()
+                .unwrap_err()
+                .raw_os_error(),
+            Some(libc::EACCES)
+        );
+        let exec = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                4096,
+                libc::PROT_READ | libc::PROT_EXEC,
+                libc::MAP_PRIVATE,
+                fd.as_raw_fd(),
+                0,
+            )
+        };
+        assert_eq!(exec, libc::MAP_FAILED);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM)
+        );
+        let map = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                4096,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                fd.as_raw_fd(),
+                0,
+            )
+        };
+        assert_ne!(map, libc::MAP_FAILED);
+        error(
+            unsafe { libc::mprotect(map, 4096, libc::PROT_READ | libc::PROT_EXEC) } as _,
+            libc::EACCES,
+        );
+        mount_flags("none", &binary, libc::MS_REMOUNT | libc::MS_BIND);
+        // VM_MAYEXEC was fixed when this mapping was created.
+        error(
+            unsafe { libc::mprotect(map, 4096, libc::PROT_READ | libc::PROT_EXEC) } as _,
+            libc::EACCES,
+        );
+        ok(unsafe { libc::munmap(map, 4096) });
+        assert!(
+            std::process::Command::new(&file)
+                .arg("true")
+                .status()
+                .unwrap()
+                .success()
+        );
+        mount_flags(
+            "none",
+            &device,
+            libc::MS_REMOUNT | libc::MS_BIND | libc::MS_NODEV,
+        );
+        error(
+            unsafe { libc::open(c(&device).as_ptr(), libc::O_RDONLY) } as _,
+            libc::EACCES,
+        );
+        let _path = open(&device, libc::O_PATH);
+        let _original = open("/dev/null", libc::O_RDONLY);
+    })
+    .join();
+}
+register_test!(test_mountns_remount_noexec_nodev_and_mapping);

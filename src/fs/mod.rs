@@ -170,6 +170,18 @@ impl VFS {
         blkdev: Option<Box<dyn BlockDevice>>,
         creds: Option<&Credentials>,
     ) -> Result<()> {
+        self.mount_flags(ns, target, driver_name, blkdev, creds, 0)
+            .await
+    }
+    pub async fn mount_flags(
+        &self,
+        ns: &Arc<MountNamespace>,
+        target: VfsPath,
+        driver_name: &str,
+        blkdev: Option<Box<dyn BlockDevice>>,
+        creds: Option<&Credentials>,
+        flags: u64,
+    ) -> Result<()> {
         if target.getattr().await?.file_type != FileType::Directory {
             return Err(FsError::NotADirectory.into());
         }
@@ -185,7 +197,7 @@ impl VFS {
         }
         let _guard = self.path_ops.lock().await;
         let target = MountNamespace::follow(target);
-        ns.attach(&target, fs, root, driver_name)
+        ns.attach_flags(&target, fs, root, driver_name, flags)
     }
 
     pub async fn bind(
@@ -193,8 +205,8 @@ impl VFS {
         ns: &Arc<MountNamespace>,
         source: VfsPath,
         target: VfsPath,
+        recursive: bool,
     ) -> Result<()> {
-        let m = source.mount.as_ref().ok_or(KernelError::InvalidValue)?;
         if !ns.contains(&source) || !ns.contains(&target) {
             return Err(KernelError::InvalidValue);
         }
@@ -204,11 +216,8 @@ impl VFS {
             return Err(FsError::NotADirectory.into());
         }
         let _guard = self.path_ops.lock().await;
-        if ns.has_locked_children(&source) {
-            return Err(KernelError::InvalidValue);
-        }
         let target = MountNamespace::follow(target);
-        ns.attach(&target, m.fs.clone(), source.dentry.clone(), &m.fs_name)
+        ns.bind(&source, &target, recursive)
     }
 
     pub async fn get_fs(&self, inode: Arc<dyn Inode>) -> Result<Arc<dyn Filesystem>> {
@@ -423,6 +432,7 @@ impl VFS {
                         mode.bits() & !(*task.fs().umask.lock_save_irq() as u16),
                     );
 
+                    let _create_lease = parent_inode.begin_write()?;
                     let target_inode = parent_inode
                         .create(file_name, FileType::File, mode, Some(date()))
                         .await?;
@@ -463,6 +473,18 @@ impl VFS {
         if attr.file_type == FileType::Symlink {
             return Err(FsError::Loop.into());
         }
+        if matches!(attr.file_type, FileType::CharDevice(_))
+            && target_inode.mount_flags() & mount::attributes::NODEV != 0
+        {
+            return Err(FsError::PermissionDenied.into());
+        }
+        let write_lease = if attr.file_type == FileType::File
+            && flags.intersects(OpenFlags::O_WRONLY | OpenFlags::O_RDWR)
+        {
+            target_inode.begin_write()?
+        } else {
+            None
+        };
         if !created {
             let mut access = match flags & OpenFlags::O_ACCMODE {
                 OpenFlags::O_RDONLY => AccessMode::R_OK,
@@ -499,6 +521,7 @@ impl VFS {
                     .or_else(|| crate::drivers::fs::nsfs::open(target_inode.as_ref()))
                     .unwrap_or_else(|| Box::new(RegFile::new(target_inode.inode())));
                 let mut open_file = OpenFile::new(ops, flags);
+                open_file.retain_write(write_lease);
                 open_file.update(target_inode, path.to_owned());
 
                 Ok(Arc::new(open_file))
@@ -575,6 +598,7 @@ impl VFS {
                 } else {
                     creds.fsgid()
                 };
+                let _create_lease = parent_inode.begin_write()?;
                 let inode = parent_inode
                     .create(dir_name, FileType::Directory, mode, Some(date()))
                     .await?;
@@ -687,6 +711,7 @@ impl VFS {
                 }
                 let creds = task.creds.lock_save_irq().clone();
                 creds.check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
+                let _create_lease = parent_inode.begin_write()?;
                 parent_inode.symlink(name, target).await?;
                 let inode = parent_inode.lookup(name).await?;
                 let mut attr = inode.getattr().await?;

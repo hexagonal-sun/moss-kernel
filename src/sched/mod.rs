@@ -286,6 +286,11 @@ pub fn sched_init() {
         );
     }
 
+    init_work
+        .process
+        .tasks
+        .lock_save_irq()
+        .insert(init_work.tid, Arc::downgrade(&init_work));
     insert_work(init_work);
 
     schedule();

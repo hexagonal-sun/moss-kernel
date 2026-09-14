@@ -53,24 +53,28 @@ impl Filesystem for NsFs {
 pub enum Namespace {
     User(Arc<UserNamespace>),
     Mount(Arc<crate::fs::mount::MountNamespace>),
+    Pid(Arc<crate::process::pid_namespace::PidNamespace>),
 }
 impl Namespace {
     pub fn id(&self) -> u64 {
         match self {
             Self::User(n) => n.id,
             Self::Mount(n) => n.id,
+            Self::Pid(n) => n.id,
         }
     }
     pub fn kind(&self) -> u32 {
         match self {
             Self::User(_) => CloneFlags::CLONE_NEWUSER.bits(),
             Self::Mount(_) => CloneFlags::CLONE_NEWNS.bits(),
+            Self::Pid(_) => CloneFlags::CLONE_NEWPID.bits(),
         }
     }
     pub fn name(&self) -> &'static str {
         match self {
             Self::User(_) => "user",
             Self::Mount(_) => "mnt",
+            Self::Pid(_) => "pid",
         }
     }
 }
@@ -140,11 +144,22 @@ impl FileOps for NsFile {
             .lock_save_irq()
             .clone();
         match request {
+            0xb702 if matches!(self.ns, Namespace::Pid(_)) => {
+                let Namespace::Pid(ns) = &self.ns else {
+                    unreachable!()
+                };
+                let parent = ns.parent.clone().ok_or(KernelError::NotPermitted)?;
+                if !parent.within(&crate::sched::current_work().pid_ns()) {
+                    return Err(KernelError::NotPermitted);
+                }
+                install_fd(Namespace::Pid(parent))
+            }
             0xb701 | 0xb702 => {
                 let parent = match &self.ns {
                     Namespace::User(ns) => ns.parent.clone().ok_or(KernelError::NotPermitted)?,
                     Namespace::Mount(ns) if request == 0xb701 => ns.owner.clone(),
                     Namespace::Mount(_) => return Err(KernelError::InvalidValue),
+                    Namespace::Pid(ns) => ns.owner.clone(),
                 };
                 let mut ns = parent.as_ref();
                 while ns != creds.user_ns().as_ref() {

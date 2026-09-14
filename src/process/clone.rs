@@ -67,7 +67,6 @@ pub async fn sys_clone(
     let unsupported_namespaces = CloneFlags::CLONE_NEWCGROUP
         | CloneFlags::CLONE_NEWUTS
         | CloneFlags::CLONE_NEWIPC
-        | CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWNET;
     // Unsupported namespace kinds must not silently share the global domain.
     if flags.intersects(unsupported_namespaces)
@@ -81,6 +80,15 @@ pub async fn sys_clone(
         return Err(KernelError::InvalidValue);
     }
 
+    let mut pid_ns = ctx.shared().child_pid_ns();
+    if (flags.contains(CloneFlags::CLONE_NEWPID)
+        && (flags.intersects(CloneFlags::CLONE_THREAD | CloneFlags::CLONE_PARENT)
+            || pid_ns.id != ctx.shared().pid_ns().id))
+        || (flags.contains(CloneFlags::CLONE_THREAD) && pid_ns.id != ctx.shared().pid_ns().id)
+        || (flags.contains(CloneFlags::CLONE_PARENT) && ctx.shared().process.pid.local() == 1)
+    {
+        return Err(KernelError::InvalidValue);
+    }
     let mut creds = ctx.shared().creds.lock_save_irq().clone();
     if flags.contains(CloneFlags::CLONE_NEWUSER) {
         super::namespace::check_userns_create(ctx.shared())?;
@@ -91,6 +99,13 @@ pub async fn sys_clone(
         creds
             .caps()
             .check_capable(libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN)?;
+    }
+
+    if flags.contains(CloneFlags::CLONE_NEWPID) {
+        creds
+            .caps()
+            .check_capable(libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN)?;
+        pid_ns = super::pid_namespace::PidNamespace::create(pid_ns, creds.user_ns())?;
     }
 
     let trace_point = if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -105,6 +120,7 @@ pub async fn sys_clone(
 
     let mut new_task = {
         let tid = Tid::next_tid();
+        let pid = super::pid_namespace::PidIdentity::allocate(tid, pid_ns.clone())?;
 
         let current_task = ctx.task();
 
@@ -146,12 +162,20 @@ pub async fn sys_clone(
                 current_task.process.clone()
             };
 
-            let child = tgid_parent.new_child(flags.contains(CloneFlags::CLONE_SIGHAND), tid);
+            let child =
+                tgid_parent.new_child(flags.contains(CloneFlags::CLONE_SIGHAND), tid, pid.clone());
             // CLONE_PARENT changes the parent relationship, not which program
             // or session is inherited from the cloning task.
             *child.executable.lock_save_irq() =
                 current_task.process.executable.lock_save_irq().clone();
-            *child.sid.lock_save_irq() = *current_task.process.sid.lock_save_irq();
+            if pid.local() != 1 {
+                *child.sid.lock_save_irq() = *current_task.process.sid.lock_save_irq();
+                *child.pgid.lock_save_irq() = *current_task.process.pgid.lock_save_irq();
+                *child.sid_ref.lock_save_irq() =
+                    current_task.process.sid_ref.lock_save_irq().clone();
+                *child.pgid_ref.lock_save_irq() =
+                    current_task.process.pgid_ref.lock_save_irq().clone();
+            }
             child
         };
 
@@ -214,6 +238,8 @@ pub async fn sys_clone(
             },
             t_shared: Arc::new(Task {
                 tid,
+                pid,
+                pid_for_children: SpinLock::new(pid_ns.clone()),
                 comm: Arc::new(SpinLock::new(*current_task.comm.lock_save_irq())),
                 process: tg,
                 vm,
@@ -237,7 +263,7 @@ pub async fn sys_clone(
     // Linux writes the child TID in the child's address space, on its first
     // return to userspace. Doing this in the parent corrupts its COW copy.
     if flags.contains(CloneFlags::CLONE_CHILD_SETTID) {
-        let tid = new_task.tid.value();
+        let tid = new_task.pid.local();
         new_task.ctx.put_kernel_work(Box::pin(async move {
             let _ = copy_to_user(child_tidptr, tid).await;
         }));
@@ -247,6 +273,7 @@ pub async fn sys_clone(
         new_task.process.start_vfork();
     }
 
+    let parent_visible_tid = new_task.pid.in_ns(&ctx.shared().pid_ns());
     let desc = new_task.descriptor();
     let work = Work::new(Box::new(new_task));
     let vfork_process = flags
@@ -256,19 +283,46 @@ pub async fn sys_clone(
     // Publish the parent's TID store before the child can run and clear it.
     // Like Linux put_user here, a bad TID pointer does not cancel the clone.
     if flags.contains(CloneFlags::CLONE_PARENT_SETTID) {
-        let _ = copy_to_user(parent_tidptr, desc.tid.value()).await;
+        let _ = copy_to_user(parent_tidptr, parent_visible_tid).await;
     }
 
-    TASK_LIST
-        .lock_save_irq()
-        .insert(desc.tid(), Arc::downgrade(&work));
+    {
+        let _pid_op = super::pid_namespace::PID_OPS.lock_save_irq();
+        if !pid_ns.live() {
+            return Err(KernelError::NoMemory);
+        }
+        if *ctx.shared().process.state.lock_save_irq() != super::thread_group::ProcessState::Running
+        {
+            return Err(KernelError::NoProcess);
+        }
+        if !flags.contains(CloneFlags::CLONE_THREAD) {
+            let parent = work
+                .process
+                .parent
+                .lock_save_irq()
+                .as_ref()
+                .and_then(|p| p.upgrade())
+                .ok_or(KernelError::NoProcess)?;
+            if *parent.state.lock_save_irq() != super::thread_group::ProcessState::Running {
+                return Err(KernelError::NoProcess);
+            }
+            parent
+                .children
+                .lock_save_irq()
+                .insert(work.process.tgid, work.process.clone());
+            pid_ns.publish(&work.process);
+        }
+        TASK_LIST
+            .lock_save_irq()
+            .insert(desc.tid(), Arc::downgrade(&work));
 
-    work.process
-        .tasks
-        .lock_save_irq()
-        .insert(desc.tid, Arc::downgrade(&work));
+        work.process
+            .tasks
+            .lock_save_irq()
+            .insert(desc.tid, Arc::downgrade(&work));
 
-    sched::insert_work_cross_cpu(work);
+        sched::insert_work_cross_cpu(work);
+    }
 
     NUM_FORKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
@@ -276,5 +330,5 @@ pub async fn sys_clone(
         vfork_process.wait_for_vfork_release().await;
     }
 
-    Ok(desc.tid.value() as _)
+    Ok(parent_visible_tid as _)
 }

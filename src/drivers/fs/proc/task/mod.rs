@@ -16,8 +16,8 @@ pub(crate) fn follow_path(
     task_file::follow_path(inode)
 }
 
+use crate::drivers::fs::proc::get_inode_id;
 use crate::drivers::fs::proc::task::task_file::{ProcTaskFileInode, TaskFileType};
-use crate::drivers::fs::proc::{get_inode_id, procfs};
 use crate::process::Tid;
 use alloc::boxed::Box;
 use alloc::string::ToString;
@@ -27,19 +27,23 @@ use async_trait::async_trait;
 use core::any::Any;
 use libkernel::error::FsError;
 use libkernel::fs::attr::{FileAttr, FilePermissions};
-use libkernel::fs::{
-    DirStream, Dirent, FileType, Filesystem, Inode, InodeId, PROCFS_ID, SimpleDirStream,
-};
+use libkernel::fs::{DirStream, Dirent, FileType, Inode, InodeId, SimpleDirStream};
 
 pub struct ProcTaskInode {
     id: InodeId,
     attr: FileAttr,
     tid: Tid,
     is_task_dir: bool,
+    ns: Arc<crate::process::pid_namespace::PidNamespace>,
 }
 
 impl ProcTaskInode {
-    pub fn new(tid: Tid, is_task_dir: bool, inode_id: InodeId) -> Self {
+    pub fn new(
+        tid: Tid,
+        is_task_dir: bool,
+        ns: Arc<crate::process::pid_namespace::PidNamespace>,
+        inode_id: InodeId,
+    ) -> Self {
         Self {
             id: inode_id,
             attr: FileAttr {
@@ -49,6 +53,7 @@ impl ProcTaskInode {
             },
             tid,
             is_task_dir,
+            ns,
         }
     }
 }
@@ -60,9 +65,8 @@ impl Inode for ProcTaskInode {
     }
 
     async fn lookup(&self, name: &str) -> libkernel::error::Result<Arc<dyn Inode>> {
-        let fs = procfs();
         let inode_id = InodeId::from_fsid_and_inodeid(
-            fs.id(),
+            self.id.fs_id(),
             get_inode_id(&[&self.tid.value().to_string(), name]),
         );
         if let Some(control) = id_map::Control::from_name(name) {
@@ -90,13 +94,18 @@ impl Inode for ProcTaskInode {
         } else if name == "fd" {
             return Ok(Arc::new(fd::ProcFdInode::new(self.tid, false, inode_id)));
         } else if name == "task" && !self.is_task_dir {
-            return Ok(Arc::new(task::ProcTaskDirInode::new(self.tid, inode_id)));
+            return Ok(Arc::new(task::ProcTaskDirInode::new(
+                self.tid,
+                self.ns.clone(),
+                inode_id,
+            )));
         }
         if let Ok(file_type) = TaskFileType::try_from(name) {
             Ok(Arc::new(ProcTaskFileInode::new(
                 self.tid,
                 file_type,
-                self.is_task_dir,
+                !self.is_task_dir,
+                self.ns.clone(),
                 inode_id,
             )))
         } else {
@@ -113,68 +122,80 @@ impl Inode for ProcTaskInode {
         let initial_str = self.tid.value().to_string();
         entries.push(Dirent::new(
             "status".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "status"])),
+            InodeId::from_fsid_and_inodeid(
+                self.id.fs_id(),
+                get_inode_id(&[&initial_str, "status"]),
+            ),
             FileType::File,
             1,
         ));
         entries.push(Dirent::new(
             "comm".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "comm"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "comm"])),
             FileType::File,
             2,
         ));
         entries.push(Dirent::new(
             "state".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "state"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "state"])),
             FileType::File,
             3,
         ));
         entries.push(Dirent::new(
             "cwd".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "cwd"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "cwd"])),
             FileType::Symlink,
             4,
         ));
         entries.push(Dirent::new(
             "stat".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "stat"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "stat"])),
             FileType::File,
             5,
         ));
         entries.push(Dirent::new(
             "fd".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "fd"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "fd"])),
             FileType::Directory,
             6,
         ));
         entries.push(Dirent::new(
             "fdinfo".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "fdinfo"])),
+            InodeId::from_fsid_and_inodeid(
+                self.id.fs_id(),
+                get_inode_id(&[&initial_str, "fdinfo"]),
+            ),
             FileType::Directory,
             7,
         ));
         entries.push(Dirent::new(
             "maps".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "maps"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "maps"])),
             FileType::File,
             8,
         ));
         entries.push(Dirent::new(
             "exe".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "exe"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "exe"])),
             FileType::File,
             9,
         ));
         entries.push(Dirent::new(
             "cgroup".to_string(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "cgroup"])),
+            InodeId::from_fsid_and_inodeid(
+                self.id.fs_id(),
+                get_inode_id(&[&initial_str, "cgroup"]),
+            ),
             FileType::File,
             10,
         ));
         if !self.is_task_dir {
             entries.push(Dirent::new(
                 "task".to_string(),
-                InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "task"])),
+                InodeId::from_fsid_and_inodeid(
+                    self.id.fs_id(),
+                    get_inode_id(&[&initial_str, "task"]),
+                ),
                 FileType::Directory,
                 11,
             ));
@@ -182,14 +203,17 @@ impl Inode for ProcTaskInode {
 
         entries.push(Dirent::new(
             "ns".into(),
-            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "ns"])),
+            InodeId::from_fsid_and_inodeid(self.id.fs_id(), get_inode_id(&[&initial_str, "ns"])),
             FileType::Directory,
             entries.len() as u64 + 1,
         ));
         for name in ["uid_map", "gid_map", "setgroups", "mounts", "mountinfo"] {
             entries.push(Dirent::new(
                 name.into(),
-                InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, name])),
+                InodeId::from_fsid_and_inodeid(
+                    self.id.fs_id(),
+                    get_inode_id(&[&initial_str, name]),
+                ),
                 FileType::File,
                 entries.len() as u64 + 1,
             ));

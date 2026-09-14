@@ -79,6 +79,22 @@ pub enum WakerAction {
 /// ```
 pub struct TaskStateMachine(AtomicTaskState);
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use moss_macros::ktest;
+    #[ktest]
+    fn finished_tasks_cannot_be_reactivated_or_enqueued() {
+        let state = TaskStateMachine::new();
+        state.finish();
+        assert!(!state.activate());
+        state.mark_runnable();
+        assert_eq!(state.load(Ordering::Acquire), TaskState::Finished);
+        assert!(matches!(state.wake(), WakerAction::None));
+        assert!(state.try_pending_sleep());
+    }
+}
+
 impl TaskStateMachine {
     /// New tasks starts as Runnable.
     pub fn new() -> Self {
@@ -91,13 +107,29 @@ impl TaskStateMachine {
     }
 
     /// Scheduler is about to execute this task (-> Running).
-    pub fn activate(&self) {
-        self.0.store(TaskState::Running, Ordering::Relaxed);
+    pub fn activate(&self) -> bool {
+        self.transition_unless_finished(TaskState::Running)
+    }
+
+    fn transition_unless_finished(&self, next: TaskState) -> bool {
+        loop {
+            let state = self.load(Ordering::Acquire);
+            if state == TaskState::Finished {
+                return false;
+            }
+            if self
+                .0
+                .compare_exchange(state, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return true;
+            }
+        }
     }
 
     /// Task placed on a run queue (-> Runnable).
     pub fn mark_runnable(&self) {
-        self.0.store(TaskState::Runnable, Ordering::Relaxed);
+        self.transition_unless_finished(TaskState::Runnable);
     }
 
     /// Scheduler finalizes deactivation after dropping RunnableTask.
@@ -136,8 +168,14 @@ impl TaskStateMachine {
                     Ok(_) => true,
                     Err(TaskState::Woken) => {
                         // Woken between load and CAS — clear woken, don't sleep.
-                        self.0.store(TaskState::Running, Ordering::Release);
-                        false
+                        self.0
+                            .compare_exchange(
+                                TaskState::Woken,
+                                TaskState::Running,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_err_and(|s| s == TaskState::Finished)
                     }
                     Err(TaskState::Finished) => true,
                     Err(s) => {
@@ -145,10 +183,15 @@ impl TaskStateMachine {
                     }
                 }
             }
-            TaskState::Woken => {
-                self.0.store(TaskState::Running, Ordering::Release);
-                false
-            }
+            TaskState::Woken => self
+                .0
+                .compare_exchange(
+                    TaskState::Woken,
+                    TaskState::Running,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_err_and(|s| s == TaskState::Finished),
             TaskState::Finished => true,
             s => unreachable!("Unexpected task state {s:?} during pending_sleep transition"),
         }

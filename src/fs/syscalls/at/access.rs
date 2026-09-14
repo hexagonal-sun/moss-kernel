@@ -60,6 +60,16 @@ pub async fn sys_faccessat2(
     if mode == 0 {
         return Ok(0);
     }
+    let kind = node.getattr().await?.file_type;
+    if access_mode.contains(AccessMode::X_OK) && kind == libkernel::fs::FileType::File {
+        node.check_exec_mount()?;
+    }
+    if access_mode.contains(AccessMode::W_OK)
+        && !matches!(kind, libkernel::fs::FileType::CharDevice(_))
+        && node.mount_flags() & crate::fs::mount::attributes::RDONLY != 0
+    {
+        return Err(KernelError::ReadOnly);
+    }
 
     creds
         .check_inode_access(node.as_ref(), access_mode)

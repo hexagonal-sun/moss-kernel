@@ -13,7 +13,7 @@ pub async fn sys_fchmod(ctx: &ProcessCtx, fd: Fd, mode: u16) -> Result<usize> {
         .get(fd)
         .ok_or(KernelError::BadFd)?;
 
-    let inode = file.inode().ok_or(KernelError::BadFd)?;
+    let inode = file.vfs_path().ok_or(KernelError::BadFd)?;
     let mut attr = inode.getattr().await?;
 
     task.creds.lock_save_irq().chmod(&mut attr, mode)?;

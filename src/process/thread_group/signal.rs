@@ -297,6 +297,10 @@ impl SignalActionState {
         }
     }
 
+    pub fn has_handler(&self, id: SigId) -> bool {
+        matches!(self.action[id], SigActionState::Action(_))
+    }
+
     pub fn action_signal(&self, id: SigId) -> Option<KSignalAction> {
         match self.action[id] {
             SigActionState::Ignore => None, // look for another signal,

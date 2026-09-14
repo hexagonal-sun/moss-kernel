@@ -52,6 +52,7 @@ pub const ETIMEDOUT: isize = -110;
 
 pub fn kern_err_to_syscall(err: KernelError) -> isize {
     match err {
+        KernelError::ReadOnly => EROFS,
         KernelError::BadFd => EBADF,
         KernelError::InvalidValue => EINVAL,
         KernelError::Fault => EFAULT,

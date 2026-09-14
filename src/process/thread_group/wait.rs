@@ -1,20 +1,21 @@
 use super::{
-    Pgid, Tgid, ThreadGroup,
+    Tgid,
     pid::PidT,
     signal::{InterruptResult, Interruptable, SigId},
 };
-use crate::memory::uaccess::{UserCopyable, copy_to_user};
-use crate::sched::syscall_ctx::ProcessCtx;
-use crate::sync::CondVar;
-use crate::{clock::timespec::TimeSpec, process::Tid};
-use alloc::collections::btree_map::BTreeMap;
-use bitflags::Flags;
-use libkernel::sync::condvar::WakeupType;
+use crate::{
+    clock::timespec::TimeSpec,
+    memory::uaccess::{UserCopyable, copy_to_user},
+    process::{Task, Tid, pid_namespace::PidIdentity},
+    sched::syscall_ctx::ProcessCtx,
+    sync::CondVar,
+};
+use alloc::{collections::BTreeMap, sync::Arc};
 use libkernel::{
     error::{KernelError, Result},
     memory::address::TUA,
+    sync::condvar::WakeupType,
 };
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct RUsage {
@@ -43,31 +44,31 @@ bitflags::bitflags! {
        const WSTOPPED   = 0x00000002;
        const WEXITED    = 0x00000004;
        const WCONTINUED = 0x00000008;
-       const WNOWAIT    = 0x10000000;
+       const WNOWAIT    = 0x01000000;
        const WNOTHREAD  = 0x20000000;
        const WALL       = 0x40000000;
        const WCLONE     = 0x80000000;
     }
 }
 
-// TODO: more fields needed for full compatibility
+// AArch64 siginfo_t: the union starts at offset 16 and occupies 112 bytes.
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct SigInfo {
-    pub signo: i32,
-    pub code: i32,
-    pub errno: i32,
+    signo: i32,
+    errno: i32,
+    code: i32,
+    pad: i32,
+    pid: i32,
+    uid: u32,
+    status: i32,
+    pad2: i32,
+    utime: u64,
+    stime: u64,
+    padding: [u8; 80],
 }
-
 unsafe impl UserCopyable for SigInfo {}
-
-// si_code values for SIGCHLD
-const CLD_EXITED: i32 = 1;
-const CLD_KILLED: i32 = 2;
-const CLD_DUMPED: i32 = 3;
-const CLD_STOPPED: i32 = 4;
-const CLD_TRAPPED: i32 = 5;
-const CLD_CONTINUED: i32 = 6;
+const _: () = assert!(core::mem::size_of::<SigInfo>() == 128);
 
 #[derive(Clone, Copy, Debug)]
 pub enum ChildState {
@@ -76,291 +77,263 @@ pub enum ChildState {
     Stop { signal: SigId },
     Continue,
 }
-
 #[derive(Clone, Copy, Debug)]
 pub struct TraceTrap {
     signal: SigId,
     mask: i32,
 }
-
 impl TraceTrap {
     pub fn new(signal: SigId, mask: i32) -> Self {
         Self { signal, mask }
     }
 }
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 enum WaitEvent {
     Child(ChildState),
     Ptrace(TraceTrap),
 }
-
-impl ChildState {
-    fn matches_wait_flags(&self, flags: WaitFlags) -> bool {
-        match self {
-            ChildState::NormalExit { .. } | ChildState::SignalExit { .. } => {
+#[derive(Clone)]
+struct Event {
+    pid: Arc<PidIdentity>,
+    pgid: Arc<PidIdentity>,
+    uid: libkernel::proc::ids::Uid,
+    event: WaitEvent,
+}
+#[derive(Clone, Copy)]
+enum Selection {
+    Any,
+    Process(u32),
+    Group(Tid),
+}
+impl Selection {
+    fn group(task: &Task, number: u32) -> Result<Self> {
+        Ok(Self::Group(if number == 0 {
+            Tid(task.process.pgid.lock_save_irq().0)
+        } else {
+            task.pid_ns()
+                .resolve(number)
+                .ok_or(KernelError::NoChildProcess)?
+        }))
+    }
+    fn matches(self, task: &Task, pid: &PidIdentity, pgid: &PidIdentity) -> bool {
+        let visible = pid.in_ns(&task.pid_ns());
+        visible != 0
+            && match self {
+                Self::Any => true,
+                Self::Process(p) => visible == p,
+                Self::Group(p) => pgid.global == p,
+            }
+    }
+}
+impl Event {
+    fn selected(&self, task: &Task, selection: Selection) -> bool {
+        selection.matches(task, &self.pid, &self.pgid)
+    }
+    fn eligible(&self, flags: WaitFlags) -> bool {
+        match self.event {
+            WaitEvent::Ptrace(_) => true,
+            WaitEvent::Child(ChildState::NormalExit { .. } | ChildState::SignalExit { .. }) => {
                 flags.contains(WaitFlags::WEXITED)
             }
-            ChildState::Stop { .. } => flags.contains(WaitFlags::WSTOPPED),
-            ChildState::Continue => flags.contains(WaitFlags::WCONTINUED),
+            WaitEvent::Child(ChildState::Stop { .. }) => flags.contains(WaitFlags::WSTOPPED),
+            WaitEvent::Child(ChildState::Continue) => flags.contains(WaitFlags::WCONTINUED),
+        }
+    }
+    fn status(&self) -> i32 {
+        match self.event {
+            WaitEvent::Child(ChildState::NormalExit { code }) => (code as i32 & 255) << 8,
+            WaitEvent::Child(ChildState::SignalExit { signal, core }) => {
+                signal.user_id() as i32 | if core { 128 } else { 0 }
+            }
+            WaitEvent::Child(ChildState::Stop { signal }) => {
+                ((signal.user_id() as i32) << 8) | 0x7f
+            }
+            WaitEvent::Ptrace(TraceTrap { signal, mask }) => {
+                ((signal.user_id() as i32) << 8) | 0x7f | mask << 8
+            }
+            WaitEvent::Child(ChildState::Continue) => 0xffff,
+        }
+    }
+    fn info(&self, task: &Task) -> SigInfo {
+        let (code, status) = match self.event {
+            WaitEvent::Child(ChildState::NormalExit { code }) => (1, code as i32 & 255),
+            WaitEvent::Child(ChildState::SignalExit { signal, core }) => {
+                (if core { 3 } else { 2 }, signal.user_id() as i32)
+            }
+            WaitEvent::Child(ChildState::Stop { signal }) => (5, signal.user_id() as i32),
+            WaitEvent::Ptrace(TraceTrap { signal, .. }) => (4, signal.user_id() as i32),
+            WaitEvent::Child(ChildState::Continue) => (6, SigId::SIGCONT.user_id() as i32),
+        };
+        SigInfo {
+            signo: SigId::SIGCHLD.user_id() as i32,
+            errno: 0,
+            code,
+            pad: 0,
+            pid: self.pid.in_ns(&task.pid_ns()) as i32,
+            uid: task.creds.lock_save_irq().user_ns().show_uid(self.uid),
+            status,
+            pad2: 0,
+            utime: 0,
+            stime: 0,
+            padding: [0; 80],
         }
     }
 }
-
 struct NotifierState {
-    children: BTreeMap<Tgid, ChildState>,
-    ptrace: BTreeMap<Tid, TraceTrap>,
+    children: BTreeMap<Tgid, Event>,
+    ptrace: BTreeMap<Tid, Event>,
 }
-
-impl NotifierState {
-    fn new() -> Self {
-        Self {
-            children: BTreeMap::new(),
-            ptrace: BTreeMap::new(),
-        }
-    }
-}
-
 pub struct Notifiers {
     inner: CondVar<NotifierState>,
 }
-
 impl Default for Notifiers {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl Notifiers {
     pub fn new() -> Self {
         Self {
-            inner: CondVar::new(NotifierState::new()),
+            inner: CondVar::new(NotifierState {
+                children: BTreeMap::new(),
+                ptrace: BTreeMap::new(),
+            }),
         }
     }
-
-    pub fn child_update(&self, tgid: Tgid, new_state: ChildState) {
-        self.inner.update(|state| {
-            state.children.insert(tgid, new_state);
-
-            // Since some wakers may be conditional upon state update changes,
-            // notify everyone whenever a child updates it's state.
+    pub fn child_update(&self, task: &Task, state: ChildState) {
+        let event = Event {
+            pid: task.process.pid.clone(),
+            pgid: task.process.pgid_ref.lock_save_irq().clone(),
+            uid: task.creds.lock_save_irq().uid(),
+            event: WaitEvent::Child(state),
+        };
+        self.inner.update(|s| {
+            s.children.insert(task.process.tgid, event);
             WakeupType::All
         });
     }
-
-    pub fn ptrace_notify(&self, tid: Tid, ptrace_trap: TraceTrap) {
-        self.inner.update(|state| {
-            state.ptrace.insert(tid, ptrace_trap);
-
-            // Since some wakers may be conditional upon state update changes,
-            // notify everyone whenever a child updates it's state.
+    pub fn ptrace_notify(&self, tid: Tid, trap: TraceTrap) {
+        let Some(task) = crate::process::find_task_by_tid(tid) else {
+            return;
+        };
+        let event = Event {
+            pid: task.pid.clone(),
+            pgid: task.process.pgid_ref.lock_save_irq().clone(),
+            uid: task.creds.lock_save_irq().uid(),
+            event: WaitEvent::Ptrace(trap),
+        };
+        self.inner.update(|s| {
+            s.ptrace.insert(tid, event);
+            WakeupType::All
+        });
+    }
+    pub fn clear(&self) {
+        self.inner.update(|s| {
+            s.children.clear();
+            s.ptrace.clear();
+            WakeupType::All
+        });
+    }
+    pub fn transfer(&self, target: &Self) {
+        let mut events = None;
+        self.inner.update(|s| {
+            events = Some(core::mem::take(&mut s.children));
+            WakeupType::All
+        });
+        target.inner.update(|s| {
+            s.children.extend(events.unwrap());
             WakeupType::All
         });
     }
 }
-
-fn find_child_event(
-    children: &mut BTreeMap<Tgid, ChildState>,
-    pid: PidT,
+fn select_map<K: Ord + Copy>(
+    map: &mut BTreeMap<K, Event>,
+    task: &Task,
+    pid: Selection,
     flags: WaitFlags,
-    remove_entry: bool,
-) -> Option<(PidT, WaitEvent)> {
-    let key = if pid == -1 {
-        children.iter().find_map(|(k, v)| {
-            if v.matches_wait_flags(flags) {
-                Some(*k)
+) -> Option<Event> {
+    let key = map
+        .iter()
+        .find(|(_, e)| e.selected(task, pid) && e.eligible(flags))
+        .map(|(k, _)| *k)?;
+    if flags.contains(WaitFlags::WNOWAIT) {
+        map.get(&key).cloned()
+    } else {
+        map.remove(&key)
+    }
+}
+fn matching_children(task: &Task, pid: Selection) -> bool {
+    task.process
+        .children
+        .lock_save_irq()
+        .values()
+        .any(|p| pid.matches(task, &p.pid, &p.pgid_ref.lock_save_irq()))
+}
+async fn wait(ctx: &ProcessCtx, pid: Selection, flags: WaitFlags) -> Result<Option<Event>> {
+    let task = ctx.shared();
+    let result = task
+        .process
+        .child_notifiers
+        .inner
+        .wait_until(|state| {
+            if let Some(event) = select_map(&mut state.ptrace, task, pid, flags)
+                .or_else(|| select_map(&mut state.children, task, pid, flags))
+            {
+                return Some(Ok(Some(event)));
+            }
+            if !matching_children(task, pid) {
+                return Some(Err(KernelError::NoChildProcess));
+            }
+            if flags.contains(WaitFlags::WNOHANG) {
+                Some(Ok(None))
             } else {
                 None
             }
         })
-    } else if pid < -1 {
-        // Wait for any child whose process group ID matches abs(pid)
-        let target_pgid = Pgid((-pid) as u32);
-        children.iter().find_map(|(k, v)| {
-            if !v.matches_wait_flags(flags) {
-                return None;
-            }
-            if let Some(tg) = ThreadGroup::get(*k) {
-                if *tg.pgid.lock_save_irq() == target_pgid {
-                    Some(*k)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-    } else {
-        children
-            .get_key_value(&Tgid::from_pid_t(pid))
-            .and_then(|(k, v)| {
-                if v.matches_wait_flags(flags) {
-                    Some(*k)
-                } else {
-                    None
-                }
-            })
-    }?;
-
-    if remove_entry {
-        children
-            .remove_entry(&key)
-            .map(|(k, v)| (k.value() as PidT, WaitEvent::Child(v)))
-    } else {
-        children
-            .get(&key)
-            .map(|v| (key.value() as PidT, WaitEvent::Child(*v)))
+        .interruptable()
+        .await;
+    match result {
+        InterruptResult::Interrupted => Err(KernelError::Interrupted),
+        InterruptResult::Uninterrupted(r) => r,
     }
 }
-
-fn find_ptrace_event(
-    ptrace: &mut BTreeMap<Tid, TraceTrap>,
-    pid: PidT,
-    remove_entry: bool,
-) -> Option<(PidT, WaitEvent)> {
-    // Ptrace events are always eligible for collection regardless of wait
-    // flags. The WSTOPPED/WUNTRACED filtering only governs non-traced
-    // group-stop events in the children map.
-    let key = if pid == -1 {
-        ptrace.keys().next().copied()
-    } else if pid < -1 {
-        // TODO: pgid matching for ptrace events
-        None
-    } else {
-        let tid = Tid::from_pid_t(pid);
-        ptrace.contains_key(&tid).then_some(tid)
-    }?;
-
-    let event = if remove_entry {
-        ptrace.remove(&key)?
-    } else {
-        *ptrace.get(&key)?
-    };
-
-    Some((key.value() as PidT, WaitEvent::Ptrace(event)))
-}
-
-fn find_event(
-    state: &mut NotifierState,
-    pid: PidT,
-    flags: WaitFlags,
-    remove_entry: bool,
-) -> Option<(PidT, WaitEvent)> {
-    // Ptrace events are always eligible and take priority.
-    find_ptrace_event(&mut state.ptrace, pid, remove_entry)
-        .or_else(|| find_child_event(&mut state.children, pid, flags, remove_entry))
-}
-
 pub async fn sys_wait4(
     ctx: &ProcessCtx,
     pid: PidT,
     stat_addr: TUA<i32>,
-    flags: u32,
+    options: u32,
     rusage: TUA<RUsage>,
 ) -> Result<usize> {
-    let mut flags = WaitFlags::from_bits_retain(flags);
-
-    if flags.contains_unknown_bits() {
+    let allowed = WaitFlags::WNOHANG
+        | WaitFlags::WSTOPPED
+        | WaitFlags::WCONTINUED
+        | WaitFlags::WNOTHREAD
+        | WaitFlags::WCLONE
+        | WaitFlags::WALL;
+    if options & !allowed.bits() != 0 {
         return Err(KernelError::InvalidValue);
     }
-
-    // Check for valid flags.
-    if !flags
-        .difference(
-            WaitFlags::WNOHANG
-                | WaitFlags::WSTOPPED
-                | WaitFlags::WCONTINUED
-                | WaitFlags::WNOTHREAD
-                | WaitFlags::WCLONE
-                | WaitFlags::WALL,
-        )
-        .is_empty()
-    {
-        return Err(KernelError::InvalidValue);
-    }
-
-    // wait4 implies WEXITED.
-    flags.insert(WaitFlags::WEXITED);
-
     if !rusage.is_null() {
-        // TODO: Funky waiting.
         return Err(KernelError::NotSupported);
     }
-
-    let task = ctx.shared();
-
-    let child_proc_count = task.process.children.lock_save_irq().iter().count();
-
-    let (ret_pid, event) = if child_proc_count == 0 || flags.contains(WaitFlags::WNOHANG) {
-        // Special case for no children. See if there are any pending child
-        // notification events without sleeping. If there are no children and no
-        // pending events, return ECHILD.
-        let mut ret = None;
-        task.process.child_notifiers.inner.update(|s| {
-            ret = find_event(s, pid, flags, true);
-            WakeupType::None
-        });
-
-        match ret {
-            Some(ret) => ret,
-            None if child_proc_count == 0 => return Err(KernelError::NoChildProcess),
-            None => return Ok(0),
-        }
-    } else {
-        match task
-            .process
-            .child_notifiers
-            .inner
-            .wait_until(|state| find_event(state, pid, flags, true))
-            .interruptable()
-            .await
-        {
-            InterruptResult::Interrupted => return Err(KernelError::Interrupted),
-            InterruptResult::Uninterrupted(r) => r,
-        }
-    };
-
-    if !stat_addr.is_null() {
-        match event {
-            WaitEvent::Child(ChildState::NormalExit { code }) => {
-                copy_to_user(stat_addr, (code as i32 & 0xff) << 8).await?;
-            }
-            WaitEvent::Child(ChildState::SignalExit { signal, core }) => {
-                copy_to_user(
-                    stat_addr,
-                    (signal.user_id() as i32) | if core { 0x80 } else { 0x0 },
-                )
-                .await?;
-            }
-            WaitEvent::Child(ChildState::Stop { signal }) => {
-                copy_to_user(stat_addr, ((signal.user_id() as i32) << 8) | 0x7f).await?;
-            }
-            WaitEvent::Ptrace(TraceTrap { signal, mask }) => {
-                copy_to_user(
-                    stat_addr,
-                    ((signal.user_id() as i32) << 8) | 0x7f | mask << 8,
-                )
-                .await?;
-            }
-            WaitEvent::Child(ChildState::Continue) => {
-                copy_to_user(stat_addr, 0xffff).await?;
-            }
-        }
+    if pid == i32::MIN {
+        return Err(KernelError::NoProcess);
     }
-
-    Ok(ret_pid as _)
+    let pid = match pid {
+        -1 => Selection::Any,
+        0 => Selection::group(ctx.shared(), 0)?,
+        p if p < -1 => Selection::group(ctx.shared(), p.unsigned_abs())?,
+        p => Selection::Process(p as u32),
+    };
+    let flags = WaitFlags::from_bits_retain(options) | WaitFlags::WEXITED;
+    let Some(event) = wait(ctx, pid, flags).await? else {
+        return Ok(0);
+    };
+    if !stat_addr.is_null() {
+        copy_to_user(stat_addr, event.status()).await?;
+    }
+    Ok(event.pid.in_ns(&ctx.shared().pid_ns()) as usize)
 }
-
-// idtype for waitid
-#[repr(i32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(non_camel_case_types)]
-pub enum IdType {
-    P_ALL = 0,
-    P_PID = 1,
-    P_PGID = 2,
-}
-
 pub async fn sys_waitid(
     ctx: &ProcessCtx,
     idtype: i32,
@@ -369,109 +342,46 @@ pub async fn sys_waitid(
     options: u32,
     rusage: TUA<RUsage>,
 ) -> Result<usize> {
-    let which = match idtype {
-        0 => IdType::P_ALL,
-        1 => IdType::P_PID,
-        2 => IdType::P_PGID,
-        _ => return Err(KernelError::InvalidValue),
-    };
-
+    let allowed = WaitFlags::WNOHANG
+        | WaitFlags::WSTOPPED
+        | WaitFlags::WCONTINUED
+        | WaitFlags::WEXITED
+        | WaitFlags::WNOWAIT;
     let flags = WaitFlags::from_bits_retain(options);
-
-    if flags.contains_unknown_bits() {
-        return Err(KernelError::InvalidValue);
-    }
-
-    // Validate options subset allowed for waitid
-    if !flags
-        .difference(
-            WaitFlags::WNOHANG
-                | WaitFlags::WSTOPPED
-                | WaitFlags::WCONTINUED
-                | WaitFlags::WEXITED
-                | WaitFlags::WNOWAIT,
-        )
-        .is_empty()
+    if options & !allowed.bits() != 0
+        || !flags.intersects(WaitFlags::WSTOPPED | WaitFlags::WCONTINUED | WaitFlags::WEXITED)
     {
         return Err(KernelError::InvalidValue);
     }
-
+    let pid = match idtype {
+        0 => Selection::Any,
+        1 if id > 0 => Selection::Process(id as u32),
+        2 if id >= 0 => Selection::group(ctx.shared(), id as u32)?,
+        _ => return Err(KernelError::InvalidValue),
+    };
     if !rusage.is_null() {
-        todo!();
+        return Err(KernelError::NotSupported);
     }
-
-    // Map which/id to pid selection used by our wait helpers
-    let sel_pid: PidT = match which {
-        IdType::P_ALL => -1,
-        IdType::P_PID => id,
-        IdType::P_PGID => -id.abs(), // negative means select by PGID in helpers
-    };
-
-    let task = ctx.shared();
-
-    let child_proc_count = task.process.children.lock_save_irq().iter().count();
-
-    // Try immediate check if no children or WNOHANG
-    let event = if child_proc_count == 0 || flags.contains(WaitFlags::WNOHANG) {
-        let mut ret: Option<WaitEvent> = None;
-
-        task.process.child_notifiers.inner.update(|s| {
-            // Don't consume on WNOWAIT.
-            ret = find_event(s, sel_pid, flags, !flags.contains(WaitFlags::WNOWAIT))
-                .map(|(_, event)| event);
-            WakeupType::None
-        });
-
-        match ret {
-            Some(ret) => ret,
-            None if child_proc_count == 0 => return Err(KernelError::NoChildProcess),
-            None => return Ok(0),
-        }
-    } else {
-        // Wait until a child matches; first find key, then remove conditionally
-        task.process
-            .child_notifiers
-            .inner
-            .wait_until(|s| {
-                // Don't consume on WNOWAIT.
-                find_event(s, sel_pid, flags, !flags.contains(WaitFlags::WNOWAIT))
-            })
-            .await
-            .1
-    };
-
-    // Populate siginfo
+    let event = wait(ctx, pid, flags).await?;
+    // Linux accepts a null infop. For WNOHANG, zero the entire ABI object.
     if !infop.is_null() {
-        let mut siginfo = SigInfo {
-            signo: SigId::SIGCHLD.user_id() as i32,
-            code: 0,
-            errno: 0,
-        };
-        match event {
-            WaitEvent::Child(ChildState::NormalExit { code }) => {
-                siginfo.code = CLD_EXITED;
-                siginfo.errno = code as i32;
-            }
-            WaitEvent::Child(ChildState::SignalExit { signal, core }) => {
-                siginfo.code = if core { CLD_DUMPED } else { CLD_KILLED };
-                siginfo.errno = signal.user_id() as i32;
-            }
-            WaitEvent::Child(ChildState::Stop { signal }) => {
-                siginfo.code = CLD_STOPPED;
-                siginfo.errno = signal.user_id() as i32;
-            }
-            WaitEvent::Ptrace(TraceTrap { signal, .. }) => {
-                siginfo.code = CLD_TRAPPED;
-                siginfo.errno = signal.user_id() as i32;
-            }
-            WaitEvent::Child(ChildState::Continue) => {
-                siginfo.code = CLD_CONTINUED;
-            }
-        }
-        copy_to_user(infop, siginfo).await?;
+        let info = event
+            .as_ref()
+            .map(|e| e.info(ctx.shared()))
+            .unwrap_or(SigInfo {
+                signo: 0,
+                errno: 0,
+                code: 0,
+                pad: 0,
+                pid: 0,
+                uid: 0,
+                status: 0,
+                pad2: 0,
+                utime: 0,
+                stime: 0,
+                padding: [0; 80],
+            });
+        copy_to_user(infop, info).await?;
     }
-
-    // If WNOWAIT was specified, don't consume the state; our helpers already honored that
-    // Return 0 on success
     Ok(0)
 }

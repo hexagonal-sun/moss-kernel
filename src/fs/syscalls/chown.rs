@@ -13,7 +13,7 @@ pub async fn sys_fchown(ctx: &ProcessCtx, fd: Fd, owner: i32, group: i32) -> Res
         .get(fd)
         .ok_or(KernelError::BadFd)?;
 
-    let inode = file.inode().ok_or(KernelError::BadFd)?;
+    let inode = file.vfs_path().ok_or(KernelError::BadFd)?;
     let mut attr = inode.getattr().await?;
 
     task.creds.lock_save_irq().chown(&mut attr, owner, group)?;

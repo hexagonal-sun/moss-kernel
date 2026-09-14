@@ -205,6 +205,10 @@ async fn exec_elf(
     // We are now committed to the exec.  Inform ptrace.
     ptrace_stop(ctx, TracePoint::Exec).await;
     ctx.shared().creds.lock_save_irq().exec_capabilities();
+    ctx.shared()
+        .process
+        .did_exec
+        .store(true, core::sync::atomic::Ordering::Release);
 
     let user_ctx = ArchImpl::new_user_context(entry_addr, stack_ptr);
     let vm = ProcessVM::from_map(mem_map);
@@ -494,6 +498,7 @@ pub async fn sys_execve(
 }
 
 async fn check_execute(ctx: &ProcessCtx, inode: &crate::fs::VfsPath) -> Result<()> {
+    inode.check_exec_mount()?;
     let attr = inode.getattr().await?;
     if attr.file_type != FileType::File {
         return Err(libkernel::error::FsError::PermissionDenied.into());

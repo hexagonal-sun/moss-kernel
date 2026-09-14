@@ -1,4 +1,4 @@
-use crate::drivers::fs::proc::{get_inode_id, procfs};
+use crate::drivers::fs::proc::get_inode_id;
 use crate::process::fd_table::Fd;
 use crate::process::{Tid, find_task_by_tid};
 use alloc::borrow::ToOwned;
@@ -12,9 +12,7 @@ use libkernel::error::Result;
 use libkernel::error::{FsError, KernelError};
 use libkernel::fs::attr::{FileAttr, FilePermissions};
 use libkernel::fs::pathbuf::PathBuf;
-use libkernel::fs::{
-    DirStream, Dirent, FileType, Filesystem, Inode, InodeId, SimpleDirStream, SimpleFile,
-};
+use libkernel::fs::{DirStream, Dirent, FileType, Inode, InodeId, SimpleDirStream, SimpleFile};
 
 fn check_access(target: &crate::process::Task) -> Result<()> {
     let caller = crate::sched::current_work().task.t_shared.clone();
@@ -110,9 +108,8 @@ impl Inode for ProcFdInode {
         if fd_table.get_raw(Fd(fd)).is_none() {
             return Err(FsError::NotFound.into());
         }
-        let fs = procfs();
         let inode_id = InodeId::from_fsid_and_inodeid(
-            fs.id(),
+            self.id.fs_id(),
             get_inode_id(&[&self.tid.value().to_string(), self.dir_name(), name]),
         );
         Ok(Arc::new(ProcFdFile::new(

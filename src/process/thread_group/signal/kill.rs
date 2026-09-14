@@ -1,8 +1,5 @@
 use crate::{
-    process::{
-        Tid,
-        thread_group::{Pgid, Tgid, ThreadGroup, pid::PidT},
-    },
+    process::thread_group::{Pgid, Tgid, ThreadGroup, pid::PidT},
     sched::syscall_ctx::ProcessCtx,
 };
 
@@ -19,15 +16,32 @@ fn signal_group(ctx: &ProcessCtx, target: &ThreadGroup, signal: Option<SigId>) -
         .ok_or(KernelError::NoProcess)?;
     crate::process::access::signal_may_access(ctx.shared(), &task, signal)?;
     if let Some(signal) = signal {
+        if !init_accepts(ctx, &task, signal) {
+            return Ok(());
+        }
         target.deliver_signal(signal);
     }
     Ok(())
 }
 
+fn init_accepts(ctx: &ProcessCtx, target: &crate::process::Task, signal: SigId) -> bool {
+    target.process.pid.local() != 1
+        || target.process.signals.lock_save_irq().has_handler(signal)
+        || (ctx.shared().pid_ns().level < target.pid_ns().level
+            && matches!(signal, SigId::SIGKILL | SigId::SIGSTOP))
+}
+
 pub fn sys_kill(ctx: &ProcessCtx, pid: PidT, signal: UserSigId) -> Result<usize> {
     let signal = signal.optional()?;
     if pid > 0 {
-        let target = ThreadGroup::get(Tgid(pid as u32)).ok_or(KernelError::NoProcess)?;
+        let target = ThreadGroup::get(Tgid(
+            ctx.shared()
+                .pid_ns()
+                .resolve(pid as u32)
+                .ok_or(KernelError::NoProcess)?
+                .0,
+        ))
+        .ok_or(KernelError::NoProcess)?;
         signal_group(ctx, &target, signal)?;
         return Ok(0);
     }
@@ -41,13 +55,20 @@ pub fn sys_kill(ctx: &ProcessCtx, pid: PidT, signal: UserSigId) -> Result<usize>
     let mut result = Err(KernelError::NoProcess);
     let mut success = false;
     for tg in groups {
+        let visible = tg.pid.in_ns(&ctx.shared().pid_ns());
+        if visible == 0 {
+            continue;
+        }
         let selected = if pid == -1 {
-            tg.tgid.value() > 1 && tg.tgid != ctx.shared().process.tgid
+            visible > 1 && tg.tgid != ctx.shared().process.tgid
         } else {
             let pgid = if pid == 0 {
                 our_pgid
             } else {
-                Pgid(pid.unsigned_abs())
+                let Some(tid) = ctx.shared().pid_ns().resolve(pid.unsigned_abs()) else {
+                    continue;
+                };
+                Pgid(tid.0)
             };
             *tg.pgid.lock_save_irq() == pgid
         };
@@ -67,9 +88,13 @@ pub fn sys_tkill(ctx: &ProcessCtx, tid: PidT, signal: UserSigId) -> Result<usize
         return Err(KernelError::InvalidValue);
     }
     let signal = signal.optional()?;
-    let target = crate::process::find_task_by_tid(Tid(tid as u32)).ok_or(KernelError::NoProcess)?;
+    let target = crate::process::pid_namespace::find_task(ctx.shared(), tid as u32)
+        .ok_or(KernelError::NoProcess)?;
     crate::process::access::signal_may_access(ctx.shared(), &target, signal)?;
     if let Some(signal) = signal {
+        if !init_accepts(ctx, &target, signal) {
+            return Ok(0);
+        }
         target.raise_task_signal(signal);
     }
     Ok(0)
@@ -80,12 +105,16 @@ pub fn sys_tgkill(ctx: &ProcessCtx, tgid: PidT, tid: PidT, signal: UserSigId) ->
         return Err(KernelError::InvalidValue);
     }
     let signal = signal.optional()?;
-    let target = crate::process::find_task_by_tid(Tid(tid as u32)).ok_or(KernelError::NoProcess)?;
-    if target.process.tgid.value() != tgid as u32 {
+    let target = crate::process::pid_namespace::find_task(ctx.shared(), tid as u32)
+        .ok_or(KernelError::NoProcess)?;
+    if target.process.pid.in_ns(&ctx.shared().pid_ns()) != tgid as u32 {
         return Err(KernelError::NoProcess);
     }
     crate::process::access::signal_may_access(ctx.shared(), &target, signal)?;
     if let Some(signal) = signal {
+        if !init_accepts(ctx, &target, signal) {
+            return Ok(0);
+        }
         target.raise_task_signal(signal);
     }
     Ok(0)
