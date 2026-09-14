@@ -43,6 +43,11 @@ fi
 mkdir -p build/rootfs
 tar -xzf "$base/build/alpine-minirootfs.tar.gz" -C "$base/build/rootfs"
 
+# Optional runtime libraries and other files for binaries in extra_bins.
+if [ -d "$base/build/extra_rootfs" ]; then
+    cp -a "$base/build/extra_rootfs/." "$base/build/rootfs/"
+fi
+
 # Copy any extra binaries in $base/build/extra_bins to $base/build/rootfs/bin
 if [ -d "$base/build/extra_bins" ]; then
     cp "$base/build/extra_bins/"* "$base/build/rootfs/bin/"
