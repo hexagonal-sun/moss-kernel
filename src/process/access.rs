@@ -1,8 +1,7 @@
 //! Cross-task access checks shared by procfs and process-control interfaces.
 //!
-//! All tasks currently belong to the initial user/PID namespaces. Creating a
-//! different namespace is rejected until ID maps and namespace-scoped capability
-//! checks exist; a global capability must never grant authority in a fake namespace.
+//! Process IDs remain in the initial PID namespace; user namespace capability
+//! authority is checked against the target's credential namespace.
 use super::Task;
 use core::sync::atomic::Ordering;
 use libkernel::{
@@ -17,7 +16,7 @@ pub fn ptrace_may_access(caller: &Task, target: &Task, fscreds: bool) -> Result<
     let caller = caller.creds.lock_save_irq().clone();
     // Credential changes update dumpability under this same credential lock.
     let target_creds = target.creds.lock_save_irq();
-    if caller.caps().is_capable(CapabilitiesFlags::CAP_SYS_PTRACE) {
+    if caller.capable_in(&target_creds.user_ns(), CapabilitiesFlags::CAP_SYS_PTRACE) {
         return Ok(());
     }
     let (uid, gid, caps) = if fscreds {
@@ -32,9 +31,37 @@ pub fn ptrace_may_access(caller: &Task, target: &Task, fscreds: bool) -> Result<
             .iter()
             .any(|id| *id != gid)
         || target.process.dumpable.load(Ordering::Acquire) != 1
+        || caller.user_ns() != target_creds.user_ns()
         || !caps.contains(target_creds.caps().permitted())
     {
         return Err(KernelError::NotPermitted);
     }
     Ok(())
+}
+
+pub fn signal_may_access(
+    caller: &Task,
+    target: &Task,
+    signal: Option<super::thread_group::signal::SigId>,
+) -> Result<()> {
+    if caller.process.tgid == target.process.tgid {
+        return Ok(());
+    }
+    let from = caller.creds.lock_save_irq().clone();
+    let to = target.creds.lock_save_irq().clone();
+    if [from.uid(), from.euid()]
+        .iter()
+        .any(|id| *id == to.uid() || *id == to.suid())
+        || from.capable_in(&to.user_ns(), CapabilitiesFlags::CAP_KILL)
+    {
+        return Ok(());
+    }
+    if signal == Some(super::thread_group::signal::SigId::SIGCONT) {
+        let from_sid = *caller.process.sid.lock_save_irq();
+        let to_sid = *target.process.sid.lock_save_irq();
+        if from_sid == to_sid {
+            return Ok(());
+        }
+    }
+    Err(KernelError::NotPermitted)
 }

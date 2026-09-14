@@ -103,7 +103,7 @@ pub async fn sys_statfs(
         return Err(FsError::NotFound.into());
     }
     let task = ctx.shared().clone();
-    let cwd = task.cwd.lock_save_irq().0.clone();
+    let cwd = task.fs().cwd.lock_save_irq().0.clone();
     let inode = VFS.resolve_path(path, cwd, &task).await?;
     let statfs = statfs_impl(inode).await?;
     copy_to_user(stat, statfs).await?;

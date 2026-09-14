@@ -554,7 +554,7 @@ pub async fn sys_inotify_add_watch(
             .copy_from_user(&mut buf)
             .await?,
     );
-    let cwd = task.cwd.lock_save_irq().0.clone();
+    let cwd = task.fs().cwd.lock_save_irq().0.clone();
 
     let inode = if mask & IN_DONT_FOLLOW != 0 {
         VFS.resolve_path_nofollow(path, cwd, &task).await?
@@ -570,10 +570,7 @@ pub async fn sys_inotify_add_watch(
 
     {
         let creds = task.creds.lock_save_irq();
-        if creds
-            .check_file_access(&attr, AccessMode::R_OK)
-            .is_err()
-        {
+        if creds.check_file_access(&attr, AccessMode::R_OK).is_err() {
             return Err(FsError::PermissionDenied.into());
         }
     }

@@ -137,6 +137,25 @@ pub fn handle_protection_fault(
     access_kind: AccessKind,
     pg_info: PageInfo,
 ) -> Result<FaultResolution> {
+    // Another CPU can resolve a CoW fault while this CPU waits for the VM
+    // lock. Judge the *current* VMA/PTE, not the hardware's earlier fault.
+    if vm.find_vma_for_fault(faulting_addr, access_kind).is_none() {
+        return Ok(FaultResolution::Denied);
+    }
+    let already_permitted = pg_info.perms.is_user()
+        && match access_kind {
+            AccessKind::Read => pg_info.perms.is_read(),
+            AccessKind::Write => pg_info.perms.is_write(),
+            AccessKind::Execute => pg_info.perms.is_execute(),
+        };
+    if already_permitted {
+        // Refresh the translation using the existing address-space API, whose
+        // protection operation includes the required TLB invalidation.
+        vm.mm_mut()
+            .address_space_mut()
+            .protect_range(faulting_addr.page_region(), pg_info.perms)?;
+        return Ok(FaultResolution::Resolved);
+    }
     // Detect CoW condition.
     if access_kind == AccessKind::Write && pg_info.perms.is_cow() {
         let new_pte_perms = pg_info.perms.from_cow();
@@ -185,10 +204,44 @@ pub fn handle_protection_fault(
             Ok(FaultResolution::Resolved)
         }
     } else {
-        // Any other protection fault *should* be a segmentation fault. Let's
-        // just verify.
-        debug_assert!(vm.find_vma_for_fault(faulting_addr, access_kind).is_none());
-
         Ok(FaultResolution::Denied)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libkernel::memory::{
+        PAGE_SIZE,
+        proc_vm::vmarea::{VMAPermissions, VMArea, VMAreaKind},
+        region::VirtMemoryRegion,
+    };
+    use moss_macros::ktest;
+
+    #[ktest]
+    fn protection_fault_rechecks_current_vma_and_pte() {
+        let va = VA::from_value(0x10000);
+        for permissions in [VMAPermissions::rw(), VMAPermissions::ro()] {
+            let mut vm = ProcVM::from_vma(VMArea::new(
+                VirtMemoryRegion::new(va, PAGE_SIZE),
+                VMAreaKind::Anon,
+                permissions,
+            ))
+            .unwrap();
+            let page = ClaimedPage::alloc_zeroed().unwrap();
+            vm.mm_mut()
+                .address_space_mut()
+                .map_page(page.pa().to_pfn(), va, PtePermissions::rw(true))
+                .unwrap();
+            page.leak();
+            let page_info = vm.mm_mut().address_space_mut().translate(va).unwrap();
+            let result =
+                handle_protection_fault(&mut vm, va, AccessKind::Write, page_info).unwrap();
+            if permissions.write {
+                assert!(matches!(result, FaultResolution::Resolved));
+            } else {
+                assert!(matches!(result, FaultResolution::Denied));
+            }
+        }
     }
 }

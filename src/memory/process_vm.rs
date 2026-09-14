@@ -12,15 +12,20 @@ use libkernel::{
 };
 
 pub async fn sys_process_vm_readv(
+    ctx: &crate::sched::syscall_ctx::ProcessCtx,
     pid: PidT,
     local_iov: TUA<IoVec>,
     liov_count: usize,
     remote_iov: TUA<IoVec>,
     riov_count: usize,
-    _flags: usize,
+    flags: usize,
 ) -> Result<usize> {
+    if flags != 0 || liov_count > 1024 || riov_count > 1024 {
+        return Err(KernelError::InvalidValue);
+    }
     let tgid = Tid::from_pid_t(pid);
     let remote_proc = find_task_by_tid(tgid).ok_or(KernelError::NoProcess)?;
+    crate::process::access::ptrace_may_access(ctx.shared(), &remote_proc, false)?;
     let local_iovs = copy_obj_array_from_user(local_iov, liov_count).await?;
     let remote_iovs = copy_obj_array_from_user(remote_iov, riov_count).await?;
 

@@ -14,7 +14,11 @@ pub async fn sys_fstat(ctx: &ProcessCtx, fd: Fd, statbuf: TUA<Stat>) -> Result<u
 
     let inode = fd.inode().ok_or(KernelError::BadFd)?;
 
-    let attr = inode.getattr().await?;
+    let mut attr = inode.getattr().await?;
+    ctx.shared()
+        .creds
+        .lock_save_irq()
+        .map_attr_to_user(&mut attr);
 
     copy_to_user(statbuf, attr.into()).await?;
 

@@ -53,11 +53,10 @@ pub async fn sys_mount(
     flags: i64,
     _data: UA,
 ) -> Result<usize> {
-    ctx.shared()
-        .creds
-        .lock_save_irq()
-        .caps()
-        .check_capable(libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN)?;
+    ctx.shared().creds.lock_save_irq().check_capable_in(
+        &crate::process::user_namespace::UserNamespace::initial(),
+        libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_ADMIN,
+    )?;
     // Mount options are not enforced by the global mount table yet. In
     // particular, never silently accept security flags or propagation changes.
     let harmless = MountFlags::MS_SILENT.bits();
@@ -78,7 +77,7 @@ pub async fn sys_mount(
     let dir_name = UserCStr::from_ptr(dir_name)
         .copy_from_user(&mut buf)
         .await?;
-    let cwd = ctx.shared().cwd.lock_save_irq().0.clone();
+    let cwd = ctx.shared().fs().cwd.lock_save_irq().0.clone();
     let mount_point = VFS
         .resolve_path(Path::new(dir_name), cwd, ctx.shared())
         .await?;

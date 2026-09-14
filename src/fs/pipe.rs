@@ -314,8 +314,8 @@ pub async fn sys_pipe2(ctx: &ProcessCtx, fds: TUA<[Fd; 2]>, flags: u32) -> Resul
             Arc::new(PipeInode {
                 id: InodeId::from_fsid_and_inodeid(0xf, INODE_ID.fetch_add(1, Ordering::Relaxed)),
                 time: date(),
-                uid: creds.uid(),
-                gid: creds.gid(),
+                uid: creds.fsuid(),
+                gid: creds.fsgid(),
             })
         };
 

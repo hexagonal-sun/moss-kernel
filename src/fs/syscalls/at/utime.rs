@@ -74,7 +74,10 @@ pub async fn sys_utimensat(
             test_creds(task, &attr)?;
         } else {
             let creds = task.creds.lock_save_irq();
-            if creds.fsuid() != attr.uid && !creds.caps().is_capable(CapabilitiesFlags::CAP_FOWNER)
+            if creds.fsuid() != attr.uid
+                && !creds
+                    .file_caps(&attr)
+                    .is_capable(CapabilitiesFlags::CAP_FOWNER)
             {
                 return Err(KernelError::NotPermitted);
             }
@@ -106,8 +109,12 @@ fn test_creds(task: Arc<Task>, attr: &FileAttr) -> Result<()> {
     let creds = task.creds.lock_save_irq();
     if creds.check_file_access(attr, AccessMode::W_OK).is_err()
         && creds.fsuid() != attr.uid
-        && !creds.caps().is_capable(CapabilitiesFlags::CAP_FOWNER)
-        && !creds.caps().is_capable(CapabilitiesFlags::CAP_DAC_OVERRIDE)
+        && !creds
+            .file_caps(attr)
+            .is_capable(CapabilitiesFlags::CAP_FOWNER)
+        && !creds
+            .file_caps(attr)
+            .is_capable(CapabilitiesFlags::CAP_DAC_OVERRIDE)
     {
         Err(FsError::PermissionDenied.into())
     } else {

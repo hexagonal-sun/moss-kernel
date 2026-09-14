@@ -307,7 +307,17 @@ pub async fn sys_ptrace(ctx: &ProcessCtx, op: i32, pid: PidT, addr: UA, data: UA
 
     let target_task = { find_task_by_tid(Tid::from_pid_t(pid)).ok_or(KernelError::NoProcess)? };
 
-    // TODO: Check CAP_SYS_PTRACE & security
+    super::access::ptrace_may_access(ctx.shared(), &target_task, false)?;
+    // Register/control requests are only valid for an established tracee.
+    if !target_task
+        .ptrace
+        .lock_save_irq()
+        .tracer
+        .as_ref()
+        .is_some_and(|tracer| tracer.tgid == ctx.shared().process.tgid)
+    {
+        return Err(KernelError::NoProcess);
+    }
     match op {
         PtraceOperation::TraceMe => {
             unreachable!();

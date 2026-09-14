@@ -31,7 +31,15 @@ pub async fn sys_gettimeofday(tv: TUA<TimeSpec>, tz: TUA<TimeZone>) -> Result<us
     Ok(0)
 }
 
-pub async fn sys_settimeofday(tv: TUA<TimeSpec>, _tz: TUA<TimeZone>) -> Result<usize> {
+pub async fn sys_settimeofday(
+    ctx: &crate::sched::syscall_ctx::ProcessCtx,
+    tv: TUA<TimeSpec>,
+    _tz: TUA<TimeZone>,
+) -> Result<usize> {
+    ctx.shared().creds.lock_save_irq().check_capable_in(
+        &crate::process::user_namespace::UserNamespace::initial(),
+        libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_TIME,
+    )?;
     // TODO: Handle timezone
     if !tv.is_null() {
         let time: TimeSpec = copy_from_user(tv).await?;

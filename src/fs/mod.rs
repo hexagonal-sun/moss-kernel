@@ -265,7 +265,7 @@ impl VFS {
         if path.as_str().is_empty() {
             return Err(FsError::NotFound.into());
         }
-        let process_root = task.root.lock_save_irq().0.clone();
+        let process_root = task.fs().root.lock_save_irq().0.clone();
         let root = if path.is_absolute() {
             process_root.clone()
         } else {
@@ -497,7 +497,7 @@ impl VFS {
                     }
                     creds.check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
                     let mode = FilePermissions::from_bits_truncate(
-                        mode.bits() & !(*task.umask.lock_save_irq() as u16),
+                        mode.bits() & !(*task.fs().umask.lock_save_irq() as u16),
                     );
 
                     let target_inode = parent_inode
@@ -571,8 +571,10 @@ impl VFS {
 
         match attr.file_type {
             FileType::File => {
-                let mut open_file =
-                    OpenFile::new(Box::new(RegFile::new(target_inode.clone())), flags);
+                let ops = crate::drivers::fs::proc::open_control(target_inode.as_ref(), &creds)?
+                    .or_else(|| crate::drivers::fs::nsfs::open(target_inode.as_ref()))
+                    .unwrap_or_else(|| Box::new(RegFile::new(target_inode.clone())));
+                let mut open_file = OpenFile::new(ops, flags);
                 open_file.update(target_inode, path.to_owned());
 
                 Ok(Arc::new(open_file))
@@ -641,7 +643,7 @@ impl VFS {
                 let creds = task.creds.lock_save_irq().clone();
                 creds.check_file_access(&parent_attr, AccessMode::W_OK | AccessMode::X_OK)?;
                 let mut mode = FilePermissions::from_bits_truncate(
-                    mode.bits() & 0o1777 & !(*task.umask.lock_save_irq() as u16),
+                    mode.bits() & 0o1777 & !(*task.fs().umask.lock_save_irq() as u16),
                 );
                 let gid = if parent_attr.permissions.contains(FilePermissions::S_ISGID) {
                     mode.insert(FilePermissions::S_ISGID);

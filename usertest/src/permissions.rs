@@ -328,7 +328,6 @@ fn test_permissions_namespace_requests_do_not_fake_success() {
     }
     for flag in [
         libc::CLONE_NEWNS,
-        libc::CLONE_NEWUSER,
         libc::CLONE_NEWPID,
         libc::CLONE_NEWNET,
         libc::CLONE_NEWUTS,

@@ -1,3 +1,5 @@
+use super::user_namespace::UserNamespace;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::convert::Infallible;
 use core::sync::atomic::Ordering;
@@ -25,6 +27,7 @@ unsafe impl UserCopyable for Gid {}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Credentials {
+    user_ns: Arc<UserNamespace>,
     uid: Uid,
     euid: Uid,
     suid: Uid,
@@ -40,6 +43,7 @@ pub struct Credentials {
 impl Credentials {
     pub fn new_root() -> Self {
         Self {
+            user_ns: UserNamespace::initial(),
             uid: Uid::new_root(),
             euid: Uid::new_root(),
             suid: Uid::new_root(),
@@ -81,6 +85,114 @@ impl Credentials {
         self.caps
     }
 
+    pub fn user_ns(&self) -> Arc<UserNamespace> {
+        self.user_ns.clone()
+    }
+
+    /// Capability authority flows towards descendants, never to a parent or
+    /// sibling. The owner in the immediate parent controls its child namespace.
+    pub fn capable_in(&self, target: &UserNamespace, cap: CapabilitiesFlags) -> bool {
+        let mut ns = target;
+        loop {
+            if self.user_ns.as_ref() == ns {
+                return self.caps.is_capable(cap);
+            }
+            let Some(parent) = ns.parent.as_deref() else {
+                return false;
+            };
+            if parent == self.user_ns.as_ref() && ns.owner == self.euid {
+                return true;
+            }
+            ns = parent;
+        }
+    }
+
+    pub fn check_capable_in(&self, target: &UserNamespace, cap: CapabilitiesFlags) -> Result<()> {
+        if self.capable_in(target, cap) {
+            Ok(())
+        } else {
+            Err(KernelError::NotPermitted)
+        }
+    }
+
+    pub fn enter_user_ns(&mut self, ns: Arc<UserNamespace>) {
+        self.user_ns = ns;
+        self.caps = Capabilities::new(
+            CapabilitiesFlags::all(),
+            CapabilitiesFlags::all(),
+            CapabilitiesFlags::empty(),
+            CapabilitiesFlags::empty(),
+            CapabilitiesFlags::all(),
+        );
+    }
+
+    pub fn uid_is_root(&self, uid: Uid) -> bool {
+        self.user_ns.from_uid(uid) == Some(0)
+    }
+
+    /// Capability recalculation for an ordinary executable (file capability
+    /// xattrs and set-ID executable transitions are not implemented by MOSS).
+    pub fn exec_capabilities(&mut self) {
+        let ambient = self.caps.ambient();
+        let permitted = if self.uid_is_root(self.uid) || self.uid_is_root(self.euid) {
+            self.caps.bounding() | self.caps.inheritable() | ambient
+        } else {
+            ambient
+        };
+        let effective = if self.uid_is_root(self.euid) {
+            permitted
+        } else {
+            ambient
+        };
+        self.caps = Capabilities::new(
+            effective,
+            permitted,
+            self.caps.inheritable(),
+            ambient,
+            self.caps.bounding(),
+        );
+        self.suid = self.euid;
+        self.sgid = self.egid;
+        self.fsuid = self.euid;
+        self.fsgid = self.egid;
+    }
+
+    /// Linux's capable_wrt_inode_uidgid: capability overrides only apply when
+    /// both inode IDs have mappings in the caller's namespace.
+    pub fn file_caps(&self, attr: &FileAttr) -> Capabilities {
+        if self.user_ns.from_uid(attr.uid).is_some() && self.user_ns.from_gid(attr.gid).is_some() {
+            self.caps
+        } else {
+            Capabilities::new_empty()
+        }
+    }
+
+    pub fn map_attr_to_user(&self, attr: &mut FileAttr) {
+        attr.uid = Uid::new(self.user_ns.show_uid(attr.uid));
+        attr.gid = Gid::new(self.user_ns.show_gid(attr.gid));
+    }
+
+    pub fn proc_status(&self, viewer: &UserNamespace) -> alloc::string::String {
+        use alloc::format;
+        let mut status = format!(
+            "Uid:\t{}\t{}\t{}\t{}\nGid:\t{}\t{}\t{}\t{}\nGroups:\t",
+            viewer.show_uid(self.uid),
+            viewer.show_uid(self.euid),
+            viewer.show_uid(self.suid),
+            viewer.show_uid(self.fsuid),
+            viewer.show_gid(self.gid),
+            viewer.show_gid(self.egid),
+            viewer.show_gid(self.sgid),
+            viewer.show_gid(self.fsgid)
+        );
+        for gid in &self.groups {
+            status.push_str(&format!("{} ", viewer.show_gid(*gid)));
+        }
+        status.push_str(&format!("\nCapInh:\t{:016x}\nCapPrm:\t{:016x}\nCapEff:\t{:016x}\nCapBnd:\t{:016x}\nCapAmb:\t{:016x}\n",
+            self.caps.inheritable().bits(), self.caps.permitted().bits(), self.caps.effective().bits(), self.caps.bounding().bits(), self.caps.ambient().bits()));
+        status
+    }
+
     pub fn fsuid(&self) -> Uid {
         self.fsuid
     }
@@ -97,17 +209,23 @@ impl Credentials {
             && self.fsuid != parent.uid
             && self.fsuid != victim.uid
         {
-            self.caps.check_capable(CapabilitiesFlags::CAP_FOWNER)?;
+            self.file_caps(victim)
+                .check_capable(CapabilitiesFlags::CAP_FOWNER)?;
         }
         Ok(())
     }
 
     pub fn chmod(&self, attr: &mut FileAttr, mode: u16) -> Result<()> {
         if self.fsuid != attr.uid {
-            self.caps.check_capable(CapabilitiesFlags::CAP_FOWNER)?;
+            self.file_caps(attr)
+                .check_capable(CapabilitiesFlags::CAP_FOWNER)?;
         }
         attr.permissions = FilePermissions::from_bits_truncate(mode);
-        if !self.in_group(attr.gid) && !self.caps.is_capable(CapabilitiesFlags::CAP_FSETID) {
+        if !self.in_group(attr.gid)
+            && !self
+                .file_caps(attr)
+                .is_capable(CapabilitiesFlags::CAP_FSETID)
+        {
             attr.permissions.remove(FilePermissions::S_ISGID);
         }
         Ok(())
@@ -117,14 +235,16 @@ impl Credentials {
         let uid = if owner == -1 {
             attr.uid
         } else {
-            Uid::new(owner as u32)
+            self.user_ns.make_uid(owner as u32)?
         };
         let gid = if group == -1 {
             attr.gid
         } else {
-            Gid::new(group as u32)
+            self.user_ns.make_gid(group as u32)?
         };
-        if !self.caps.is_capable(CapabilitiesFlags::CAP_CHOWN)
+        if !self
+            .file_caps(attr)
+            .is_capable(CapabilitiesFlags::CAP_CHOWN)
             && (self.fsuid != attr.uid
                 || uid != attr.uid
                 || (gid != attr.gid && !self.in_group(gid)))
@@ -143,7 +263,13 @@ impl Credentials {
     }
 
     pub fn check_file_access(&self, attr: &FileAttr, mode: AccessMode) -> Result<()> {
-        attr.check_access_with_groups(self.fsuid, self.fsgid, &self.groups, self.caps, mode)
+        attr.check_access_with_groups(
+            self.fsuid,
+            self.fsgid,
+            &self.groups,
+            self.file_caps(attr),
+            mode,
+        )
     }
 
     pub async fn check_inode_access(
@@ -151,8 +277,15 @@ impl Credentials {
         inode: &dyn libkernel::fs::Inode,
         mode: AccessMode,
     ) -> Result<()> {
+        let attr = inode.getattr().await?;
         inode
-            .check_access(self.fsuid, self.fsgid, &self.groups, self.caps, mode)
+            .check_access(
+                self.fsuid,
+                self.fsgid,
+                &self.groups,
+                self.file_caps(&attr),
+                mode,
+            )
             .await
     }
 
@@ -161,7 +294,7 @@ impl Credentials {
         creds.fsuid = if effective { self.euid } else { self.uid };
         creds.fsgid = if effective { self.egid } else { self.gid };
         if !effective {
-            let effective = if self.uid.is_root() {
+            let effective = if self.uid_is_root(self.uid) {
                 self.caps.permitted()
             } else {
                 CapabilitiesFlags::empty()
@@ -181,15 +314,17 @@ impl Credentials {
         let mut permitted = self.caps.permitted();
         let mut effective = self.caps.effective();
         let mut ambient = self.caps.ambient();
-        if (old.uid.is_root() || old.euid.is_root() || old.suid.is_root())
-            && !(self.uid.is_root() || self.euid.is_root() || self.suid.is_root())
+        if (old.uid_is_root(old.uid) || old.uid_is_root(old.euid) || old.uid_is_root(old.suid))
+            && !(self.uid_is_root(self.uid)
+                || self.uid_is_root(self.euid)
+                || self.uid_is_root(self.suid))
         {
             permitted = CapabilitiesFlags::empty();
             effective = CapabilitiesFlags::empty();
             ambient = CapabilitiesFlags::empty();
-        } else if old.euid.is_root() && !self.euid.is_root() {
+        } else if old.uid_is_root(old.euid) && !self.uid_is_root(self.euid) {
             effective = CapabilitiesFlags::empty();
-        } else if !old.euid.is_root() && self.euid.is_root() {
+        } else if !old.uid_is_root(old.euid) && self.uid_is_root(self.euid) {
             effective = permitted;
         }
         let fs_caps = CapabilitiesFlags::CAP_CHOWN
@@ -200,10 +335,10 @@ impl Credentials {
             | CapabilitiesFlags::CAP_LINUX_IMMUTABLE
             | CapabilitiesFlags::CAP_MKNOD
             | CapabilitiesFlags::CAP_MAC_OVERRIDE;
-        if old.fsuid.is_root() && !self.fsuid.is_root() {
+        if old.uid_is_root(old.fsuid) && !self.uid_is_root(self.fsuid) {
             effective.remove(fs_caps);
         }
-        if !old.fsuid.is_root() && self.fsuid.is_root() {
+        if !old.uid_is_root(old.fsuid) && self.uid_is_root(self.fsuid) {
             effective.insert(permitted & fs_caps);
         }
         self.caps = Capabilities::new(
@@ -224,25 +359,29 @@ impl Credentials {
 }
 
 pub fn sys_getuid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
-    let uid: u32 = ctx.shared().creds.lock_save_irq().uid().into();
+    let creds = ctx.shared().creds.lock_save_irq();
+    let uid = creds.user_ns.show_uid(creds.uid);
 
     Ok(uid as _)
 }
 
 pub fn sys_geteuid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
-    let uid: u32 = ctx.shared().creds.lock_save_irq().euid().into();
+    let creds = ctx.shared().creds.lock_save_irq();
+    let uid = creds.user_ns.show_uid(creds.euid);
 
     Ok(uid as _)
 }
 
 pub fn sys_getgid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
-    let gid: u32 = ctx.shared().creds.lock_save_irq().gid().into();
+    let creds = ctx.shared().creds.lock_save_irq();
+    let gid = creds.user_ns.show_gid(creds.gid);
 
     Ok(gid as _)
 }
 
 pub fn sys_getegid(ctx: &ProcessCtx) -> core::result::Result<usize, Infallible> {
-    let gid: u32 = ctx.shared().creds.lock_save_irq().egid().into();
+    let creds = ctx.shared().creds.lock_save_irq();
+    let gid = creds.user_ns.show_gid(creds.egid);
 
     Ok(gid as _)
 }
@@ -253,7 +392,7 @@ pub fn sys_setuid(ctx: &ProcessCtx, uid: usize) -> Result<usize> {
     if uid as u32 == u32::MAX {
         return Err(KernelError::InvalidValue);
     }
-    let new_uid = Uid::new(uid as u32);
+    let new_uid = creds.user_ns.make_uid(uid as u32)?;
 
     if creds.caps.is_capable(CapabilitiesFlags::CAP_SETUID) {
         creds.uid = new_uid;
@@ -278,7 +417,7 @@ pub fn sys_setgid(ctx: &ProcessCtx, gid: usize) -> Result<usize> {
     if gid as u32 == u32::MAX {
         return Err(KernelError::InvalidValue);
     }
-    let new_gid = Gid::new(gid as u32);
+    let new_gid = creds.user_ns.make_gid(gid as u32)?;
 
     if creds.caps.is_capable(CapabilitiesFlags::CAP_SETGID) {
         creds.gid = new_gid;
@@ -303,12 +442,12 @@ pub fn sys_setreuid(ctx: &ProcessCtx, ruid: usize, euid: usize) -> Result<usize>
     let new_ruid = if ruid as u32 == u32::MAX {
         creds.uid
     } else {
-        Uid::new(ruid as u32)
+        creds.user_ns.make_uid(ruid as u32)?
     };
     let new_euid = if euid as u32 == u32::MAX {
         creds.euid
     } else {
-        Uid::new(euid as u32)
+        creds.user_ns.make_uid(euid as u32)?
     };
 
     let capable = creds.caps.is_capable(CapabilitiesFlags::CAP_SETUID);
@@ -344,12 +483,12 @@ pub fn sys_setregid(ctx: &ProcessCtx, rgid: usize, egid: usize) -> Result<usize>
     let new_rgid = if rgid as u32 == u32::MAX {
         creds.gid
     } else {
-        Gid::new(rgid as u32)
+        creds.user_ns.make_gid(rgid as u32)?
     };
     let new_egid = if egid as u32 == u32::MAX {
         creds.egid
     } else {
-        Gid::new(egid as u32)
+        creds.user_ns.make_gid(egid as u32)?
     };
 
     let capable = creds.caps.is_capable(CapabilitiesFlags::CAP_SETGID);
@@ -385,17 +524,17 @@ pub fn sys_setresuid(ctx: &ProcessCtx, ruid: usize, euid: usize, suid: usize) ->
     let new_ruid = if ruid as u32 == u32::MAX {
         creds.uid
     } else {
-        Uid::new(ruid as u32)
+        creds.user_ns.make_uid(ruid as u32)?
     };
     let new_euid = if euid as u32 == u32::MAX {
         creds.euid
     } else {
-        Uid::new(euid as u32)
+        creds.user_ns.make_uid(euid as u32)?
     };
     let new_suid = if suid as u32 == u32::MAX {
         creds.suid
     } else {
-        Uid::new(suid as u32)
+        creds.user_ns.make_uid(suid as u32)?
     };
 
     let capable = creds.caps.is_capable(CapabilitiesFlags::CAP_SETUID);
@@ -439,17 +578,17 @@ pub fn sys_setresgid(ctx: &ProcessCtx, rgid: usize, egid: usize, sgid: usize) ->
     let new_rgid = if rgid as u32 == u32::MAX {
         creds.gid
     } else {
-        Gid::new(rgid as u32)
+        creds.user_ns.make_gid(rgid as u32)?
     };
     let new_egid = if egid as u32 == u32::MAX {
         creds.egid
     } else {
-        Gid::new(egid as u32)
+        creds.user_ns.make_gid(egid as u32)?
     };
     let new_sgid = if sgid as u32 == u32::MAX {
         creds.sgid
     } else {
-        Gid::new(sgid as u32)
+        creds.user_ns.make_gid(sgid as u32)?
     };
 
     let capable = creds.caps.is_capable(CapabilitiesFlags::CAP_SETGID);
@@ -490,8 +629,7 @@ pub fn sys_setresgid(ctx: &ProcessCtx, rgid: usize, egid: usize, sgid: usize) ->
 pub fn sys_setfsuid(ctx: &ProcessCtx, new_id: usize) -> core::result::Result<usize, Infallible> {
     let mut creds = ctx.shared().creds.lock_save_irq();
     let old = creds.clone();
-    let uid = Uid::new(new_id as u32);
-    if new_id as u32 != u32::MAX
+    if let Ok(uid) = creds.user_ns.make_uid(new_id as u32)
         && (uid == creds.uid
             || uid == creds.euid
             || uid == creds.suid
@@ -501,14 +639,13 @@ pub fn sys_setfsuid(ctx: &ProcessCtx, new_id: usize) -> core::result::Result<usi
         creds.fsuid = uid;
         creds.finish_id_change(&old, ctx);
     }
-    Ok(u32::from(old.fsuid) as usize)
+    Ok(old.user_ns.show_uid(old.fsuid) as usize)
 }
 
 pub fn sys_setfsgid(ctx: &ProcessCtx, new_id: usize) -> core::result::Result<usize, Infallible> {
     let mut creds = ctx.shared().creds.lock_save_irq();
     let old = creds.clone();
-    let gid = Gid::new(new_id as u32);
-    if new_id as u32 != u32::MAX
+    if let Ok(gid) = creds.user_ns.make_gid(new_id as u32)
         && (gid == creds.gid
             || gid == creds.egid
             || gid == creds.sgid
@@ -518,14 +655,19 @@ pub fn sys_setfsgid(ctx: &ProcessCtx, new_id: usize) -> core::result::Result<usi
         creds.fsgid = gid;
         creds.finish_id_change(&old, ctx);
     }
-    Ok(u32::from(old.fsgid) as usize)
+    Ok(old.user_ns.show_gid(old.fsgid) as usize)
 }
 
 pub async fn sys_getgroups(ctx: &ProcessCtx, size: i32, list: TUA<Gid>) -> Result<usize> {
     if size < 0 {
         return Err(KernelError::InvalidValue);
     }
-    let groups = ctx.shared().creds.lock_save_irq().groups.clone();
+    let creds = ctx.shared().creds.lock_save_irq().clone();
+    let groups: Vec<_> = creds
+        .groups
+        .iter()
+        .map(|gid| Gid::new(creds.user_ns.show_gid(*gid)))
+        .collect();
     if size != 0 {
         if (size as usize) < groups.len() {
             return Err(KernelError::InvalidValue);
@@ -539,15 +681,16 @@ pub async fn sys_setgroups(ctx: &ProcessCtx, size: usize, list: TUA<Gid>) -> Res
     if size > 65536 {
         return Err(KernelError::InvalidValue);
     }
-    ctx.shared()
-        .creds
-        .lock_save_irq()
-        .caps
-        .check_capable(CapabilitiesFlags::CAP_SETGID)?;
-    let groups = copy_obj_array_from_user(list, size).await?;
-    if groups.iter().any(|gid| u32::from(*gid) == u32::MAX) {
-        return Err(KernelError::InvalidValue);
+    let creds = ctx.shared().creds.lock_save_irq().clone();
+    creds.caps.check_capable(CapabilitiesFlags::CAP_SETGID)?;
+    if !creds.user_ns.may_setgroups() {
+        return Err(KernelError::NotPermitted);
     }
+    let groups = copy_obj_array_from_user(list, size).await?;
+    let groups = groups
+        .into_iter()
+        .map(|gid| creds.user_ns.make_gid(gid.into()))
+        .collect::<Result<Vec<_>>>()?;
     ctx.shared().creds.lock_save_irq().groups = groups;
     Ok(0)
 }
@@ -566,9 +709,9 @@ pub async fn sys_getresuid(
 ) -> Result<usize> {
     let creds = ctx.shared().creds.lock_save_irq().clone();
 
-    copy_to_user(ruid, creds.uid).await?;
-    copy_to_user(euid, creds.euid).await?;
-    copy_to_user(suid, creds.suid).await?;
+    copy_to_user(ruid, Uid::new(creds.user_ns.show_uid(creds.uid))).await?;
+    copy_to_user(euid, Uid::new(creds.user_ns.show_uid(creds.euid))).await?;
+    copy_to_user(suid, Uid::new(creds.user_ns.show_uid(creds.suid))).await?;
 
     Ok(0)
 }
@@ -581,9 +724,9 @@ pub async fn sys_getresgid(
 ) -> Result<usize> {
     let creds = ctx.shared().creds.lock_save_irq().clone();
 
-    copy_to_user(rgid, creds.gid).await?;
-    copy_to_user(egid, creds.egid).await?;
-    copy_to_user(sgid, creds.sgid).await?;
+    copy_to_user(rgid, Gid::new(creds.user_ns.show_gid(creds.gid))).await?;
+    copy_to_user(egid, Gid::new(creds.user_ns.show_gid(creds.egid))).await?;
+    copy_to_user(sgid, Gid::new(creds.user_ns.show_gid(creds.sgid))).await?;
 
     Ok(0)
 }

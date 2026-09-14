@@ -191,13 +191,26 @@ pub async fn sys_prlimit64(
     old_rlim: TUA<RLimit>,
 ) -> Result<usize> {
     let resource: RlimitId = resource.try_into()?;
+    let caller = ctx.shared().creds.lock_save_irq().clone();
 
     let task = if pid == 0 {
         ctx.shared().process.clone()
     } else {
-        find_task_by_tid(Tid::from_pid_t(pid))
-            .map(|x| x.process.clone())
-            .ok_or(KernelError::NoProcess)?
+        let target = find_task_by_tid(Tid::from_pid_t(pid)).ok_or(KernelError::NoProcess)?;
+        let creds = target.creds.lock_save_irq().clone();
+        if !caller.capable_in(
+            &creds.user_ns(),
+            libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_RESOURCE,
+        ) && ([creds.uid(), creds.euid(), creds.suid()]
+            .iter()
+            .any(|uid| *uid != caller.uid())
+            || [creds.gid(), creds.egid(), creds.sgid()]
+                .iter()
+                .any(|gid| *gid != caller.gid()))
+        {
+            return Err(KernelError::NotPermitted);
+        }
+        target.process.clone()
     };
 
     let new_limit = if !new_rlim.is_null() {
@@ -207,9 +220,14 @@ pub async fn sys_prlimit64(
     };
 
     let old_lim = if let Some(new_limit) = new_limit {
-        task.rsrc_lim
-            .lock_save_irq()
-            .set(resource, new_limit, true)?
+        task.rsrc_lim.lock_save_irq().set(
+            resource,
+            new_limit,
+            caller.capable_in(
+                &crate::process::user_namespace::UserNamespace::initial(),
+                libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_RESOURCE,
+            ),
+        )?
     } else {
         task.rsrc_lim.lock_save_irq().get(resource)
     };

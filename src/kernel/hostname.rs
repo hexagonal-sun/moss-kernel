@@ -24,9 +24,10 @@ pub async fn sys_sethostname(
 ) -> Result<usize> {
     {
         let creds = ctx.shared().creds.lock_save_irq();
-        creds
-            .caps()
-            .check_capable(CapabilitiesFlags::CAP_SYS_ADMIN)?;
+        creds.check_capable_in(
+            &crate::process::user_namespace::UserNamespace::initial(),
+            CapabilitiesFlags::CAP_SYS_ADMIN,
+        )?;
     }
 
     if name_len > HOST_NAME_MAX {

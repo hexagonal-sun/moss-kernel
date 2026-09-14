@@ -8,6 +8,16 @@ use super::SigId;
 #[derive(Clone, Copy, Debug)]
 pub struct UserSigId(u32);
 
+impl UserSigId {
+    pub fn optional(self) -> Result<Option<SigId>, KernelError> {
+        if self.0 == 0 {
+            Ok(None)
+        } else {
+            self.try_into().map(Some)
+        }
+    }
+}
+
 impl TryFrom<UserSigId> for SigId {
     type Error = KernelError;
 

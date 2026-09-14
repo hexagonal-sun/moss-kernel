@@ -64,21 +64,28 @@ pub async fn sys_clone(
     tls: usize,
 ) -> Result<usize> {
     let flags = CloneFlags::from_bits_truncate(flags);
-    let namespaces = CloneFlags::CLONE_NEWNS
+    let unsupported_namespaces = CloneFlags::CLONE_NEWNS
         | CloneFlags::CLONE_NEWCGROUP
         | CloneFlags::CLONE_NEWUTS
         | CloneFlags::CLONE_NEWIPC
-        | CloneFlags::CLONE_NEWUSER
         | CloneFlags::CLONE_NEWPID
         | CloneFlags::CLONE_NEWNET;
-    // No namespace isolation is implemented yet. Never report a successful
-    // sandbox creation while leaving the child in the caller's global domains.
-    if flags.intersects(namespaces)
+    // Unsupported namespace kinds must not silently share the global domain.
+    if flags.intersects(unsupported_namespaces)
+        || (flags.contains(CloneFlags::CLONE_NEWUSER)
+            && flags.intersects(CloneFlags::CLONE_FS | CloneFlags::CLONE_THREAD))
         || (flags.contains(CloneFlags::CLONE_SIGHAND) && !flags.contains(CloneFlags::CLONE_VM))
         || (flags.contains(CloneFlags::CLONE_THREAD)
             && !flags.contains(CloneFlags::CLONE_SIGHAND | CloneFlags::CLONE_VM))
     {
         return Err(KernelError::InvalidValue);
+    }
+
+    let mut creds = ctx.shared().creds.lock_save_irq().clone();
+    if flags.contains(CloneFlags::CLONE_NEWUSER) {
+        super::namespace::check_userns_create(ctx.shared())?;
+        let ns = super::user_namespace::UserNamespace::create(&creds)?;
+        creds.enter_user_ns(ns);
     }
 
     let trace_point = if flags.contains(CloneFlags::CLONE_THREAD) {
@@ -91,7 +98,7 @@ pub async fn sys_clone(
     // `TracePoint::VFork`.
     let should_trace_new_tsk = ptrace_stop(ctx, trace_point).await;
 
-    let new_task = {
+    let mut new_task = {
         let tid = Tid::next_tid();
 
         let current_task = ctx.task();
@@ -100,6 +107,9 @@ pub async fn sys_clone(
 
         // TODO: Make this arch independent. The child returns '0' on clone.
         user_ctx.x[0] = 0;
+        if !newsp.is_null() {
+            user_ctx.sp_el0 = newsp.value() as _;
+        }
 
         if flags.contains(CloneFlags::CLONE_SETTLS) {
             // TODO: Make this arch independent.
@@ -112,7 +122,6 @@ pub async fn sys_clone(
                 // set.
                 return Err(KernelError::InvalidValue);
             }
-            user_ctx.sp_el0 = newsp.value() as _;
 
             // A new task within this thread group.
             current_task.process.clone()
@@ -132,7 +141,13 @@ pub async fn sys_clone(
                 current_task.process.clone()
             };
 
-            tgid_parent.new_child(flags.contains(CloneFlags::CLONE_SIGHAND), tid)
+            let child = tgid_parent.new_child(flags.contains(CloneFlags::CLONE_SIGHAND), tid);
+            // CLONE_PARENT changes the parent relationship, not which program
+            // or session is inherited from the cloning task.
+            *child.executable.lock_save_irq() =
+                current_task.process.executable.lock_save_irq().clone();
+            *child.sid.lock_save_irq() = *current_task.process.sid.lock_save_irq();
+            child
         };
 
         let vm = if flags.contains(CloneFlags::CLONE_VM) {
@@ -152,16 +167,10 @@ pub async fn sys_clone(
             Arc::new(SpinLock::new(current_task.fd_table.lock_save_irq().clone()))
         };
 
-        let cwd = if flags.contains(CloneFlags::CLONE_FS) {
-            current_task.cwd.clone()
+        let fs = if flags.contains(CloneFlags::CLONE_FS) {
+            current_task.fs()
         } else {
-            Arc::new(SpinLock::new(current_task.cwd.lock_save_irq().clone()))
-        };
-
-        let root = if flags.contains(CloneFlags::CLONE_FS) {
-            current_task.root.clone()
-        } else {
-            Arc::new(SpinLock::new(current_task.root.lock_save_irq().clone()))
+            current_task.fs().duplicate()
         };
 
         let ptrace = if flags.contains(CloneFlags::CLONE_PTRACE) || should_trace_new_tsk {
@@ -169,8 +178,6 @@ pub async fn sys_clone(
         } else {
             PTrace::new()
         };
-
-        let creds = current_task.creds.lock_save_irq().clone();
 
         let new_sigmask = AtomicSigSet::new(current_task.sig_mask.load());
 
@@ -187,7 +194,9 @@ pub async fn sys_clone(
             ctx: Context::from_user_ctx(user_ctx),
             priority: current_task.priority,
             robust_list: None,
-            child_tid_ptr: if !child_tidptr.is_null() {
+            child_tid_ptr: if flags.contains(CloneFlags::CLONE_CHILD_CLEARTID)
+                && !child_tidptr.is_null()
+            {
                 Some(child_tidptr)
             } else {
                 None
@@ -198,13 +207,7 @@ pub async fn sys_clone(
                 process: tg,
                 vm,
                 fd_table: files,
-                cwd,
-                root,
-                umask: if flags.contains(CloneFlags::CLONE_FS) {
-                    current_task.umask.clone()
-                } else {
-                    Arc::new(SpinLock::new(*current_task.umask.lock_save_irq()))
-                },
+                fs: SpinLock::new(fs),
                 i_timers: SpinLock::new(ITimers::default()),
                 creds: SpinLock::new(creds),
                 ptrace: SpinLock::new(ptrace),
@@ -219,6 +222,15 @@ pub async fn sys_clone(
         }
     };
 
+    // Linux writes the child TID in the child's address space, on its first
+    // return to userspace. Doing this in the parent corrupts its COW copy.
+    if flags.contains(CloneFlags::CLONE_CHILD_SETTID) {
+        let tid = new_task.tid.value();
+        new_task.ctx.put_kernel_work(Box::pin(async move {
+            let _ = copy_to_user(child_tidptr, tid).await;
+        }));
+    }
+
     if flags.contains(CloneFlags::CLONE_VFORK) {
         new_task.process.start_vfork();
     }
@@ -228,6 +240,12 @@ pub async fn sys_clone(
     let vfork_process = flags
         .contains(CloneFlags::CLONE_VFORK)
         .then(|| work.process.clone());
+
+    // Publish the parent's TID store before the child can run and clear it.
+    // Like Linux put_user here, a bad TID pointer does not cancel the clone.
+    if flags.contains(CloneFlags::CLONE_PARENT_SETTID) {
+        let _ = copy_to_user(parent_tidptr, desc.tid.value()).await;
+    }
 
     TASK_LIST
         .lock_save_irq()
@@ -241,14 +259,6 @@ pub async fn sys_clone(
     sched::insert_work_cross_cpu(work);
 
     NUM_FORKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-
-    // Honour CLONE_*SETTID semantics for the parent and (shared-VM) child.
-    if flags.contains(CloneFlags::CLONE_PARENT_SETTID) && !parent_tidptr.is_null() {
-        copy_to_user(parent_tidptr, desc.tid.value()).await?;
-    }
-    if flags.contains(CloneFlags::CLONE_CHILD_SETTID) && !child_tidptr.is_null() {
-        copy_to_user(child_tidptr, desc.tid.value()).await?;
-    }
 
     if let Some(vfork_process) = vfork_process {
         vfork_process.wait_for_vfork_release().await;

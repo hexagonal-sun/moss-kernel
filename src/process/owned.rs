@@ -11,7 +11,7 @@ use super::{
     },
     threading::RobustListHead,
 };
-use crate::{arch::Arch, fs::DummyInode, sync::SpinLock};
+use crate::{arch::Arch, sync::SpinLock};
 use crate::{
     arch::ArchImpl,
     drivers::timer::{Instant, now},
@@ -20,7 +20,6 @@ use alloc::sync::Arc;
 use core::ops::Deref;
 use core::sync::atomic::AtomicUsize;
 use libkernel::{
-    fs::pathbuf::PathBuf,
     memory::{
         address::{TUA, VA},
         proc_vm::{ProcessVM, address_space::VirtualMemory, vmarea::VMArea},
@@ -67,10 +66,8 @@ impl OwnedTask {
             tid: Tid::idle_for_cpu(),
             comm: Arc::new(SpinLock::new(Comm::new("idle"))),
             process: thread_group_builder.build(),
-            cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
-            root: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
+            fs: SpinLock::new(super::fs_context::FsContext::new()),
             creds: SpinLock::new(Credentials::new_root()),
-            umask: Arc::new(SpinLock::new(0)),
             vm: Arc::new(VmHandle::new(vm)),
             fd_table: Arc::new(SpinLock::new(FileDescriptorTable::new())),
             i_timers: SpinLock::new(ITimers::default()),
@@ -98,10 +95,8 @@ impl OwnedTask {
             tid: Tid(1),
             comm: Arc::new(SpinLock::new(Comm::new("init"))),
             process: ThreadGroupBuilder::new(Tgid::init()).build(),
-            cwd: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
-            root: Arc::new(SpinLock::new((Arc::new(DummyInode {}), PathBuf::new()))),
+            fs: SpinLock::new(super::fs_context::FsContext::new()),
             creds: SpinLock::new(Credentials::new_root()),
-            umask: Arc::new(SpinLock::new(0)),
             vm: Arc::new(VmHandle::new(
                 ProcessVM::empty().expect("Could not create init process's VM"),
             )),

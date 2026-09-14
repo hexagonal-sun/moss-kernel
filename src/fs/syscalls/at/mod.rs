@@ -51,10 +51,10 @@ async fn resolve_at_start_node(
 
     let start_node: Arc<dyn Inode> = if path.is_absolute() {
         // Absolute path ignores dirfd.
-        task.root.lock_save_irq().0.clone()
+        task.fs().root.lock_save_irq().0.clone()
     } else if dirfd.is_atcwd() {
         // Path is relative to the current working directory.
-        task.cwd.lock_save_irq().0.clone()
+        task.fs().cwd.lock_save_irq().0.clone()
     } else {
         // Path is relative to the directory specified by dirfd.
         let file = task
@@ -85,7 +85,7 @@ async fn resolve_path_flags(
     // simply return the inode that dirfd refers to
     if flags.contains(AtFlags::AT_EMPTY_PATH) && path.as_str().is_empty() {
         return Ok(if dirfd.is_atcwd() {
-            task.cwd.lock_save_irq().0.clone()
+            task.fs().cwd.lock_save_irq().0.clone()
         } else {
             let file = task
                 .fd_table

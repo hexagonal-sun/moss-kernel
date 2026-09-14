@@ -6,6 +6,7 @@ use libkernel::error::KernelError;
 use libkernel::memory::address::TUA;
 
 pub async fn sys_clock_settime(
+    ctx: &crate::sched::syscall_ctx::ProcessCtx,
     clockid: i32,
     time_spec: TUA<TimeSpec>,
 ) -> libkernel::error::Result<usize> {
@@ -19,6 +20,10 @@ pub async fn sys_clock_settime(
             Err(KernelError::InvalidValue)
         }
         ClockId::Realtime => {
+            ctx.shared().creds.lock_save_irq().check_capable_in(
+                &crate::process::user_namespace::UserNamespace::initial(),
+                libkernel::proc::caps::CapabilitiesFlags::CAP_SYS_TIME,
+            )?;
             set_date(time_spec.into());
             Ok(0)
         }

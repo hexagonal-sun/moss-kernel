@@ -90,22 +90,38 @@ impl SimpleFile for ProcTaskFileInode {
         let task_details = find_task_by_tid(self.tid);
 
         let status_string = if let Some(task) = task_details {
+            if matches!(
+                self.file_type,
+                TaskFileType::Maps | TaskFileType::Cwd | TaskFileType::Root | TaskFileType::Exe
+            ) {
+                let caller = crate::sched::current_work().task.t_shared.clone();
+                crate::process::access::ptrace_may_access(&caller, &task, true)
+                    .map_err(|_| FsError::PermissionDenied)?;
+            }
             let state = task.state.load(core::sync::atomic::Ordering::Relaxed);
             let name = task.comm.lock_save_irq();
             match self.file_type {
-                TaskFileType::Status => format!(
-                    "Name:\t{name}
+                TaskFileType::Status => {
+                    let viewer = crate::sched::current_work()
+                        .task
+                        .creds
+                        .lock_save_irq()
+                        .user_ns();
+                    let credentials = task.creds.lock_save_irq().proc_status(&viewer);
+                    format!(
+                        "Name:\t{name}
 State:\t{state}
 Tgid:\t{tgid}
 FDSize:\t{fd_size}
 Pid:\t{pid}
-Threads:\t{tasks}\n",
-                    name = name.as_str(),
-                    tgid = task.process.tgid,
-                    fd_size = task.fd_table.lock_save_irq().len(),
-                    pid = task.tid.value(),
-                    tasks = task.process.tasks.lock_save_irq().len(),
-                ),
+Threads:\t{tasks}\n{credentials}",
+                        name = name.as_str(),
+                        tgid = task.process.tgid,
+                        fd_size = task.fd_table.lock_save_irq().len(),
+                        pid = task.tid.value(),
+                        tasks = task.process.tasks.lock_save_irq().len(),
+                    )
+                }
                 TaskFileType::Comm => format!("{name}\n", name = name.as_str()),
                 TaskFileType::State => format!("{state}\n"),
                 TaskFileType::Stat => {
@@ -214,8 +230,8 @@ Threads:\t{tasks}\n",
                     output.push('\n');
                     output
                 }
-                TaskFileType::Cwd => task.cwd.lock_save_irq().clone().1.as_str().to_string(),
-                TaskFileType::Root => task.root.lock_save_irq().1.as_str().to_string(),
+                TaskFileType::Cwd => task.fs().cwd.lock_save_irq().clone().1.as_str().to_string(),
+                TaskFileType::Root => task.fs().root.lock_save_irq().1.as_str().to_string(),
                 TaskFileType::Maps => {
                     let mut output = String::new();
                     let proc_vm = task.vm.shared_vm();
@@ -256,10 +272,20 @@ Threads:\t{tasks}\n",
     }
 
     async fn readlink(&self) -> libkernel::error::Result<PathBuf> {
+        if matches!(
+            self.file_type,
+            TaskFileType::Cwd | TaskFileType::Root | TaskFileType::Exe
+        ) {
+            let task = find_task_by_tid(self.tid).ok_or(FsError::NotFound)?;
+            let caller = crate::sched::current_work().task.t_shared.clone();
+            crate::process::access::ptrace_may_access(&caller, &task, true)
+                .map_err(|_| FsError::PermissionDenied)?;
+        }
         if let TaskFileType::Cwd = self.file_type {
             let task = find_task_by_tid(self.tid);
             return if let Some(task) = task {
-                let cwd = task.cwd.lock_save_irq();
+                let fs = task.fs();
+                let cwd = fs.cwd.lock_save_irq();
                 Ok(cwd.1.clone())
             } else {
                 Err(FsError::NotFound.into())
@@ -267,7 +293,8 @@ Threads:\t{tasks}\n",
         } else if let TaskFileType::Root = self.file_type {
             let task = find_task_by_tid(self.tid);
             return if let Some(task) = task {
-                let root = task.root.lock_save_irq();
+                let fs = task.fs();
+                let root = fs.root.lock_save_irq();
                 Ok(root.1.clone())
             } else {
                 Err(FsError::NotFound.into())

@@ -1,4 +1,6 @@
 mod fd;
+pub(super) mod id_map;
+mod ns;
 // TODO: allowlist this across the codebase
 #[expect(clippy::module_inception)]
 mod task;
@@ -53,6 +55,19 @@ impl Inode for ProcTaskInode {
             fs.id(),
             get_inode_id(&[&self.tid.value().to_string(), name]),
         );
+        if let Some(control) = id_map::Control::from_name(name) {
+            return Ok(Arc::new(id_map::IdMapInode {
+                tid: self.tid,
+                id: inode_id,
+                control,
+            }));
+        }
+        if name == "ns" {
+            return Ok(Arc::new(ns::NsDir {
+                tid: self.tid,
+                id: inode_id,
+            }));
+        }
         if name == "fdinfo" {
             return Ok(Arc::new(fd::ProcFdInode::new(self.tid, true, inode_id)));
         } else if name == "fd" {
@@ -148,6 +163,20 @@ impl Inode for ProcTaskInode {
             ));
         }
 
+        entries.push(Dirent::new(
+            "ns".into(),
+            InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, "ns"])),
+            FileType::Directory,
+            entries.len() as u64 + 1,
+        ));
+        for name in ["uid_map", "gid_map", "setgroups"] {
+            entries.push(Dirent::new(
+                name.into(),
+                InodeId::from_fsid_and_inodeid(PROCFS_ID, get_inode_id(&[&initial_str, name])),
+                FileType::File,
+                entries.len() as u64 + 1,
+            ));
+        }
         Ok(Box::new(SimpleDirStream::new(entries, start_offset)))
     }
 

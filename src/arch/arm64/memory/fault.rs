@@ -58,11 +58,12 @@ fn run_mem_fault_handler(
             IfscCategory::PermissionFault => {
                 let mut vm = proc_vm.lock_save_irq();
 
-                let pg_info = vm
-                    .mm_mut()
-                    .address_space_mut()
-                    .translate(fault_addr)
-                    .expect("Could not find PTE in permission fault");
+                let Some(pg_info) = vm.mm_mut().address_space_mut().translate(fault_addr) else {
+                    // A concurrent unmap may have removed the PTE after the
+                    // exception was raised. Revalidate as a missing-page fault.
+                    drop(vm);
+                    return handle_demand_fault(proc_vm, fault_addr, access_kind);
+                };
 
                 handle_protection_fault(&mut vm, fault_addr, access_kind, pg_info)
             }

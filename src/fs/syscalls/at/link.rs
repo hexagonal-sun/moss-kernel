@@ -53,11 +53,10 @@ pub async fn sys_linkat(
     );
     if old_path.as_str().is_empty()
         && flags.contains(AtFlags::AT_EMPTY_PATH)
-        && !task
-            .creds
-            .lock_save_irq()
-            .caps()
-            .is_capable(CapabilitiesFlags::CAP_DAC_READ_SEARCH)
+        && !task.creds.lock_save_irq().capable_in(
+            &crate::process::user_namespace::UserNamespace::initial(),
+            CapabilitiesFlags::CAP_DAC_READ_SEARCH,
+        )
     {
         return Err(FsError::NotFound.into());
     }

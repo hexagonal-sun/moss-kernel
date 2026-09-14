@@ -75,6 +75,7 @@ pub fn kern_err_to_syscall(err: KernelError) -> isize {
         KernelError::SeekPipe => ESPIPE,
         KernelError::NotSupported => ENOSYS,
         KernelError::NoMemory => ENOMEM,
+        KernelError::NoSpace => ENOSPC,
         KernelError::TimedOut => ETIMEDOUT,
         KernelError::RangeError => ERANGE,
         KernelError::NoChildProcess => ECHILD,

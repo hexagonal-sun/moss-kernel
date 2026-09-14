@@ -157,12 +157,22 @@ pub async fn sys_statx(
 
     if mask.contains(StatXMask::STATX_UID) {
         stat_x.stx_mask |= StatXMask::STATX_UID.bits();
-        stat_x.stx_uid = attr.uid.into();
+        stat_x.stx_uid = ctx
+            .shared()
+            .creds
+            .lock_save_irq()
+            .user_ns()
+            .show_uid(attr.uid);
     }
 
     if mask.contains(StatXMask::STATX_GID) {
         stat_x.stx_mask |= StatXMask::STATX_GID.bits();
-        stat_x.stx_gid = attr.gid.into();
+        stat_x.stx_gid = ctx
+            .shared()
+            .creds
+            .lock_save_irq()
+            .user_ns()
+            .show_gid(attr.gid);
     }
 
     if mask.contains(StatXMask::STATX_ATIME) {

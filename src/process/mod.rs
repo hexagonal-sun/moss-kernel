@@ -22,7 +22,6 @@ use fd_table::FileDescriptorTable;
 use libkernel::memory::proc_vm::address_space::{UserAddressSpace, VirtualMemory};
 use libkernel::{
     error::{KernelError, Result},
-    fs::{Inode, pathbuf::PathBuf},
     memory::{
         address::{UA, VA},
         allocators::phys::PageAllocation,
@@ -44,7 +43,9 @@ pub mod epoll;
 pub mod exec;
 pub mod exit;
 pub mod fd_table;
+pub mod fs_context;
 pub mod inotify;
+pub mod namespace;
 pub mod owned;
 pub mod pidfd;
 pub mod prctl;
@@ -52,6 +53,7 @@ pub mod ptrace;
 pub mod sleep;
 pub mod thread_group;
 pub mod threading;
+pub mod user_namespace;
 
 // the idle process (0) and the init process (1) are allocated manually.
 static NEXT_TID: AtomicU32 = AtomicU32::new(2);
@@ -229,9 +231,7 @@ pub struct Task {
     pub comm: Arc<SpinLock<Comm>>,
     pub process: Arc<ThreadGroup>,
     pub vm: Arc<VmHandle>,
-    pub cwd: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
-    pub root: Arc<SpinLock<(Arc<dyn Inode>, PathBuf)>>,
-    pub umask: Arc<SpinLock<u32>>,
+    pub fs: SpinLock<Arc<fs_context::FsContext>>,
     pub creds: SpinLock<Credentials>,
     pub i_timers: SpinLock<ITimers>,
     pub fd_table: Arc<SpinLock<FileDescriptorTable>>,
@@ -245,6 +245,10 @@ pub struct Task {
 }
 
 impl Task {
+    pub fn fs(&self) -> Arc<fs_context::FsContext> {
+        self.fs.lock_save_irq().clone()
+    }
+
     pub fn is_idle_task(&self) -> bool {
         self.process.tgid.is_idle()
     }
@@ -326,6 +330,10 @@ impl Task {
 
             {
                 let mut vm = proc_vm.lock_save_irq();
+
+                if vm.find_vma_for_fault(va, access_kind).is_none() {
+                    return Err(KernelError::Fault);
+                }
 
                 if let Some(pa) = vm.mm_mut().address_space_mut().translate(va) {
                     let region = pa.pfn.as_phys_range();

@@ -504,6 +504,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             .await
         }
         0x60 => sys_set_tid_address(&mut ctx, TUA::from_value(arg1 as _)),
+        0x61 => crate::process::namespace::sys_unshare(&ctx, arg1 as _),
         0x62 => {
             sys_futex(
                 &ctx,
@@ -528,7 +529,7 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
             )
             .await
         }
-        0x70 => sys_clock_settime(arg1 as _, TUA::from_value(arg2 as _)).await,
+        0x70 => sys_clock_settime(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,
         0x71 => sys_clock_gettime(&ctx, arg1 as _, TUA::from_value(arg2 as _)).await,
         0x73 => {
             sys_clock_nanosleep(
@@ -554,6 +555,12 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x7c => sys_sched_yield(),
         0x81 => sys_kill(&ctx, arg1 as _, arg2.into()),
         0x82 => sys_tkill(&ctx, arg1 as _, arg2.into()),
+        0x83 => crate::process::thread_group::signal::kill::sys_tgkill(
+            &ctx,
+            arg1 as _,
+            arg2 as _,
+            arg3.into(),
+        ),
         0x84 => sys_sigaltstack(&ctx, TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0x86 => {
             sys_rt_sigaction(
@@ -628,7 +635,9 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0xa7 => sys_prctl(&ctx, arg1 as _, arg2, arg3).await,
         0xa8 => sys_getcpu(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
         0xa9 => sys_gettimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
-        0xaa => sys_settimeofday(TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await,
+        0xaa => {
+            sys_settimeofday(&ctx, TUA::from_value(arg1 as _), TUA::from_value(arg2 as _)).await
+        }
         0xac => sys_getpid(&ctx).map_err(|e| match e {}),
         0xad => sys_getppid(&ctx).map_err(|e| match e {}),
         0xae => sys_getuid(&ctx).map_err(|e| match e {}),
@@ -748,8 +757,10 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x108 => sys_name_to_handle_at(),
         0x109 => Err(KernelError::NotSupported),
         0x10b => sys_syncfs(&ctx, arg1.into()).await,
+        0x10c => crate::process::namespace::sys_setns(&ctx, arg1.into(), arg2 as _),
         0x10e => {
             sys_process_vm_readv(
+                &ctx,
                 arg1 as _,
                 TUA::from_value(arg2 as _),
                 arg3 as _,

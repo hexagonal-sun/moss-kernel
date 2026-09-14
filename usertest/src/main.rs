@@ -19,6 +19,7 @@ mod sched;
 mod signalfd;
 mod signals;
 mod socket;
+mod userns;
 
 pub struct Test {
     pub test_text: &'static str,
@@ -410,6 +411,9 @@ fn run_test(test_fn: fn()) -> Result<(), i32> {
 }
 
 fn main() {
+    if userns::exec_probe() {
+        return;
+    }
     println!("Running userspace tests ...");
     // Get all args
     let args: Vec<String> = std::env::args().collect();

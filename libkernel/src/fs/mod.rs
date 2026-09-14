@@ -79,6 +79,8 @@ pub const SYSFS_ID: u64 = 3;
 pub const CGROUPFS_ID: u64 = 4;
 /// Filesystem instance ID for the internal pidfd filesystem.
 pub const PIDFS_ID: u64 = 5;
+/// Kernel-only filesystem containing persistent namespace handles.
+pub const NSFS_ID: u64 = 6;
 /// Starting ID for user-mounted filesystem instances.
 pub const FS_ID_START: u64 = 10;
 

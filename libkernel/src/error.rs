@@ -181,6 +181,9 @@ pub enum ExecError {
 /// Top-level kernel error type wrapping all domain-specific errors.
 #[derive(Error, Debug, PartialEq, Eq, Clone)]
 pub enum KernelError {
+    /// A kernel resource namespace or storage allocation limit was reached.
+    #[error("No space left")]
+    NoSpace,
     /// Cannot allocate memory.
     #[error("Cannot allocate memory")]
     NoMemory,

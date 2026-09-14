@@ -33,6 +33,15 @@ fn task_attr(tid: Tid, mut attr: FileAttr) -> Result<FileAttr> {
     {
         attr.uid = creds.euid();
         attr.gid = creds.egid();
+    } else {
+        attr.uid = creds
+            .user_ns()
+            .make_uid(0)
+            .unwrap_or(libkernel::proc::ids::Uid::new_root());
+        attr.gid = creds
+            .user_ns()
+            .make_gid(0)
+            .unwrap_or(libkernel::proc::ids::Gid::new_root_group());
     }
     Ok(attr)
 }

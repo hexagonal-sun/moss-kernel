@@ -5,6 +5,7 @@ mod meminfo;
 mod root;
 mod stat;
 mod task;
+pub use task::id_map::open as open_control;
 
 use crate::drivers::{Driver, FilesystemDriver};
 use crate::sync::OnceLock;

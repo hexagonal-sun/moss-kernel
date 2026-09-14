@@ -83,7 +83,8 @@ pub async fn sys_newfstatat(
     let start_node = resolve_at_start_node(ctx, dirfd, path, flags).await?;
     let node = resolve_path_flags(dirfd, path, start_node, &task, flags).await?;
 
-    let attr = node.getattr().await?;
+    let mut attr = node.getattr().await?;
+    task.creds.lock_save_irq().map_attr_to_user(&mut attr);
 
     copy_to_user(statbuf, attr.into()).await?;
 
