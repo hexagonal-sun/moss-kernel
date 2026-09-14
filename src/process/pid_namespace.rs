@@ -2,13 +2,15 @@
 //! are resolved only in the caller's active namespace. Identities, not task
 //! pointers, pin zombie, pidfd, process-group and session numbers.
 use super::{Task, Tid, thread_group::ThreadGroup, user_namespace::UserNamespace};
-use crate::sync::{OnceLock, SpinLock};
+use crate::sync::{CondVar, OnceLock, SpinLock};
 use alloc::{
     collections::BTreeMap,
     sync::{Arc, Weak},
     vec::Vec,
 };
+use core::sync::atomic::{AtomicBool, Ordering};
 use libkernel::error::{KernelError, Result};
+use libkernel::sync::condvar::WakeupType;
 
 pub static PID_OPS: SpinLock<()> = SpinLock::new(());
 struct State {
@@ -24,6 +26,8 @@ pub struct PidNamespace {
     pub owner: Arc<UserNamespace>,
     pub level: usize,
     state: SpinLock<State>,
+    /// Published processes, including zombies, independent of retained PID handles.
+    processes: CondVar<usize>,
 }
 impl PidNamespace {
     fn new(parent: Option<Arc<Self>>, owner: Arc<UserNamespace>) -> Arc<Self> {
@@ -32,6 +36,7 @@ impl PidNamespace {
             level: parent.as_ref().map_or(0, |p| p.level + 1),
             parent,
             owner,
+            processes: CondVar::new(0),
             state: SpinLock::new(State {
                 next: 1,
                 numbers: BTreeMap::new(),
@@ -92,6 +97,7 @@ impl PidNamespace {
     }
     /// Called with PID_OPS during publication, after every fallible clone step.
     pub fn publish(&self, process: &Arc<ThreadGroup>) {
+        process.lifetime.publish();
         if process.pid.local() == 1 {
             self.state.lock_save_irq().reaper = Some(Arc::downgrade(process));
         }
@@ -102,6 +108,56 @@ impl PidNamespace {
     pub fn disable(&self) {
         let _op = PID_OPS.lock_save_irq();
         self.state.lock_save_irq().dead = true;
+    }
+    pub async fn wait_reaped(&self) {
+        // The namespace reaper itself is still a published process.
+        self.processes.wait_until(|n| (*n == 1).then_some(())).await;
+    }
+}
+
+/// A wait/reaping lifetime is not a PID number lifetime: pidfds and process
+/// groups may keep the latter alive after wait has consumed the exit status.
+/// Stop/continue events and WNOWAIT copies share, but never consume, this token.
+pub struct ProcessLifetime {
+    namespace: Arc<PidNamespace>,
+    published: AtomicBool,
+}
+impl ProcessLifetime {
+    pub fn new(namespace: Arc<PidNamespace>) -> Arc<Self> {
+        Arc::new(Self {
+            namespace,
+            published: AtomicBool::new(false),
+        })
+    }
+    fn publish(&self) {
+        assert!(!self.published.swap(true, Ordering::AcqRel));
+        let mut ns = Some(self.namespace.clone());
+        while let Some(current) = ns {
+            current.processes.update(|n| {
+                *n += 1;
+                WakeupType::None
+            });
+            ns = current.parent.clone();
+        }
+    }
+    pub fn reap(&self) {
+        if !self.published.swap(false, Ordering::AcqRel) {
+            return;
+        }
+        let mut ns = Some(self.namespace.clone());
+        while let Some(current) = ns {
+            current.processes.update(|n| {
+                assert!(*n != 0);
+                *n -= 1;
+                WakeupType::All
+            });
+            ns = current.parent.clone();
+        }
+    }
+}
+impl Drop for ProcessLifetime {
+    fn drop(&mut self) {
+        self.reap();
     }
 }
 
@@ -200,6 +256,28 @@ pub fn find_task(task: &Task, number: u32) -> Option<Arc<crate::sched::sched_tas
 mod tests {
     use super::*;
     use moss_macros::ktest;
+    #[ktest]
+    fn process_reaping_is_idempotent_and_independent_of_retained_handles() {
+        let ns = PidNamespace::create(PidNamespace::initial(), UserNamespace::initial()).unwrap();
+        let inner = PidNamespace::create(ns.clone(), UserNamespace::initial()).unwrap();
+        let lifetime = ProcessLifetime::new(inner.clone());
+        let retained = lifetime.clone();
+        lifetime.publish();
+        for n in [&ns, &inner] {
+            n.processes.update(|count| {
+                assert_eq!(*count, 1);
+                WakeupType::None
+            });
+        }
+        lifetime.reap();
+        retained.reap();
+        for n in [&ns, &inner] {
+            n.processes.update(|count| {
+                assert_eq!(*count, 0);
+                WakeupType::None
+            });
+        }
+    }
     #[ktest]
     fn pid_identity_reservation_rolls_back_without_an_init() {
         let ns = PidNamespace::create(PidNamespace::initial(), UserNamespace::initial()).unwrap();

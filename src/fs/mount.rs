@@ -176,7 +176,10 @@ impl Mount {
         at
     }
     pub fn namespace(&self) -> Option<Arc<MountNamespace>> {
-        self.namespace.upgrade()
+        self.attached
+            .load(Ordering::Acquire)
+            .then(|| self.namespace.upgrade())
+            .flatten()
     }
     pub fn propagation_ids(&self) -> (Option<u64>, Option<u64>, bool) {
         let _guard = MOUNT_OPS.lock_save_irq();
@@ -677,27 +680,88 @@ impl MountNamespace {
                 }
             }
         }
+        if lazy {
+            // Expand before changing anything, including events propagated
+            // from shared mounts *inside* the detached tree. IDs deduplicate
+            // overlapping subtrees and peer/slave replicas.
+            let live = mounts_live();
+            let mut children: BTreeMap<u64, Vec<Arc<Mount>>> = BTreeMap::new();
+            let mut events: BTreeMap<u64, Vec<Arc<Mount>>> = BTreeMap::new();
+            for mount in live {
+                if let Some((parent, _)) = mount.at.lock_save_irq().as_ref() {
+                    children.entry(parent.id).or_default().push(mount.clone());
+                }
+                events.entry(mount.event).or_default().push(mount);
+            }
+            let mut seen: BTreeSet<_> = removals.iter().map(|(_, m)| m.id).collect();
+            let mut propagated = BTreeSet::new();
+            let mut index = 0;
+            while index < removals.len() {
+                let (ns, mount) = removals[index].clone();
+                index += 1;
+                for child in children.get(&mount.id).into_iter().flatten() {
+                    if seen.insert(child.id) {
+                        removals.push((ns.clone(), child.clone()));
+                    }
+                }
+                let Some((parent, at)) = mount.at.lock_save_irq().clone() else {
+                    continue;
+                };
+                let Some(peer) = parent.propagation.lock_save_irq().peer.clone() else {
+                    continue;
+                };
+                if !propagated.insert((mount.event, peer.id, at.id)) {
+                    continue;
+                }
+                for other in events.get(&mount.event).into_iter().flatten() {
+                    if seen.contains(&other.id) {
+                        continue;
+                    }
+                    let receives = other.at.lock_save_irq().as_ref().is_some_and(|(p, d)| {
+                        d.id == at.id && p.propagation.lock_save_irq().receives(peer.id)
+                    });
+                    if receives && let Some(ns) = other.namespace() {
+                        seen.insert(other.id);
+                        removals.push((ns, other.clone()));
+                    }
+                }
+            }
+            // Locked child mounts must remain connected after a lazy detach;
+            // this ownership model cannot retain that disconnected forest yet.
+            // Refuse the entire transaction instead of exposing covered files.
+            if removals.iter().any(|(_, child)| {
+                child.locked
+                    && child
+                        .at
+                        .lock_save_irq()
+                        .as_ref()
+                        .is_some_and(|(parent, _)| seen.contains(&parent.id))
+            }) {
+                return Err(KernelError::NotSupported);
+            }
+        }
         for (ns, mount) in &removals {
-            if ns
-                .tree
-                .lock_save_irq()
-                .edges
-                .keys()
-                .any(|(p, _)| *p == mount.id)
+            if !lazy
+                && ns
+                    .tree
+                    .lock_save_irq()
+                    .edges
+                    .keys()
+                    .any(|(p, _)| *p == mount.id)
             {
-                return Err(if lazy {
-                    KernelError::NotSupported
-                } else {
-                    FsError::Busy.into()
-                });
+                return Err(FsError::Busy.into());
             }
             let own_ref = usize::from(mount.id == m.id);
             if !lazy && mount.path_refs.load(Ordering::Acquire) > own_ref {
                 return Err(FsError::Busy.into());
             }
         }
+        // Descendants first: no parent may lose its namespace-owned reference
+        // while an edge still uses it. Open paths/VMAs keep each detached mount.
+        removals.sort_by_key(|(_, mount)| core::cmp::Reverse(mount.id));
         for (ns, mount) in removals {
             let (p, d) = mount.detach().ok_or(KernelError::InvalidValue)?;
+            *mount.propagation.lock_save_irq() = Propagation::default();
             let mut t = ns.tree.lock_save_irq();
             t.edges.remove(&(p.id, d.id));
             t.mounts.remove(&mount.id);
@@ -926,5 +990,45 @@ mod tests {
             ns.attach(&file, fs, root.dentry.clone(), "test"),
             Err(FsError::NotFound.into())
         );
+    }
+
+    #[ktest]
+    fn lazy_subtree_disconnects_edges_and_releases_unpinned_filesystems() {
+        let (ns, _) = fixture();
+        let target = child(&ns.root(), "target");
+        let outer_fs: Arc<dyn Filesystem> = Arc::new(TestFs);
+        let inner_fs: Arc<dyn Filesystem> = Arc::new(TestFs);
+        let outer_weak = Arc::downgrade(&outer_fs);
+        let inner_weak = Arc::downgrade(&inner_fs);
+        ns.attach(
+            &target,
+            outer_fs,
+            Dentry::root(Arc::new(crate::fs::DummyInode {})),
+            "test",
+        )
+        .unwrap();
+        let outer = MountNamespace::follow(target.clone());
+        let sub = child(&outer, "sub");
+        ns.attach(
+            &sub,
+            inner_fs,
+            Dentry::root(Arc::new(crate::fs::DummyInode {})),
+            "test",
+        )
+        .unwrap();
+        let inner = MountNamespace::follow(sub.clone());
+        ns.unmount(&outer, true).unwrap();
+        assert_eq!(ns.mounts().len(), 1);
+        assert!(MountNamespace::follow(target.clone()) == target);
+        assert!(MountNamespace::follow(sub.clone()) == sub);
+        assert_eq!(target.dentry.mounted.load(Ordering::Acquire), 0);
+        assert_eq!(sub.dentry.mounted.load(Ordering::Acquire), 0);
+        assert!(inner.mount.as_ref().unwrap().namespace().is_none());
+        drop(sub);
+        drop(outer);
+        assert!(outer_weak.upgrade().is_none());
+        assert!(inner_weak.upgrade().is_some());
+        drop(inner);
+        assert!(inner_weak.upgrade().is_none());
     }
 }

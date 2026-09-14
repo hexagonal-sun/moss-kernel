@@ -708,14 +708,11 @@ fn test_mountns_rejects_unsupported_atomically() {
             unsafe { libc::umount2(c(&fixture.0).as_ptr(), 0) } as _,
             libc::EBUSY,
         );
-        error(
-            unsafe { libc::umount2(c(&fixture.0).as_ptr(), libc::MNT_DETACH) } as _,
-            libc::ENOSYS,
-        );
         assert_eq!(mount_id(&fixture.0), outer);
         assert_eq!(mount_id(&sub), inner);
-        umount(&sub, 0);
-        umount(&fixture.0, 0);
+        umount(&fixture.0, libc::MNT_DETACH);
+        assert_eq!(mount_id(&fixture.0), id);
+        assert!(!std::path::Path::new(&sub).exists());
     })
     .join();
 }
@@ -978,6 +975,114 @@ fn test_mountns_recursive_bind_prunes_unbindable() {
     .join();
 }
 register_test!(test_mountns_recursive_bind_prunes_unbindable);
+
+fn test_mountns_lazy_subtree_retains_open_paths() {
+    let fixture = Fixture::new("lazy-tree");
+    spawn(libc::CLONE_NEWNS, || {
+        propagation("/", libc::MS_PRIVATE | libc::MS_REC);
+        mount(&fixture.0, "tmpfs");
+        let sub = fixture.sub("sub");
+        marker(&sub, "covered");
+        mount(&sub, "tmpfs");
+        marker(&sub, "retained");
+        let outer = open(&fixture.0, libc::O_PATH | libc::O_DIRECTORY);
+        let inner = open(&sub, libc::O_PATH | libc::O_DIRECTORY);
+        let mut file = std::fs::File::open(format!("{sub}/retained")).unwrap();
+        let ids = [mount_id(&fixture.0), mount_id(&sub)];
+        std::env::set_current_dir(&sub).unwrap();
+        error(
+            unsafe { libc::umount2(c(&fixture.0).as_ptr(), 0) } as _,
+            libc::EBUSY,
+        );
+        umount(&fixture.0, libc::MNT_DETACH);
+        assert!(!visible(&fixture.0, "sub"));
+        let listing = std::fs::read_to_string("/proc/self/mountinfo").unwrap();
+        for id in ids {
+            assert!(!listing.lines().any(|l| l.starts_with(&format!("{id} "))));
+        }
+        assert_eq!(std::fs::read("retained").unwrap(), b"mounted");
+        error(
+            unsafe { libc::syscall(libc::SYS_getcwd, [0u8; 1024].as_mut_ptr(), 1024) },
+            libc::ENOENT,
+        );
+        // Ordinary lazy unmount disconnects unlocked children too. A retained
+        // parent dirfd sees the covered directory, while the child fd sees its fs.
+        ok(unsafe { libc::fchdir(outer.as_raw_fd()) });
+        assert_eq!(std::fs::read("sub/covered").unwrap(), b"mounted");
+        assert!(!visible("sub", "retained"));
+        ok(unsafe { libc::fchdir(inner.as_raw_fd()) });
+        std::fs::write("after", b"still writable").unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"mounted");
+        std::env::set_current_dir("/").unwrap();
+        // Released mountpoint markers must not leave the underlying directory busy.
+        std::fs::remove_dir(&fixture.0).unwrap();
+    })
+    .join();
+}
+register_test!(test_mountns_lazy_subtree_retains_open_paths);
+
+fn test_mountns_lazy_subtree_propagates_inner_events() {
+    let fixture = Fixture::new("lazy-propagation");
+    let a = fixture.sub("a");
+    let b = fixture.sub("b");
+    let slave = fixture.sub("slave");
+    spawn(libc::CLONE_NEWNS, || {
+        propagation("/", libc::MS_PRIVATE | libc::MS_REC);
+        mount(&a, "tmpfs");
+        std::fs::create_dir(format!("{a}/sub")).unwrap();
+        propagation(&a, libc::MS_SHARED);
+        bind(&a, &b);
+        bind(&a, &slave);
+        propagation(&slave, libc::MS_SLAVE);
+        mount(&format!("{a}/sub"), "tmpfs");
+        marker(&format!("{a}/sub"), "event");
+        let pinned = open(&format!("{b}/sub"), libc::O_PATH);
+        // a's parent is private, but unmount events from its shared descendants
+        // still reach b and slave; their parent mounts themselves remain.
+        umount(&a, libc::MNT_DETACH);
+        for peer in [&b, &slave] {
+            assert!(!visible(&format!("{peer}/sub"), "event"));
+            assert!(visible(peer, "sub"));
+        }
+        ok(unsafe { libc::fchdir(pinned.as_raw_fd()) });
+        assert_eq!(std::fs::read("event").unwrap(), b"mounted");
+        std::env::set_current_dir("/").unwrap();
+    })
+    .join();
+}
+register_test!(test_mountns_lazy_subtree_propagates_inner_events);
+
+fn test_mountns_lazy_locked_subtree_rejection_is_atomic() {
+    let fixture = Fixture::new("lazy-locked");
+    let a = fixture.sub("a");
+    let b = fixture.sub("b");
+    spawn(libc::CLONE_NEWNS, || {
+        propagation("/", libc::MS_PRIVATE | libc::MS_REC);
+        mount(&a, "tmpfs");
+        let sub = format!("{a}/hidden");
+        std::fs::create_dir(&sub).unwrap();
+        marker(&sub, "secret");
+        mount(&sub, "tmpfs");
+        spawn(libc::CLONE_NEWUSER | libc::CLONE_NEWNS, || {
+            mount_flags(&a, &b, libc::MS_BIND | libc::MS_REC);
+            let before = std::fs::read_to_string("/proc/self/mountinfo").unwrap();
+            error(
+                unsafe { libc::umount2(c(&b).as_ptr(), libc::MNT_DETACH) } as _,
+                libc::ENOSYS,
+            );
+            assert_eq!(
+                std::fs::read_to_string("/proc/self/mountinfo").unwrap(),
+                before
+            );
+            assert!(!visible(&format!("{b}/hidden"), "secret"));
+        })
+        .join();
+    })
+    .join();
+}
+register_test!(test_mountns_lazy_locked_subtree_rejection_is_atomic);
 
 fn test_mountns_less_privileged_shared_copy_is_slave() {
     let fixture = Fixture::new("locked-shared");

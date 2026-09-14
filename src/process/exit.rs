@@ -41,6 +41,7 @@ pub async fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
     let namespace_init = ns.level != 0 && process.pid.local() == 1;
     if namespace_init {
         ns.disable();
+        process.child_notifiers.begin_shutdown();
     }
 
     // Signal all other threads in the group to terminate. We iterate over Weak
@@ -102,12 +103,15 @@ pub async fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
                     group.deliver_signal(SigId::SIGKILL);
                 }
             }
-            process.child_notifiers.clear();
             if !live {
                 break;
             }
             crate::drivers::timer::sleep(core::time::Duration::from_millis(1)).await;
         }
+        // External setns parents retain zombie wait statuses. Do not let this
+        // reaper exit until wait consumes them or parent exit reparents them.
+        // Retained pidfds/PGIDs must not hold this barrier open.
+        ns.wait_reaped().await;
     }
 
     // If this process was created with `CLONE_VFORK`, the parent may resume as
@@ -124,35 +128,14 @@ pub async fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
         .expect("live reaper");
     // Reparent to the closest living namespace reaper, never a sibling domain.
     {
-        let mut our_children = process.children.lock_save_irq();
-
-        let mut ancestor = Some(ns.clone());
-        let mut reaper = None;
-        while let Some(ns) = ancestor {
-            if let Some(init) = ns.reaper()
-                && init.tgid != process.tgid
-            {
-                reaper = Some(init);
-                break;
-            }
-            ancestor = ns.parent.clone();
-        }
-        let init =
-            reaper.unwrap_or_else(|| ThreadGroup::get(Tgid::init()).expect("initial reaper"));
-        process.child_notifiers.transfer(&init.child_notifiers);
-
-        let mut init_children = init.children.lock_save_irq();
-
-        let mut our_children: Vec<_> = core::mem::take(&mut *our_children).into_iter().collect();
-
-        for (tgid, our_child) in our_children.drain(..) {
+        let our_children = core::mem::take(&mut *process.children.lock_save_irq());
+        process.child_notifiers.reparent(process.tgid);
+        for (tgid, our_child) in our_children {
+            let init = reaper_for(&our_child.pid, process.tgid);
             *our_child.parent.lock_save_irq() = Some(Arc::downgrade(&init));
-
-            init_children.insert(tgid, our_child);
+            init.children.lock_save_irq().insert(tgid, our_child);
         }
     }
-
-    parent.children.lock_save_irq().remove(&process.tgid);
 
     parent.child_notifiers.child_update(task, exit_code);
 
@@ -163,6 +146,23 @@ pub async fn do_exit_group(task: &Arc<Task>, exit_code: ChildState) {
 
     // NOTE: that the scheduler will never execute the task again since it's
     // state is set to Finished.
+}
+
+pub(super) fn reaper_for(
+    pid: &super::pid_namespace::PidIdentity,
+    exiting: Tgid,
+) -> Arc<ThreadGroup> {
+    let mut ns = Some(pid.namespace());
+    while let Some(current) = ns {
+        if let Some(reaper) = current.reaper()
+            && reaper.tgid != exiting
+            && reaper.tgid.0 != pid.global.0
+        {
+            return reaper;
+        }
+        ns = current.parent.clone();
+    }
+    ThreadGroup::get(Tgid::init()).expect("initial reaper")
 }
 
 pub fn kernel_exit_with_signal(ctx: &mut ProcessCtx, signal: SigId, core: bool) {

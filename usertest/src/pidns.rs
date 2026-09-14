@@ -522,3 +522,174 @@ fn test_pidns_init_exit_stops_running_threads() {
     .join();
 }
 register_test!(test_pidns_init_exit_stops_running_threads);
+
+fn exit_info(child: i32, nohang: bool) -> [i32; 32] {
+    let mut info = [0; 32];
+    loop {
+        let n = unsafe {
+            libc::syscall(
+                libc::SYS_waitid,
+                libc::P_PID,
+                child,
+                info.as_mut_ptr(),
+                libc::WEXITED | libc::WNOWAIT | if nohang { libc::WNOHANG } else { 0 },
+                0,
+            )
+        };
+        if n == 0 {
+            return info;
+        }
+        error(n, libc::EINTR);
+    }
+}
+
+fn test_pidns_init_waits_for_external_zombie_not_pidfd() {
+    let ready = Pipe::new();
+    let exit_init = Pipe::new();
+    let init = spawn(libc::CLONE_NEWPID, || {
+        ready.send(1);
+        exit_init.recv();
+    });
+    ready.recv();
+    let initial = open("/proc/self/ns/pid");
+    let target = open(&format!("/proc/{}/ns/pid", init.pid));
+    ok(unsafe { libc::setns(target.as_raw_fd(), libc::CLONE_NEWPID) });
+    let mut external = spawn(0, || {
+        assert_eq!(unsafe { libc::getppid() }, 0);
+        ready.send(1);
+        loop {
+            unsafe {
+                libc::pause();
+            }
+        }
+    });
+    ok(unsafe { libc::setns(initial.as_raw_fd(), libc::CLONE_NEWPID) });
+    ready.recv();
+    let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, external.pid, 0) } as i32;
+    assert!(fd >= 0);
+    let retained_pid = unsafe { OwnedFd::from_raw_fd(fd) };
+    exit_init.send(1);
+    let info = exit_info(external.pid, false);
+    assert_eq!(
+        (info[2], info[4], info[6]),
+        (libc::CLD_KILLED, external.pid, libc::SIGKILL)
+    );
+    // WNOWAIT must leave the external zombie pending, even after several
+    // scheduler turns. A pidfd, however, must not block reaping afterward.
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    let init_pending = exit_info(init.pid, true)[4] == 0;
+    assert_eq!(external.wait(), libc::SIGKILL);
+    init.join();
+    assert!(
+        init_pending,
+        "namespace init became waitable before its external zombie was reaped"
+    );
+    drop(retained_pid);
+    ok(unsafe { libc::setns(target.as_raw_fd(), libc::CLONE_NEWPID) });
+    error(
+        unsafe { libc::syscall(libc::SYS_clone, libc::SIGCHLD, 0, 0, 0, 0) },
+        libc::ENOMEM,
+    );
+    ok(unsafe { libc::setns(initial.as_raw_fd(), libc::CLONE_NEWPID) });
+}
+register_test!(test_pidns_init_waits_for_external_zombie_not_pidfd);
+
+fn test_pidns_external_parent_exit_reaps_zombie_in_its_namespace() {
+    let ready = Pipe::new();
+    let exit_init = Pipe::new();
+    let inspect = Pipe::new();
+    let parent_exit = Pipe::new();
+    let init = spawn(libc::CLONE_NEWPID, || {
+        ready.send(1);
+        exit_init.recv();
+    });
+    ready.recv();
+    let target = open(&format!("/proc/{}/ns/pid", init.pid));
+    let parent = spawn(0, || {
+        ok(unsafe { libc::setns(target.as_raw_fd(), libc::CLONE_NEWPID) });
+        let child = spawn(0, || {
+            ready.send(1);
+            loop {
+                unsafe {
+                    libc::pause();
+                }
+            }
+        });
+        inspect.recv();
+        assert_eq!(exit_info(child.pid, false)[6], libc::SIGKILL);
+        ready.send(1);
+        parent_exit.recv();
+        // Its zombie must go to the dying inner init and be autoreaped there,
+        // not leak into the initial namespace's wait queue.
+        std::mem::forget(child);
+    });
+    ready.recv();
+    exit_init.send(1);
+    inspect.send(1);
+    ready.recv();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    let pending = exit_info(init.pid, true)[4] == 0;
+    parent_exit.send(1);
+    parent.join();
+    init.join();
+    assert!(pending);
+}
+register_test!(test_pidns_external_parent_exit_reaps_zombie_in_its_namespace);
+
+fn test_pidns_external_parent_exit_reparents_live_child() {
+    let ready = Pipe::new();
+    let exit_init = Pipe::new();
+    let orphan_go = Pipe::new();
+    let init = spawn(libc::CLONE_NEWPID, || {
+        ready.send(1);
+        exit_init.recv();
+    });
+    ready.recv();
+    let target = open(&format!("/proc/{}/ns/pid", init.pid));
+    let parent = spawn(0, || {
+        ok(unsafe { libc::setns(target.as_raw_fd(), libc::CLONE_NEWPID) });
+        let child = spawn(0, || {
+            orphan_go.recv();
+            ready.send(unsafe { libc::getppid() });
+        });
+        std::mem::forget(child);
+    });
+    parent.join();
+    orphan_go.send(1);
+    let reaper = ready.recv();
+    exit_init.send(1);
+    init.join();
+    assert_eq!(reaper, 1);
+}
+register_test!(test_pidns_external_parent_exit_reparents_live_child);
+
+fn test_pidns_teardown_kills_empty_poll_and_select_waiters() {
+    for select in [false, true] {
+        let ready = Pipe::new();
+        let exit_init = Pipe::new();
+        let init = spawn(libc::CLONE_NEWPID, || {
+            let child = spawn(0, || {
+                ready.send(field("/proc/self/status", "Pid:")[0] as i32);
+                let n = unsafe {
+                    if select {
+                        libc::syscall(libc::SYS_pselect6, 0, 0, 0, 0, 0, 0)
+                    } else {
+                        libc::syscall(libc::SYS_ppoll, 0, 0, 0, 0, 0)
+                    }
+                };
+                panic!("infinite wait returned {n}");
+            });
+            std::mem::forget(child);
+            exit_init.recv();
+        });
+        let child = ready.recv();
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        // Verify it did not disappear merely by sleeping without file events.
+        let present = unsafe { libc::kill(child, 0) } == 0;
+        exit_init.send(1);
+        init.join();
+        assert!(present, "empty poll/select lost its sleeping task");
+        error(unsafe { libc::kill(child, 0) } as _, libc::ESRCH);
+    }
+}
+register_test!(test_pidns_teardown_kills_empty_poll_and_select_waiters);

@@ -96,6 +96,7 @@ pub enum ProcessState {
 pub struct ThreadGroup {
     pub tgid: Tgid,
     pub pid: Arc<super::pid_namespace::PidIdentity>,
+    pub lifetime: Arc<super::pid_namespace::ProcessLifetime>,
     pub pgid_ref: SpinLock<Arc<super::pid_namespace::PidIdentity>>,
     pub sid_ref: SpinLock<Arc<super::pid_namespace::PidIdentity>>,
     pub pgid: SpinLock<Pgid>,

@@ -95,6 +95,7 @@ enum WaitEvent {
 #[derive(Clone)]
 struct Event {
     pid: Arc<PidIdentity>,
+    lifetime: Arc<crate::process::pid_namespace::ProcessLifetime>,
     pgid: Arc<PidIdentity>,
     uid: libkernel::proc::ids::Uid,
     event: WaitEvent,
@@ -126,6 +127,17 @@ impl Selection {
     }
 }
 impl Event {
+    fn is_exit(&self) -> bool {
+        matches!(
+            self.event,
+            WaitEvent::Child(ChildState::NormalExit { .. } | ChildState::SignalExit { .. })
+        )
+    }
+    fn reap(&self) {
+        if self.is_exit() {
+            self.lifetime.reap();
+        }
+    }
     fn selected(&self, task: &Task, selection: Selection) -> bool {
         selection.matches(task, &self.pid, &self.pgid)
     }
@@ -180,6 +192,7 @@ impl Event {
     }
 }
 struct NotifierState {
+    autoreap: bool,
     children: BTreeMap<Tgid, Event>,
     ptrace: BTreeMap<Tid, Event>,
 }
@@ -195,6 +208,7 @@ impl Notifiers {
     pub fn new() -> Self {
         Self {
             inner: CondVar::new(NotifierState {
+                autoreap: false,
                 children: BTreeMap::new(),
                 ptrace: BTreeMap::new(),
             }),
@@ -203,11 +217,30 @@ impl Notifiers {
     pub fn child_update(&self, task: &Task, state: ChildState) {
         let event = Event {
             pid: task.process.pid.clone(),
+            lifetime: task.process.lifetime.clone(),
             pgid: task.process.pgid_ref.lock_save_irq().clone(),
             uid: task.creds.lock_save_irq().uid(),
             event: WaitEvent::Child(state),
         };
         self.inner.update(|s| {
+            // wait checks this map and the live-child list under inner's
+            // lock. Publish exit and remove the live entry in that order's
+            // same transaction, avoiding a transient false ECHILD on SMP.
+            if event.is_exit()
+                && let Some(parent) = task
+                    .process
+                    .parent
+                    .lock_save_irq()
+                    .as_ref()
+                    .and_then(|p| p.upgrade())
+            {
+                parent.children.lock_save_irq().remove(&task.process.tgid);
+            }
+            if s.autoreap {
+                s.children.remove(&task.process.tgid);
+                event.reap();
+                return WakeupType::All;
+            }
             s.children.insert(task.process.tgid, event);
             WakeupType::All
         });
@@ -218,6 +251,7 @@ impl Notifiers {
         };
         let event = Event {
             pid: task.pid.clone(),
+            lifetime: task.process.lifetime.clone(),
             pgid: task.process.pgid_ref.lock_save_irq().clone(),
             uid: task.creds.lock_save_irq().uid(),
             event: WaitEvent::Ptrace(trap),
@@ -227,23 +261,38 @@ impl Notifiers {
             WakeupType::All
         });
     }
-    pub fn clear(&self) {
+    pub fn begin_shutdown(&self) {
         self.inner.update(|s| {
+            s.autoreap = true;
+            for event in s.children.values() {
+                event.reap();
+            }
             s.children.clear();
             s.ptrace.clear();
             WakeupType::All
         });
     }
-    pub fn transfer(&self, target: &Self) {
+    /// An external setns parent can own children in multiple PID namespaces.
+    /// Reparent each zombie to its own nearest reaper, not the parent's init.
+    /// The caller holds PID_OPS to serialize with live-child reparenting.
+    pub fn reparent(&self, exiting: Tgid) {
         let mut events = None;
         self.inner.update(|s| {
             events = Some(core::mem::take(&mut s.children));
             WakeupType::All
         });
-        target.inner.update(|s| {
-            s.children.extend(events.unwrap());
-            WakeupType::All
-        });
+        for (tgid, event) in events.unwrap() {
+            let target = crate::process::exit::reaper_for(&event.pid, exiting);
+            target.child_notifiers.inner.update(|s| {
+                if s.autoreap {
+                    event.reap();
+                } else {
+                    s.children.insert(tgid, event);
+                }
+                WakeupType::All
+            });
+            target.queue_signal(SigId::SIGCHLD);
+        }
     }
 }
 fn select_map<K: Ord + Copy>(
@@ -259,7 +308,9 @@ fn select_map<K: Ord + Copy>(
     if flags.contains(WaitFlags::WNOWAIT) {
         map.get(&key).cloned()
     } else {
-        map.remove(&key)
+        let event = map.remove(&key)?;
+        event.reap();
+        Some(event)
     }
 }
 fn matching_children(task: &Task, pid: Selection) -> bool {

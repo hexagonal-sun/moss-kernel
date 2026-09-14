@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::{future::poll_fn, iter, pin::pin, task::Poll};
 use libkernel::{
     error::{KernelError, Result},
@@ -17,6 +17,39 @@ use crate::{
 };
 
 const SET_SIZE: usize = 1024;
+
+/// poll/select can sleep without any file or timeout future. They still need
+/// a registered signal waker to retain the Work and to observe SIGKILL. Merely
+/// checking pending signals once leaves an empty infinite poll unschedulable.
+struct SignalWait {
+    task: Arc<crate::process::Task>,
+    token: Option<u64>,
+}
+impl SignalWait {
+    fn new(task: Arc<crate::process::Task>) -> Self {
+        Self { task, token: None }
+    }
+    fn pending(&mut self, cx: &core::task::Context<'_>) -> bool {
+        let mut notifier = self.task.signal_notifier.lock_save_irq();
+        if let Some(token) = self.token.take() {
+            notifier.remove(token);
+        }
+        if self.task.peek_signal().is_some() {
+            return true;
+        }
+        // The signal producer updates pending state before taking notifier's
+        // lock. Checking and registering under it closes the lost-wake race.
+        self.token = Some(notifier.register(cx.waker()));
+        false
+    }
+}
+impl Drop for SignalWait {
+    fn drop(&mut self) {
+        if let Some(token) = self.token.take() {
+            self.task.signal_notifier.lock_save_irq().remove(token);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct FdSet {
@@ -183,6 +216,7 @@ pub async fn sys_pselect6(
         except_fd_set.zero();
     }
 
+    let mut signal = SignalWait::new(task.clone());
     let n = poll_fn(|cx| {
         let mut num_ready: usize = 0;
 
@@ -207,14 +241,17 @@ pub async fn sys_pselect6(
         }
 
         if num_ready == 0 {
+            if signal.pending(cx) {
+                return Poll::Ready(Err(KernelError::Interrupted));
+            }
             // Check if done
             if let Some(ref mut timeout) = timeout_fut {
-                timeout.as_mut().poll(cx).map(|_| 0)
+                timeout.as_mut().poll(cx).map(|_| Ok(0))
             } else {
                 Poll::Pending
             }
         } else {
-            Poll::Ready(num_ready)
+            Poll::Ready(Ok(num_ready))
         }
     })
     .await;
@@ -243,7 +280,7 @@ pub async fn sys_pselect6(
     writefds_copy_result?;
     exceptfds_copy_result?;
 
-    Ok(n)
+    n
 }
 
 bitflags::bitflags! {
@@ -322,6 +359,7 @@ pub async fn sys_ppoll(
         }));
     }
 
+    let mut signal = SignalWait::new(task.clone());
     let num_ready = poll_fn(|cx| {
         let mut num_ready = invalid_ready;
 
@@ -334,6 +372,9 @@ pub async fn sys_ppoll(
         }
 
         if num_ready == 0 {
+            if signal.pending(cx) {
+                return Poll::Ready(Err(KernelError::Interrupted));
+            }
             if let Some(ref mut timeout) = timeout_fut {
                 timeout.as_mut().poll(cx).map(|_| Ok(0))
             } else {

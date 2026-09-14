@@ -91,6 +91,7 @@ impl ThreadGroupBuilder {
         let ret = Arc::new(ThreadGroup {
             tgid: self.tgid,
             did_exec: core::sync::atomic::AtomicBool::new(false),
+            lifetime: crate::process::pid_namespace::ProcessLifetime::new(pid.namespace()),
             pid,
             pgid: SpinLock::new(Pgid(pgid_ref.global.0)),
             sid: SpinLock::new(Sid(sid_ref.global.0)),
