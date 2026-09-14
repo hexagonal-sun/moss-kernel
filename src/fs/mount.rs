@@ -368,26 +368,25 @@ impl MountNamespace {
                     |(id, d)| (copies[id].clone(), d.clone()),
                 );
                 let mut prop = entry.spec.propagation.clone();
-                if let Some(origin) = &origin_parent {
-                    if dest
+                if let Some(origin) = &origin_parent
+                    && dest
                         .propagation
                         .peer
                         .as_ref()
                         .is_none_or(|g| g.id != origin.id)
-                    {
-                        if let Some(peer) = &dest.propagation.peer {
-                            prop = Propagation {
-                                peer: Some(replica_group(peer, &mut groups[idx])),
-                                master: None,
-                                unbindable: false,
-                            };
-                        } else if let Some(master) = dest.propagation.master() {
-                            prop = Propagation {
-                                peer: None,
-                                master: Some(replica_group(&master, &mut groups[idx])),
-                                unbindable: false,
-                            };
-                        }
+                {
+                    if let Some(peer) = &dest.propagation.peer {
+                        prop = Propagation {
+                            peer: Some(replica_group(peer, &mut groups[idx])),
+                            master: None,
+                            unbindable: false,
+                        };
+                    } else if let Some(master) = dest.propagation.master() {
+                        prop = Propagation {
+                            peer: None,
+                            master: Some(replica_group(&master, &mut groups[idx])),
+                            unbindable: false,
+                        };
                     }
                 }
                 let less = dest.ns.owner != self.owner;

@@ -1,14 +1,18 @@
+#[cfg(feature = "smp")]
 use crate::arch::{Arch, ArchImpl};
 use crate::drivers::timer::now;
 #[cfg(feature = "smp")]
 use crate::interrupts::cpu_messenger::{Message, message_cpu};
 use crate::kernel::cpu_id::CpuId;
 use crate::process::owned::OwnedTask;
+#[cfg(feature = "smp")]
 use crate::sched::sched_task::{CPU_MASK_SIZE, CpuMask};
 use crate::{per_cpu_private, per_cpu_shared, process::TASK_LIST};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::fmt::Debug;
-use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+#[cfg(feature = "smp")]
+use core::sync::atomic::AtomicU64;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::task::Waker;
 use core::time::Duration;
 use log::warn;
@@ -261,12 +265,14 @@ impl SchedState {
 }
 
 pub struct SharedSchedState {
+    #[cfg(feature = "smp")]
     pub total_runq_weight: AtomicU64,
 }
 
 impl SharedSchedState {
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "smp")]
             total_runq_weight: AtomicU64::new(0),
         }
     }

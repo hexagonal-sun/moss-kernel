@@ -252,10 +252,10 @@ impl DiskLayout {
             }
         };
         let end = block.len() - 4;
-        if let Some(expected) = checksum(&block)? {
-            if u32_at(&block, end) != expected {
-                return Err(FsError::InvalidFs.into());
-            }
+        if let Some(expected) = checksum(&block)?
+            && u32_at(&block, end) != expected
+        {
+            return Err(FsError::InvalidFs.into());
         }
         block[12..16].copy_from_slice(&new.get().to_le_bytes());
         if let Some(crc) = checksum(&block)? {

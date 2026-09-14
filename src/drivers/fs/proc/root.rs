@@ -88,7 +88,7 @@ impl Inode for ProcRootInode {
         let mut entries: Vec<Dirent> = Vec::new();
         // Gather task list under interrupt-safe lock.
         let task_list = TASK_LIST.lock_save_irq();
-        for (_, task) in task_list.iter() {
+        for task in task_list.values() {
             let Some(task) = task.upgrade() else {
                 continue;
             };

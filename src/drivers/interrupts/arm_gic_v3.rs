@@ -49,6 +49,7 @@ fn set_icc_igrpen1_el1(enable: u64) {
     unsafe { asm!("msr ICC_IGRpen1_EL1, {}", in(reg) enable, options(nostack, nomem)) };
 }
 
+#[cfg(feature = "smp")]
 #[inline(always)]
 fn set_icc_sgi1r_el1(value: u64) {
     unsafe { asm!("msr ICC_SGI1R_EL1, {}", in(reg) value, options(nostack, nomem)) };
@@ -392,6 +393,7 @@ impl InterruptController for ArmGicV3 {
         Some(Box::new(context))
     }
 
+    #[cfg(feature = "smp")]
     fn raise_ipi(&mut self, target_cpu_id: usize) {
         set_icc_sgi1r_el1(1 << (target_cpu_id as u64 & 0xffff));
     }

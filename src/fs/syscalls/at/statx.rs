@@ -131,12 +131,14 @@ pub async fn sys_statx(
 
     let attr = node.getattr().await?;
 
-    let mut stat_x = StatX::default();
-    stat_x.stx_blksize = attr.block_size;
     // Decode the same Linux dev_t that ordinary stat returns.
     let dev = attr.id.fs_id();
-    stat_x.stx_dev_major = (((dev >> 8) & 0xfff) | ((dev >> 32) & 0xfffff000)) as u32;
-    stat_x.stx_dev_minor = ((dev & 0xff) | ((dev >> 12) & 0xffffff00)) as u32;
+    let mut stat_x = StatX {
+        stx_blksize: attr.block_size,
+        stx_dev_major: (((dev >> 8) & 0xfff) | ((dev >> 32) & 0xfffff000)) as u32,
+        stx_dev_minor: ((dev & 0xff) | ((dev >> 12) & 0xffffff00)) as u32,
+        ..StatX::default()
+    };
 
     // TODO: right now, the attr is applied unconditionally even if the data is not supported, as
     // long as the input mask is set. at some point, the fs should be checked if these attributes

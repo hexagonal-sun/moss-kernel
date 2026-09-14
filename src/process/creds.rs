@@ -127,7 +127,7 @@ impl Credentials {
     }
 
     pub fn uid_is_root(&self, uid: Uid) -> bool {
-        self.user_ns.from_uid(uid) == Some(0)
+        self.user_ns.map_uid_from_kernel(uid) == Some(0)
     }
 
     /// Capability recalculation for an ordinary executable (file capability
@@ -160,7 +160,9 @@ impl Credentials {
     /// Linux's capable_wrt_inode_uidgid: capability overrides only apply when
     /// both inode IDs have mappings in the caller's namespace.
     pub fn file_caps(&self, attr: &FileAttr) -> Capabilities {
-        if self.user_ns.from_uid(attr.uid).is_some() && self.user_ns.from_gid(attr.gid).is_some() {
+        if self.user_ns.map_uid_from_kernel(attr.uid).is_some()
+            && self.user_ns.map_gid_from_kernel(attr.gid).is_some()
+        {
             self.caps
         } else {
             Capabilities::new_empty()

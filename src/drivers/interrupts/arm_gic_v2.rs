@@ -264,6 +264,7 @@ impl InterruptController for ArmGicV2 {
         }
     }
 
+    #[cfg(feature = "smp")]
     fn raise_ipi(&mut self, target_cpu_id: usize) {
         let cpu_bit = (target_cpu_id & 0x7) as u32;
         let target_list = 1u32 << cpu_bit;

@@ -858,8 +858,11 @@ where
     /// Creates a new tmpfs instance with the given filesystem ID.
     pub fn new(fs_id: u64) -> Arc<Self> {
         Arc::new_cyclic(|weak_fs| {
-            let root =
-                TmpFsDirInode::new(1, weak_fs.clone(), FilePermissions::from_bits_retain(0o1777));
+            let root = TmpFsDirInode::new(
+                1,
+                weak_fs.clone(),
+                FilePermissions::from_bits_retain(0o1777),
+            );
 
             Self {
                 id: fs_id,

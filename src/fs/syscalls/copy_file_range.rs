@@ -51,7 +51,9 @@ pub async fn sys_copy_file_range(
     };
     reader.lock().await.1.require_readable()?;
     writer.lock().await.1.require_writable()?;
-    if size == 0 { return Ok(0); }
+    if size == 0 {
+        return Ok(0);
+    }
 
     if Arc::ptr_eq(&reader, &writer) {
         return Err(KernelError::InvalidValue);

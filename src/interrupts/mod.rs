@@ -51,6 +51,7 @@ pub trait InterruptController: Send + Sync {
     fn read_active_interrupt(&mut self) -> Option<Box<dyn InterruptContext>>;
 
     /// Sends an IPI to the given CPU ID.
+    #[cfg(feature = "smp")]
     fn raise_ipi(&mut self, target_cpu_id: usize);
 
     /// Enable the interrupt controller for this core. This is the entry point
@@ -166,6 +167,7 @@ impl InterruptManager {
         handler.handle_irq(desc);
     }
 
+    #[cfg(feature = "smp")]
     pub fn raise_ipi(&self, cpu: usize) {
         self.controller.lock_save_irq().raise_ipi(cpu);
     }

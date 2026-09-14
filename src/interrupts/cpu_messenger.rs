@@ -5,23 +5,24 @@ use core::task::Waker;
 use super::{
     ClaimedInterrupt, InterruptConfig, InterruptDescriptor, InterruptHandler, get_interrupt_root,
 };
+#[cfg(feature = "smp")]
 use crate::kernel::cpu_id::CpuId;
-use crate::sched::sched_task::Work;
+#[cfg(feature = "smp")]
+use crate::sched::{self, sched_task::Work};
 use crate::{
     arch::ArchImpl,
     drivers::Driver,
     kernel::kpipe::KBuf,
-    sched,
     sync::{OnceLock, SpinLock},
 };
 use alloc::{sync::Arc, vec::Vec};
-use libkernel::{
-    CpuOps,
-    error::{KernelError, Result},
-};
+use libkernel::CpuOps;
+#[cfg(feature = "smp")]
+use libkernel::error::{KernelError, Result};
 use log::warn;
 
 pub enum Message {
+    #[cfg(feature = "smp")]
     EnqueueWork(Arc<Work>),
     #[expect(unused)]
     WakeupTask(Waker),
@@ -50,6 +51,7 @@ impl InterruptHandler for CpuMessenger {
             .try_pop()
         {
             match message {
+                #[cfg(feature = "smp")]
                 Message::EnqueueWork(work) => sched::insert_work(work),
                 Message::WakeupTask(waker) => waker.wake(),
             }
@@ -87,6 +89,7 @@ pub fn cpu_messenger_init(num_cpus: usize) {
     }
 }
 
+#[cfg(feature = "smp")]
 pub fn message_cpu(cpu_id: CpuId, message: Message) -> Result<()> {
     let messenger = CPU_MESSENGER.get().ok_or(KernelError::InvalidValue)?;
     let irq = get_interrupt_root().ok_or(KernelError::InvalidValue)?;

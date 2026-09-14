@@ -85,7 +85,9 @@ impl UserNamespace {
         if parent.level >= 32 {
             return Err(KernelError::NoSpace);
         }
-        if parent.from_uid(creator.euid()).is_none() || parent.from_gid(creator.egid()).is_none() {
+        if parent.map_uid_from_kernel(creator.euid()).is_none()
+            || parent.map_gid_from_kernel(creator.egid()).is_none()
+        {
             return Err(KernelError::NotPermitted);
         }
         let allow_setgroups = parent.maps.lock_save_irq().allow_setgroups;
@@ -138,17 +140,17 @@ impl UserNamespace {
             .map(Gid::new)
             .ok_or(KernelError::InvalidValue)
     }
-    pub fn from_uid(&self, id: Uid) -> Option<u32> {
+    pub fn map_uid_from_kernel(&self, id: Uid) -> Option<u32> {
         self.map_range(MapKind::Uid, id.into(), 1, false)
     }
-    pub fn from_gid(&self, id: Gid) -> Option<u32> {
+    pub fn map_gid_from_kernel(&self, id: Gid) -> Option<u32> {
         self.map_range(MapKind::Gid, id.into(), 1, false)
     }
     pub fn show_uid(&self, id: Uid) -> u32 {
-        self.from_uid(id).unwrap_or(OVERFLOW_ID)
+        self.map_uid_from_kernel(id).unwrap_or(OVERFLOW_ID)
     }
     pub fn show_gid(&self, id: Gid) -> u32 {
-        self.from_gid(id).unwrap_or(OVERFLOW_ID)
+        self.map_gid_from_kernel(id).unwrap_or(OVERFLOW_ID)
     }
 
     pub fn may_setgroups(&self) -> bool {

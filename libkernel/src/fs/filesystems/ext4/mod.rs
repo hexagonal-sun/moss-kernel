@@ -291,7 +291,7 @@ where
         let fs = self.fs_ref.upgrade().unwrap();
         // The library frees whole blocks but leaves the retained EOF block's
         // tail unchanged. Clear it before shrinking, without allocating holes.
-        if size < inner.size_in_bytes() && size % fs.disk.block_size != 0 {
+        if size < inner.size_in_bytes() && !size.is_multiple_of(fs.disk.block_size) {
             let end = size
                 .checked_add(fs.disk.block_size - size % fs.disk.block_size)
                 .ok_or(KernelError::TooLarge)?;
@@ -725,14 +725,13 @@ where
                 // If removal failed before deleting the name, keep its target
                 // intact. Never restore an inode after the name was removed:
                 // allocation/freeing may already have progressed.
-                if let Some(original) = saved {
-                    if parent
+                if let Some(original) = saved
+                    && parent
                         .get_entry(entry)
                         .await
                         .is_ok_and(|inode| inode.index == id)
-                    {
-                        original.restore(&self.dev).await?;
-                    }
+                {
+                    original.restore(&self.dev).await?;
                 }
                 return Err(error.into());
             }
