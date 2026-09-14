@@ -827,6 +827,8 @@ pub async fn handle_syscall(mut ctx: ProcessCtx) {
         0x125 => Err(KernelError::NotSupported),
         0x1ae => Err(KernelError::NotSupported),
         0x1b2 => sys_pidfd_open(&ctx, arg1 as _, arg2 as _).await,
+        // Let libc fall back to clone(2) until clone3(2) is implemented.
+        0x1b3 => Err(KernelError::NotSupported),
         0x1b4 => sys_close_range(&ctx, arg1.into(), arg2.into(), arg3 as _).await,
         0x1b7 => {
             sys_faccessat2(

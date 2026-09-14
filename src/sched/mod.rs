@@ -131,6 +131,16 @@ fn schedule() {
     drop(deferred);
 }
 
+/// Request a voluntary yield without switching the in-flight syscall's task.
+fn request_yield() {
+    SCHED_STATE.borrow_mut().run_q.request_yield();
+}
+
+/// Checked by the dispatcher only after it has finished polling kernel work.
+fn yield_requested() -> bool {
+    SCHED_STATE.borrow().run_q.yield_requested()
+}
+
 pub fn spawn_kernel_work(ctx: &mut ProcessCtx, fut: impl Future<Output = ()> + 'static + Send) {
     ctx.task_mut().ctx.put_kernel_work(Box::pin(fut));
 }
