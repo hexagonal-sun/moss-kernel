@@ -13,6 +13,7 @@ mod futex;
 mod futex2;
 mod inotify;
 mod pidfd;
+mod sched;
 mod signalfd;
 mod signals;
 mod socket;
