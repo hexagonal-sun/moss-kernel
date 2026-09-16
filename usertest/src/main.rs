@@ -6,6 +6,8 @@ use std::{
 };
 
 mod epoll;
+#[cfg(target_arch = "aarch64")]
+mod fpsimd;
 mod fs;
 mod futex;
 mod futex2;

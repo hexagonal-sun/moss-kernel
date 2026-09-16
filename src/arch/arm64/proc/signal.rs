@@ -15,11 +15,14 @@ use libkernel::{
     },
 };
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Clone, Copy)]
 struct RtSigFrame {
     uctx: ExceptionState,
     alt_stack_prev_addr: UA,
+    // Keep SP 16-byte aligned on alternate stacks too, with initialized
+    // bytes rather than implicit padding in the frame copied to userspace.
+    reserved: u64,
 }
 
 // SAFETY: The signal frame that's copied to user-space only contains
@@ -39,6 +42,7 @@ pub async fn do_signal(
     let mut frame = RtSigFrame {
         uctx: saved_state,
         alt_stack_prev_addr: UA::null(),
+        reserved: 0,
     };
 
     // Use the provided restorer trampoline, or the one provided by the VDSO if

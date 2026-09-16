@@ -96,6 +96,7 @@ impl Arch for Aarch64 {
             spsr_el1: 0,
             sp_el0: stack_top.value() as _,
             tpid_el0: 0,
+            ..Default::default()
         }
     }
 
