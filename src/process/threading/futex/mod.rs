@@ -25,6 +25,7 @@ const FUTEX_WAKE: i32 = 1;
 const FUTEX_WAIT_BITSET: i32 = 9;
 const FUTEX_WAKE_BITSET: i32 = 10;
 const FUTEX_PRIVATE_FLAG: i32 = 128;
+const FUTEX_CLOCK_REALTIME: i32 = 256;
 
 type FutexTable = BTreeMap<FutexKey, FutexQueue>;
 
@@ -173,8 +174,14 @@ pub async fn sys_futex(
     _uaddr2: TUA<u32>,
     val3: u32,
 ) -> Result<usize> {
-    // Strip PRIVATE flag if present
-    let cmd = op & !FUTEX_PRIVATE_FLAG;
+    let cmd = op & !(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+    let use_realtime_clock = op & FUTEX_CLOCK_REALTIME != 0;
+
+    // Linux only accepts FUTEX_CLOCK_REALTIME for operations whose timeout is
+    // absolute. Of the operations supported here, that is WAIT_BITSET.
+    if use_realtime_clock && cmd != FUTEX_WAIT_BITSET {
+        return Err(KernelError::InvalidValue);
+    }
 
     let key = if op & FUTEX_PRIVATE_FLAG != 0 {
         FutexKey::new_private(ctx, uaddr)
@@ -189,8 +196,13 @@ pub async fn sys_futex(
             } else {
                 let ts = Duration::from(TimeSpec::copy_from_user(timeout).await?);
                 if matches!(cmd, FUTEX_WAIT_BITSET) {
-                    // FUTEX_WAIT_BITSET takes an absolute realtime deadline.
-                    Some(Deadline::Realtime(ts))
+                    // FUTEX_WAIT_BITSET uses an absolute deadline. Its default
+                    // clock is monotonic unless FUTEX_CLOCK_REALTIME is set.
+                    if use_realtime_clock {
+                        Some(Deadline::Realtime(ts))
+                    } else {
+                        Some(Deadline::Monotonic(ts))
+                    }
                 } else {
                     // FUTEX_WAIT takes a relative timeout on the monotonic
                     // clock; convert to an absolute monotonic deadline.
@@ -227,6 +239,9 @@ pub async fn sys_futex(
             Ok(wake_key(val as _, key, mask))
         }
 
-        _ => Err(KernelError::NotSupported),
+        _ => {
+            log::warn!("Unsupported futex operation: op={op:#x}, cmd={cmd:#x}");
+            Err(KernelError::NotSupported)
+        }
     }
 }

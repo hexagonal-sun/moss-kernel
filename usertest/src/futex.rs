@@ -44,6 +44,58 @@ fn test_futex() {
 
 register_test!(test_futex);
 
+fn test_futex_timeout_clocks() {
+    // No threads are needed: each wait expires with an unchanged futex word.
+    // A relative WAIT must use monotonic time; WAIT_BITSET uses an absolute
+    // monotonic deadline unless FUTEX_CLOCK_REALTIME is explicitly selected.
+    for (operation, clock, absolute) in [
+        (libc::FUTEX_WAIT, libc::CLOCK_MONOTONIC, false),
+        (libc::FUTEX_WAIT_BITSET, libc::CLOCK_MONOTONIC, true),
+        (
+            libc::FUTEX_WAIT_BITSET | libc::FUTEX_CLOCK_REALTIME,
+            libc::CLOCK_REALTIME,
+            true,
+        ),
+    ] {
+        for private in [0, libc::FUTEX_PRIVATE_FLAG] {
+            let word = 0u32;
+            let mut deadline = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            if absolute {
+                assert_eq!(unsafe { libc::clock_gettime(clock, &mut deadline) }, 0);
+            }
+            deadline.tv_nsec += 100_000_000;
+            if deadline.tv_nsec >= 1_000_000_000 {
+                deadline.tv_nsec -= 1_000_000_000;
+                deadline.tv_sec += 1;
+            }
+            let start = std::time::Instant::now();
+            let result = unsafe {
+                libc::syscall(
+                    libc::SYS_futex,
+                    &word,
+                    operation | private,
+                    0u32,
+                    &deadline,
+                    std::ptr::null::<u32>(),
+                    u32::MAX,
+                )
+            };
+            let error = std::io::Error::last_os_error();
+            assert_eq!(result, -1);
+            assert_eq!(error.raw_os_error(), Some(libc::ETIMEDOUT));
+            assert!(
+                start.elapsed() >= Duration::from_millis(80),
+                "timeout expired early"
+            );
+        }
+    }
+}
+
+register_test!(test_futex_timeout_clocks);
+
 fn test_futex_bitset() {
     // Wait on bit 1, Wake on bit 1
     {
