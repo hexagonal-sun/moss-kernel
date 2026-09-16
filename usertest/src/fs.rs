@@ -70,6 +70,36 @@ fn test_chdir() {
 
 register_test!(test_chdir);
 
+fn test_getcwd_syscall_length() {
+    unsafe {
+        assert_eq!(libc::chdir(c"/".as_ptr()), 0);
+        let mut buffer = [0xa5u8; 16];
+        let length = libc::syscall(libc::SYS_getcwd, buffer.as_mut_ptr(), buffer.len());
+        assert_eq!(length, 2, "getcwd must return the size including the NUL");
+        assert_eq!(&buffer[..2], b"/\0");
+        assert!(buffer[2..].iter().all(|&byte| byte == 0xa5));
+
+        let mut short = [0xa5u8; 1];
+        assert_eq!(
+            libc::syscall(libc::SYS_getcwd, short.as_mut_ptr(), short.len()),
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ERANGE)
+        );
+        assert_eq!(short, [0xa5]);
+
+        assert_eq!(
+            libc::getcwd(buffer.as_mut_ptr().cast(), buffer.len()),
+            buffer.as_mut_ptr().cast()
+        );
+        assert_eq!(&buffer[..2], b"/\0");
+    }
+}
+
+register_test!(test_getcwd_syscall_length);
+
 fn test_fchdir() {
     let path = CString::new("/dev").unwrap();
     let mut buffer = [1u8; 16];
