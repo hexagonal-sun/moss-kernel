@@ -10,6 +10,7 @@ mod fs;
 mod futex;
 mod futex2;
 mod inotify;
+mod pidfd;
 mod signalfd;
 mod signals;
 mod socket;

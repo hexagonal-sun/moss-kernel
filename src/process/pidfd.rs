@@ -1,5 +1,7 @@
+use crate::drivers::fs::pidfs;
 use crate::fs::fops::FileOps;
 use crate::fs::open_file::OpenFile;
+use crate::process::fd_table::FdFlags;
 use crate::process::thread_group::pid::PidT;
 use crate::process::{Tid, find_task_by_tid};
 use crate::sched::syscall_ctx::ProcessCtx;
@@ -34,15 +36,19 @@ impl PidFile {
 
     pub fn new_open_file(pid: Tid, flags: PidfdFlags) -> Arc<OpenFile> {
         let file = PidFile::new(pid, flags);
-        Arc::new(OpenFile::new(
-            Box::new(file),
-            OpenFlags::from_bits(flags.bits()).unwrap(),
-        ))
+        let mut open_file =
+            OpenFile::new(Box::new(file), OpenFlags::from_bits(flags.bits()).unwrap());
+        open_file.set_inode(pidfs::new_inode(pid));
+        Arc::new(open_file)
     }
 }
 
 #[async_trait]
 impl FileOps for PidFile {
+    fn anonymous_name(&self) -> Option<&'static str> {
+        Some("anon_inode:[pidfd]")
+    }
+
     async fn readat(&mut self, _buf: UA, _count: usize, _offset: u64) -> Result<usize> {
         Err(KernelError::InvalidValue)
     }
@@ -53,16 +59,23 @@ impl FileOps for PidFile {
 }
 
 pub async fn sys_pidfd_open(ctx: &ProcessCtx, pid: PidT, flags: u32) -> Result<usize> {
+    if pid <= 0 {
+        return Err(KernelError::InvalidValue);
+    }
     let pid = Tid::from_pid_t(pid);
     let flags = PidfdFlags::from_bits(flags).ok_or(KernelError::InvalidValue)?;
-    if !flags.contains(PidfdFlags::PIDFD_THREAD) {
-        // Ensure the pid exists and is a thread group leader.
-        let _ = find_task_by_tid(pid).unwrap();
+    let task = find_task_by_tid(pid).ok_or(KernelError::NoProcess)?;
+    if !flags.contains(PidfdFlags::PIDFD_THREAD) && task.process.tgid.value() != pid.value() {
+        return Err(KernelError::NoProcess);
     }
 
     let file = PidFile::new_open_file(pid, flags);
 
-    let fd = ctx.task().fd_table.lock_save_irq().insert(file)?;
+    let fd = ctx
+        .task()
+        .fd_table
+        .lock_save_irq()
+        .insert_with_flags(file, FdFlags::CLOEXEC)?;
 
     Ok(fd.as_raw() as _)
 }

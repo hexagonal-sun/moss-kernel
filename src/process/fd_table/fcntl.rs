@@ -79,7 +79,7 @@ pub async fn sys_fcntl(ctx: &ProcessCtx, fd: Fd, op: u32, arg: usize) -> Result<
                 fd.file.clone()
             };
             // TODO: Ignore sync/dsync when implemented
-            open_fd.set_flags(fl).await;
+            open_fd.set_status_flags(fl).await;
             Ok(0)
         }
         _ => Err(KernelError::InvalidValue),
