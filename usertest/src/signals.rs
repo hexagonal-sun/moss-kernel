@@ -6,6 +6,49 @@ use std::{
 
 static SIGNAL_CAUGHT: AtomicBool = AtomicBool::new(false);
 
+fn test_sigaltstack_disable_and_query() {
+    unsafe {
+        let mut previous: libc::stack_t = std::mem::zeroed();
+        assert_eq!(libc::sigaltstack(ptr::null(), &mut previous), 0);
+        // Rust may already have installed its stack-overflow signal stack.
+        // Explicitly disable it instead of assuming the initial state.
+        let disabled = libc::stack_t {
+            ss_sp: ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: 0,
+        };
+        assert_eq!(libc::sigaltstack(&disabled, ptr::null_mut()), 0);
+        let mut initial: libc::stack_t = std::mem::zeroed();
+        assert_eq!(libc::sigaltstack(ptr::null(), &mut initial), 0);
+        assert_ne!(initial.ss_flags & libc::SS_DISABLE, 0);
+
+        let mut memory = vec![0u8; 64 * 1024];
+        let enabled = libc::stack_t {
+            ss_sp: memory.as_mut_ptr().cast(),
+            ss_flags: 0,
+            ss_size: memory.len(),
+        };
+        assert_eq!(libc::sigaltstack(&enabled, ptr::null_mut()), 0);
+        let mut queried: libc::stack_t = std::mem::zeroed();
+        assert_eq!(libc::sigaltstack(ptr::null(), &mut queried), 0);
+        assert_eq!(queried.ss_flags, 0);
+        assert_eq!(queried.ss_sp, enabled.ss_sp);
+        assert_eq!(queried.ss_size, enabled.ss_size);
+
+        let disabled = libc::stack_t {
+            ss_sp: ptr::null_mut(),
+            ss_flags: libc::SS_DISABLE,
+            ss_size: 0,
+        };
+        assert_eq!(libc::sigaltstack(&disabled, ptr::null_mut()), 0);
+        assert_eq!(libc::sigaltstack(ptr::null(), &mut queried), 0);
+        assert_ne!(queried.ss_flags & libc::SS_DISABLE, 0);
+        assert_eq!(libc::sigaltstack(&previous, ptr::null_mut()), 0);
+    }
+}
+
+register_test!(test_sigaltstack_disable_and_query);
+
 extern "C" fn signal_handler(_: libc::c_int) {
     SIGNAL_CAUGHT.store(true, Ordering::Relaxed);
 }
