@@ -82,6 +82,20 @@ fn test_fork() {
 
 register_test!(test_fork);
 
+fn test_clone3_fallback() {
+    // Until clone3 is implemented, ENOSYS tells libc to retry with clone.
+    // Unsupported arguments must not reach the kernel's unknown-syscall panic.
+    let result =
+        unsafe { libc::syscall(libc::SYS_clone3, std::ptr::null::<libc::c_void>(), 0usize) };
+    assert_eq!(result, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ENOSYS)
+    );
+}
+
+register_test!(test_clone3_fallback);
+
 #[expect(deprecated)]
 fn test_vfork_exit() {
     unsafe {
