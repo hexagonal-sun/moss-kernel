@@ -5,7 +5,6 @@ use super::{
     address::{Address, MemKind, PA, Physical, TPA, TVA, VA},
     region::PhysMemoryRegion,
 };
-use core::marker::PhantomData;
 use permissions::PtePermissions;
 
 pub mod permissions;
@@ -139,7 +138,6 @@ pub trait PgTable: Clone + Copy {
 #[repr(C, align(4096))]
 pub struct PgTableArray<K: PgTable, const N: usize = 512> {
     pages: [<K::Descriptor as PageTableEntry>::RawDescriptor; N],
-    _phantom: PhantomData<K>,
 }
 
 impl<K: PgTable, const N: usize> PgTableArray<K, N> {
@@ -147,7 +145,6 @@ impl<K: PgTable, const N: usize> PgTableArray<K, N> {
     pub const fn new() -> Self {
         Self {
             pages: [K::Descriptor::INVALID; N],
-            _phantom: PhantomData,
         }
     }
 }
