@@ -126,6 +126,12 @@ impl DerefMut for RunnableTask {
 }
 
 impl RunnableTask {
+    /// Give up the unused portion of this slice. The next tick replenishes
+    /// the virtual deadline and requeues us, allowing a peer to run.
+    pub fn yield_slice(&mut self) {
+        self.v_eligible = self.v_eligible.max(self.v_deadline);
+    }
+
     /// Re-issue a virtual deadline
     fn replenish_deadline(&mut self) {
         let q_ns: u128 = DEFAULT_TIME_SLICE.as_nanos();

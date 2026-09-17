@@ -1,4 +1,4 @@
-use super::{current_work, current_work_waker, schedule};
+use super::{current_work, current_work_waker, schedule, yield_requested};
 use crate::{
     arch::{Arch, ArchImpl},
     process::{
@@ -164,7 +164,11 @@ pub fn dispatch_userspace_task(frame: *mut UserCtx) {
                             // point was hit). We don't need to clear the kernel
                             // context here as we used the *take* function
                             // above.
-                            state = State::ProcessKernelWork;
+                            state = if yield_requested() {
+                                State::PickNewTask
+                            } else {
+                                State::ProcessKernelWork
+                            };
                             continue;
                         }
                         Poll::Pending => {

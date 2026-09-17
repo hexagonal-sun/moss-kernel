@@ -67,6 +67,7 @@ impl PartialOrd for ByDeadline {
 /// 2. `running_task` is NOT in `queue`.
 pub struct RunQueue {
     total_weight: u64,
+    yield_requested: bool,
     ineligible: BinaryHeap<ByEligible>,
     eligible: BinaryHeap<ByDeadline>,
     pub(super) running_task: Option<RunnableTask>,
@@ -80,6 +81,7 @@ impl RunQueue {
 
         Self {
             total_weight: 0,
+            yield_requested: false,
             ineligible: BinaryHeap::new(),
             eligible: BinaryHeap::new(),
             running_task: None,
@@ -95,6 +97,7 @@ impl RunQueue {
     /// re-enter `SCHED_STATE` and panic.
     pub fn schedule(&mut self, now: Instant) -> Vec<RunnableTask> {
         self.v_clock.advance(now, self.weight());
+        let yielding = core::mem::take(&mut self.yield_requested);
 
         let mut prev_task = ptr::null();
         let mut next_task = None;
@@ -105,6 +108,9 @@ impl RunQueue {
             let state = cur_task.work.state.load(Ordering::Acquire);
             match state {
                 TaskState::Running | TaskState::Woken => {
+                    if yielding {
+                        cur_task.yield_slice();
+                    }
                     if cur_task.tick(now) {
                         // Deadline exceeded — requeue for the next time slice.
                         self.enqueue(cur_task);
@@ -227,6 +233,14 @@ impl RunQueue {
 
     pub fn weight(&self) -> u64 {
         self.total_weight
+    }
+
+    pub fn request_yield(&mut self) {
+        self.yield_requested = true;
+    }
+
+    pub fn yield_requested(&self) -> bool {
+        self.yield_requested
     }
 
     #[allow(clippy::borrowed_box)]

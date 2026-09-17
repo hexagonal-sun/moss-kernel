@@ -3,12 +3,14 @@ use crate::memory::uaccess::{copy_from_user_slice, copy_to_user_slice};
 use crate::process::thread_group::pid::PidT;
 use crate::sched::sched_task::CPU_MASK_SIZE;
 use crate::sched::syscall_ctx::ProcessCtx;
-use crate::sched::{current_work, schedule};
+use crate::sched::{current_work, request_yield};
 use alloc::vec;
 use libkernel::memory::address::UA;
 
 pub fn sys_sched_yield() -> libkernel::error::Result<usize> {
-    schedule();
+    // The dispatcher is still polling this task's syscall future. Switching
+    // here would leave its ProcessCtx pointing at the previous task.
+    request_yield();
     Ok(0)
 }
 
