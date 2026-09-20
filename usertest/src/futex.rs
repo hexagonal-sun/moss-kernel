@@ -96,6 +96,75 @@ fn test_futex_timeout_clocks() {
 
 register_test!(test_futex_timeout_clocks);
 
+fn test_futex_unsupported_realtime_ops() {
+    for operation in [libc::FUTEX_WAIT, libc::FUTEX_WAKE, libc::FUTEX_WAKE_BITSET] {
+        for private in [0, libc::FUTEX_PRIVATE_FLAG] {
+            let word = 0u32;
+            let result = unsafe {
+                libc::syscall(
+                    libc::SYS_futex,
+                    &word,
+                    operation | private | libc::FUTEX_CLOCK_REALTIME,
+                    0u32,
+                    std::ptr::null::<libc::timespec>(),
+                    std::ptr::null::<u32>(),
+                    u32::MAX,
+                )
+            };
+            assert_eq!(result, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ENOSYS)
+            );
+        }
+    }
+}
+
+register_test!(test_futex_unsupported_realtime_ops);
+
+fn test_pthread_cond_timedwait_clocks() {
+    // Exercise libc's actual timed-wait path, not just the raw futex ABI.
+    // In glibc, rejecting WAIT_BITSET|CLOCK_REALTIME can abort the process.
+    for clock in [libc::CLOCK_REALTIME, libc::CLOCK_MONOTONIC] {
+        unsafe {
+            let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
+            let mut cond: libc::pthread_cond_t = std::mem::zeroed();
+            let mut attr: libc::pthread_condattr_t = std::mem::zeroed();
+            assert_eq!(libc::pthread_mutex_init(&mut mutex, std::ptr::null()), 0);
+            assert_eq!(libc::pthread_condattr_init(&mut attr), 0);
+            assert_eq!(libc::pthread_condattr_setclock(&mut attr, clock), 0);
+            assert_eq!(libc::pthread_cond_init(&mut cond, &attr), 0);
+            assert_eq!(libc::pthread_condattr_destroy(&mut attr), 0);
+            assert_eq!(libc::pthread_mutex_lock(&mut mutex), 0);
+
+            let mut deadline: libc::timespec = std::mem::zeroed();
+            assert_eq!(libc::clock_gettime(clock, &mut deadline), 0);
+            deadline.tv_nsec += 100_000_000;
+            if deadline.tv_nsec >= 1_000_000_000 {
+                deadline.tv_nsec -= 1_000_000_000;
+                deadline.tv_sec += 1;
+            }
+            let start = std::time::Instant::now();
+            loop {
+                let result = libc::pthread_cond_timedwait(&mut cond, &mut mutex, &deadline);
+                if result == 0 {
+                    // POSIX permits spurious wakeups; retain the same deadline.
+                    continue;
+                }
+                assert_eq!(result, libc::ETIMEDOUT, "clock {clock}");
+                break;
+            }
+            assert!(start.elapsed() >= Duration::from_millis(80));
+            assert_eq!(libc::pthread_mutex_trylock(&mut mutex), libc::EBUSY);
+            assert_eq!(libc::pthread_mutex_unlock(&mut mutex), 0);
+            assert_eq!(libc::pthread_cond_destroy(&mut cond), 0);
+            assert_eq!(libc::pthread_mutex_destroy(&mut mutex), 0);
+        }
+    }
+}
+
+register_test!(test_pthread_cond_timedwait_clocks);
+
 fn test_futex_bitset() {
     // Wait on bit 1, Wake on bit 1
     {

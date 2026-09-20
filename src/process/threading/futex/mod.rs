@@ -177,10 +177,10 @@ pub async fn sys_futex(
     let cmd = op & !(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
     let use_realtime_clock = op & FUTEX_CLOCK_REALTIME != 0;
 
-    // Linux only accepts FUTEX_CLOCK_REALTIME for operations whose timeout is
-    // absolute. Of the operations supported here, that is WAIT_BITSET.
+    // Of the operations implemented here, Linux accepts this flag only for
+    // WAIT_BITSET. Unsupported clock/op combinations return ENOSYS, not EINVAL.
     if use_realtime_clock && cmd != FUTEX_WAIT_BITSET {
-        return Err(KernelError::InvalidValue);
+        return Err(KernelError::NotSupported);
     }
 
     let key = if op & FUTEX_PRIVATE_FLAG != 0 {
