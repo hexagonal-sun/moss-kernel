@@ -199,6 +199,46 @@ fn test_fchmod() {
 
 register_test!(test_fchmod);
 
+fn test_chmod_preserves_file_type() {
+    for (name, kind) in [("file", libc::S_IFREG), ("dir", libc::S_IFDIR)] {
+        let path = format!("/tmp/chmod-type-{}-{name}", std::process::id());
+        if kind == libc::S_IFDIR {
+            fs::create_dir(&path).unwrap();
+        } else {
+            fs::write(&path, b"preserved").unwrap();
+        }
+        let opened = File::open(&path).unwrap();
+        let c_path = CString::new(path.clone()).unwrap();
+        // Linux only accepts the permission portion of chmod's mode argument.
+        // Try each file-type pattern, including otherwise invalid combinations.
+        for type_bits in [libc::S_IFDIR, libc::S_IFREG, libc::S_IFLNK, libc::S_IFMT] {
+            for (fd_call, permissions) in [(false, 0o751), (true, 0o640)] {
+                let result = unsafe {
+                    if fd_call {
+                        libc::fchmod(opened.as_raw_fd(), type_bits | permissions)
+                    } else {
+                        libc::chmod(c_path.as_ptr(), type_bits | permissions)
+                    }
+                };
+                assert_eq!(result, 0, "chmod: {}", std::io::Error::last_os_error());
+                for metadata in [opened.metadata().unwrap(), fs::metadata(&path).unwrap()] {
+                    assert_eq!(metadata.mode() & libc::S_IFMT, kind);
+                    assert_eq!(metadata.mode() & 0o7777, permissions);
+                }
+            }
+        }
+        drop(opened);
+        if kind == libc::S_IFDIR {
+            fs::remove_dir(&path).unwrap();
+        } else {
+            assert_eq!(fs::read(&path).unwrap(), b"preserved");
+            fs::remove_file(&path).unwrap();
+        }
+    }
+}
+
+register_test!(test_chmod_preserves_file_type);
+
 fn test_chown() {
     let dir_path = "/tmp/chown_test";
     let c_dir_path = CString::new(dir_path).unwrap();

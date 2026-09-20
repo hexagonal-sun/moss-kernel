@@ -102,7 +102,8 @@ async fn adapter_disk_formats() {
             let inode = root.create(name, kind, mode, None).await.unwrap();
             let alias = root.lookup(name).await.unwrap();
             let mut attr = inode.getattr().await.unwrap();
-            attr.permissions = FilePermissions::from_bits_retain(permissions);
+            // Defensively ignore type bits even from a direct VFS caller.
+            attr.permissions = FilePermissions::from_bits_retain(permissions | 0xf000);
             inode.setattr(attr).await.unwrap();
             let observed = alias.getattr().await.unwrap();
             assert_eq!(observed.permissions.bits(), permissions);

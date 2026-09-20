@@ -34,7 +34,7 @@ pub async fn sys_fchmodat(
     let task = ctx.shared().clone();
     let path = Path::new(UserCStr::from_ptr(path).copy_from_user(&mut buf).await?);
     let start_node = resolve_at_start_node(ctx, dirfd, path, flags).await?;
-    let mode = FilePermissions::from_bits_retain(mode);
+    let mode = FilePermissions::from_bits_truncate(mode);
 
     let node = resolve_path_flags(dirfd, path, start_node, &task, flags).await?;
     let mut attr = node.getattr().await?;

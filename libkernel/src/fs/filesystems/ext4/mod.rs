@@ -328,7 +328,9 @@ where
     async fn setattr(&self, attr: FileAttr) -> Result<()> {
         let mut inner = self.inner.lock().await;
         // chmod changes permission bits, never the existing inode's file type.
-        let mode = (inner.mode().bits() & !FilePermissions::all().bits()) | attr.permissions.bits();
+        let permission_mask = FilePermissions::all().bits();
+        let mode =
+            (inner.mode().bits() & !permission_mask) | (attr.permissions.bits() & permission_mask);
         inner.set_mode(InodeMode::from_bits_retain(mode))?;
         inner.set_atime(attr.atime);
         inner.set_ctime(attr.ctime);
