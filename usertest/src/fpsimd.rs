@@ -167,6 +167,54 @@ fn test_fpsimd_context() {
 
 register_test!(test_fpsimd_context);
 
+fn test_fpsimd_user_copy() {
+    // libc/LLVM may keep a memcpy or memset's data in SIMD registers while a
+    // demand-page fault switches tasks. Exercise this without any filesystem
+    // I/O so corrupted user buffers cannot be mistaken for an ext4 race.
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    assert!(page_size > 0);
+    let len = page_size as usize * 16 + 1;
+    let barrier = Barrier::new(8);
+    thread::scope(|scope| {
+        for worker in 1..=8u8 {
+            let barrier = &barrier;
+            scope.spawn(move || {
+                barrier.wait();
+                for round in 0..16u8 {
+                    let byte = worker * 17 + round;
+                    let source = vec![byte; len];
+                    unsafe {
+                        let destination = libc::mmap(
+                            std::ptr::null_mut(),
+                            len,
+                            libc::PROT_READ | libc::PROT_WRITE,
+                            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                            -1,
+                            0,
+                        );
+                        assert_ne!(destination, libc::MAP_FAILED);
+                        // Do not prefault the destination before the copy.
+                        std::ptr::copy_nonoverlapping(
+                            source.as_ptr(),
+                            destination.cast::<u8>(),
+                            len,
+                        );
+                        let observed = std::slice::from_raw_parts(destination.cast::<u8>(), len);
+                        let mismatch = observed.iter().position(|&value| value != byte);
+                        assert_eq!(libc::munmap(destination, len), 0);
+                        assert!(
+                            mismatch.is_none(),
+                            "user copy corrupted: worker {worker}, round {round}, offset {mismatch:?}"
+                        );
+                    }
+                }
+            });
+        }
+    });
+}
+
+register_test!(test_fpsimd_user_copy);
+
 static SIGNAL_SEEN: AtomicBool = AtomicBool::new(false);
 static SIGNAL_SP: AtomicUsize = AtomicUsize::new(0);
 

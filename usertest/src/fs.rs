@@ -668,10 +668,12 @@ fn check_unlink_write_race(dir: &Path) {
             let expected = vec![(round + 1) as u8; 8193 + round];
             assert_eq!(file.metadata().unwrap().nlink(), 1);
             assert_eq!(file.metadata().unwrap().len(), expected.len() as u64);
-            assert_eq!(
-                fs::read(&path).unwrap(),
-                expected,
-                "unlink/write round {round}"
+            let observed = fs::read(&path).unwrap();
+            assert_eq!(observed.len(), expected.len(), "unlink/write round {round}");
+            let mismatch = observed.iter().zip(&expected).position(|(a, b)| a != b);
+            assert!(
+                mismatch.is_none(),
+                "unlink/write round {round}: first differing byte {mismatch:?}"
             );
         }
         drop(request);
