@@ -93,6 +93,21 @@ async fn adapter_disk_formats() {
         let fs = mount(&image).await;
         let root = fs.root_inode().await.unwrap();
         let mode = FilePermissions::from_bits_truncate(0o755);
+        // Permission updates must survive closing all wrappers and remounting,
+        // including special mode bits, without changing the inode's file type.
+        for (name, kind, permissions) in [
+            ("mode-file", FileType::File, 0o6751),
+            ("mode-dir", FileType::Directory, 0o1750),
+        ] {
+            let inode = root.create(name, kind, mode, None).await.unwrap();
+            let alias = root.lookup(name).await.unwrap();
+            let mut attr = inode.getattr().await.unwrap();
+            attr.permissions = FilePermissions::from_bits_retain(permissions);
+            inode.setattr(attr).await.unwrap();
+            let observed = alias.getattr().await.unwrap();
+            assert_eq!(observed.permissions.bits(), permissions);
+            assert_eq!(observed.file_type, kind);
+        }
         let left = root
             .create("left", FileType::Directory, mode, None)
             .await
@@ -217,6 +232,22 @@ async fn adapter_disk_formats() {
         let reopened = mount(&image).await;
         let root = reopened.root_inode().await.unwrap();
         assert!(root.lookup("right").await.is_err());
+        for (name, kind, permissions) in [
+            ("mode-file", FileType::File, 0o6751),
+            ("mode-dir", FileType::Directory, 0o1750),
+        ] {
+            let inode = root.lookup(name).await.unwrap();
+            let mut attr = inode.getattr().await.unwrap();
+            assert_eq!(attr.permissions.bits(), permissions);
+            assert_eq!(attr.file_type, kind);
+            // Also check that clearing permission bits is not an OR-only update.
+            attr.permissions = FilePermissions::from_bits_retain(0o600);
+            inode.setattr(attr).await.unwrap();
+            assert_eq!(inode.getattr().await.unwrap().permissions.bits(), 0o600);
+            root.unlink(name).await.unwrap();
+        }
+        reopened.sync().await.unwrap();
+        run(Command::new("e2fsck").args(["-fn"]).arg(&image), &[0]);
         std::println!(
             "verified {kind}, block={block_size}, inode={inode_size}, features={features}"
         );
