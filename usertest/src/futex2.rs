@@ -3,7 +3,7 @@
 
 use crate::register_test;
 use std::sync::{
-    Arc,
+    Arc, Barrier,
     atomic::{AtomicU32, Ordering},
 };
 use std::thread;
@@ -368,8 +368,10 @@ fn test_futex2_timeout() {
     let addr = &word as *const u32;
 
     for clockid in [libc::CLOCK_MONOTONIC, libc::CLOCK_REALTIME] {
-        let ts = abs_deadline(clockid, 50);
+        // Start measuring before computing the deadline. Otherwise time spent
+        // between the two clock reads is incorrectly counted as an early wake.
         let start = Instant::now();
+        let ts = abs_deadline(clockid, 50);
 
         let ret = unsafe { futex2_wait(addr, 0, MATCH_ANY, FUTEX2_SIZE_U32, &ts, clockid) };
         if ret != -1 || errno() != libc::ETIMEDOUT {
@@ -720,18 +722,22 @@ fn test_futex2_realtime_retarget() {
 register_test!(test_futex2_realtime_retarget);
 
 fn test_futex2_requeue_timeout_race() {
-    // Requeue waiters that are about to time out: their timeout-path
-    // unregistration must find them on the destination queue.
+    // Requeue timed waiters: their timeout-path unregistration must find them
+    // on the destination queue, even when they arrive at different times.
     const NR_THREADS: usize = 4;
 
     let f1 = Arc::new(AtomicU32::new(0));
     let f2 = Arc::new(AtomicU32::new(0));
+    let ready = Arc::new(Barrier::new(NR_THREADS + 1));
 
     let threads: Vec<_> = (0..NR_THREADS)
         .map(|_| {
             let f1 = f1.clone();
+            let ready = ready.clone();
             thread::spawn(move || {
-                let ts = abs_deadline(libc::CLOCK_MONOTONIC, 150);
+                // Do not include thread creation time in the wait deadline.
+                ready.wait();
+                let ts = abs_deadline(libc::CLOCK_MONOTONIC, 2_000);
                 let ret = unsafe {
                     futex2_wait(
                         f1.as_ptr() as *const u32,
@@ -749,19 +755,31 @@ fn test_futex2_requeue_timeout_race() {
         })
         .collect();
 
-    thread::sleep(Duration::from_millis(50));
+    ready.wait();
 
     let pair = [
         FutexWaitv::new(f1.as_ptr() as *const u32, 0, FUTEX2_SIZE_U32),
         FutexWaitv::new(f2.as_ptr() as *const u32, 0, FUTEX2_SIZE_U32),
     ];
 
-    unsafe {
-        // Move everyone to f2 without waking anybody. Return counts the
-        // requeued waiters (0 woken + NR requeued).
-        let ret = futex2_requeue(pair.as_ptr(), 0, 0, NR_THREADS as i32);
-        if ret != NR_THREADS as i64 {
-            panic!("requeue returned {ret}, expected {NR_THREADS} requeued");
+    // A fixed sleep cannot prove that every waiter has entered the kernel.
+    // Count actual migrations, retaining the requirement that all four move.
+    let start = Instant::now();
+    let mut moved = 0;
+    while moved < NR_THREADS {
+        let remaining = NR_THREADS - moved;
+        let ret = unsafe { futex2_requeue(pair.as_ptr(), 0, 0, remaining as i32) };
+        assert!(
+            (0..=remaining as i64).contains(&ret),
+            "requeue returned {ret}"
+        );
+        moved += ret as usize;
+        if moved < NR_THREADS {
+            assert!(
+                start.elapsed() < Duration::from_secs(2),
+                "only {moved}/{NR_THREADS} waiters reached the destination"
+            );
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -776,6 +794,7 @@ fn test_futex2_requeue_timeout_race() {
         if ret != 0 {
             panic!("{ret} stale waiters left on f2");
         }
+        assert_eq!(futex2_wake(f1.as_ptr(), MATCH_ANY, 64, FUTEX2_SIZE_U32), 0);
     }
 }
 
