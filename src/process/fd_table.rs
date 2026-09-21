@@ -201,6 +201,17 @@ impl FileDescriptorTable {
         }
     }
 
+    /// Returns `true` if any open file descriptor refers to an inode on the
+    /// given filesystem.
+    pub fn any_inode_on_fs(&self, fs_id: u64) -> bool {
+        self.entries.iter().flatten().any(|entry| {
+            entry
+                .file
+                .inode()
+                .is_some_and(|inode| inode.id().fs_id() == fs_id)
+        })
+    }
+
     /// Number of file descriptors in use.
     pub fn len(&self) -> usize {
         self.entries.iter().filter(|e| e.is_some()).count()

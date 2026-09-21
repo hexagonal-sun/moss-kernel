@@ -115,6 +115,16 @@ impl From<Duration> for StatXTimestamp {
 
 unsafe impl UserCopyable for StatX {}
 
+fn special_file_device(
+    attr: &libkernel::fs::attr::FileAttr,
+) -> Option<libkernel::driver::CharDevDescriptor> {
+    match attr.file_type {
+        libkernel::fs::FileType::BlockDevice(device)
+        | libkernel::fs::FileType::CharDevice(device) => Some(device),
+        _ => None,
+    }
+}
+
 pub async fn sys_statx(
     ctx: &ProcessCtx,
     dirfd: Fd,
@@ -203,6 +213,11 @@ pub async fn sys_statx(
     if mask.contains(StatXMask::STATX_MNT_ID) {
         stat_x.stx_mask |= StatXMask::STATX_MNT_ID.bits();
         stat_x.stx_mnt_id = attr.id.fs_id();
+    }
+
+    if let Some(device) = special_file_device(&attr) {
+        stat_x.stx_rdev_major = device.major as u32;
+        stat_x.stx_rdev_minor = device.minor as u32;
     }
 
     stat_x.stx_attributes_mask = StatXAttr::STATX_ATTR_MOUNT_ROOT.bits();

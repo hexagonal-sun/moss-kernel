@@ -13,6 +13,14 @@ use libkernel::{
 
 use super::AtFlags;
 
+fn special_file_rdev(attr: &FileAttr) -> u64 {
+    match attr.file_type {
+        libkernel::fs::FileType::BlockDevice(device)
+        | libkernel::fs::FileType::CharDevice(device) => device.dev_t(),
+        _ => 0,
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Stat {
@@ -42,6 +50,8 @@ unsafe impl UserCopyable for Stat {}
 
 impl From<FileAttr> for Stat {
     fn from(value: FileAttr) -> Self {
+        let st_rdev = special_file_rdev(&value);
+
         Self {
             st_dev: value.id.fs_id(),
             st_ino: value.id.inode_id(),
@@ -49,12 +59,12 @@ impl From<FileAttr> for Stat {
             st_nlink: value.nlinks,
             st_uid: value.uid.into(),
             st_gid: value.gid.into(),
-            st_rdev: 0,
+            st_rdev,
             __pad1: 0,
             st_size: value.size as _,
             st_blksize: value.block_size as _,
             __pad2: 0,
-            st_blocks: 0,
+            st_blocks: value.blocks as _,
             st_atime: value.atime.as_secs() as _,
             st_atime_nsec: value.atime.subsec_nanos() as _,
             st_mtime: value.mtime.as_secs() as _,

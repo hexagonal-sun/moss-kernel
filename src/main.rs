@@ -8,6 +8,7 @@
 #![reexport_test_harness_main = "test_main"]
 #![test_runner(crate::testing::test_runner)]
 
+use crate::sched::current_work;
 use alloc::{
     boxed::Box,
     string::{String, ToString},
@@ -68,6 +69,15 @@ fn on_panic(info: &PanicInfo) -> ! {
             location.line(),
             location.column(),
             panic_msg
+        );
+        let work = current_work();
+        error!(
+            "Executable: {:?}",
+            work.process
+                .executable
+                .lock_save_irq()
+                .as_ref()
+                .map(|p| p.as_str())
         );
     } else {
         error!("Kernel panicked at unknown location: {panic_msg}");
