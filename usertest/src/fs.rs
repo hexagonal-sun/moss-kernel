@@ -627,3 +627,15 @@ fn test_o_append() {
 }
 
 register_test!(test_o_append);
+
+fn test_getcwd_buffer_too_small() {
+    let mut buf = [0 as libc::c_char; 1];
+    let ret = unsafe { libc::getcwd(buf.as_mut_ptr(), buf.len()) };
+    assert!(ret.is_null());
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ERANGE)
+    );
+}
+
+register_test!(test_getcwd_buffer_too_small);

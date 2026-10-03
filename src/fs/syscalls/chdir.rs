@@ -20,7 +20,7 @@ pub async fn sys_getcwd(ctx: &ProcessCtx, buf: UA, len: usize) -> Result<usize> 
     let slice = cstr.as_bytes_with_nul();
 
     if slice.len() > len {
-        return Err(KernelError::TooLarge);
+        return Err(KernelError::RangeError);
     }
 
     copy_to_user_slice(slice, buf).await?;
