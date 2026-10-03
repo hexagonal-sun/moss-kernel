@@ -612,3 +612,18 @@ fn test_rust_dir() {
 }
 
 register_test!(test_rust_dir);
+
+fn test_o_append() {
+    use std::io::{Seek, SeekFrom, Write};
+    let path = "/tmp/o_append_test";
+    fs::write(path, "first\n").unwrap();
+    let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+    file.write_all(b"second\n").unwrap();
+    // O_APPEND writes always go to the end, even after seeking elsewhere.
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write_all(b"third\n").unwrap();
+    assert_eq!(fs::read_to_string(path).unwrap(), "first\nsecond\nthird\n");
+    fs::remove_file(path).unwrap();
+}
+
+register_test!(test_o_append);

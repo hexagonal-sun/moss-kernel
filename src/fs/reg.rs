@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use core::{cmp::min, pin::Pin};
 use libkernel::{
     error::Result,
-    fs::{Inode, SeekFrom},
+    fs::{Inode, OpenFlags, SeekFrom},
     memory::{PAGE_SIZE, address::UA},
 };
 
@@ -61,6 +61,17 @@ impl FileOps for RegFile {
         }
 
         Ok(total_bytes_read)
+    }
+
+    /// Writes at the cursor, or at the end of the file if it was opened with
+    /// `O_APPEND`, and advances the cursor past the data written.
+    async fn write(&mut self, ctx: &mut FileCtx, buf: UA, count: usize) -> Result<usize> {
+        if ctx.flags.contains(OpenFlags::O_APPEND) {
+            ctx.pos = self.inode.getattr().await?.size;
+        }
+        let bytes_written = self.writeat(buf, count, ctx.pos).await?;
+        ctx.pos += bytes_written as u64;
+        Ok(bytes_written)
     }
 
     /// Writes data from `buf` to the current file position.
