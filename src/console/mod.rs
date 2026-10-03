@@ -91,7 +91,7 @@ impl Log for ConsoleLogger {
         let _ = write_fmt(format_args!(
             "[{:5}.{:06}] {}: {}\r\n",
             uptime.as_secs(),
-            uptime.as_micros(),
+            uptime.subsec_micros(),
             record
                 .module_path()
                 .map(|x| x.strip_prefix("moss::").unwrap_or(x))
