@@ -7,8 +7,9 @@ use crate::{
         PAGE_SIZE,
         address::{TPA, TVA, VA},
         paging::{
-            PaMapper, PageAllocator, PageTableEntry, PageTableMapper, PgTable, PgTableArray,
-            TLBInvalidator, TableMapper, TableMapperTable, permissions::PtePermissions,
+            NullTlbInvalidator, PaMapper, PageAllocator, PageTableEntry, PageTableMapper,
+            PagingContext, PgTable, PgTableArray, TLBInvalidator, TableMapper, TableMapperTable,
+            permissions::PtePermissions,
         },
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
@@ -45,11 +46,11 @@ macro_rules! impl_pgtable {
                 self.get_idx(Self::pg_index(va))
             }
 
-            fn set_desc(self, va: VA, desc: Self::Descriptor, _invalidator: &dyn TLBInvalidator) {
+            fn set_desc(self, va: VA, desc: Self::Descriptor, invalidator: &impl TLBInvalidator) {
                 unsafe {
-                    self.base
-                        .add(Self::pg_index(va))
-                        .write_volatile(PageTableEntry::as_raw(desc))
+                    crate::memory::paging::update_descriptor(
+                        self.base.add(Self::pg_index(va)), va, desc, invalidator,
+                    )
                 };
             }
         }
@@ -95,23 +96,6 @@ pub struct MapAttributes {
     pub perms: PtePermissions,
 }
 
-/// A collection of context required to create page tables.
-pub struct MappingContext<'a, PA, PM>
-where
-    PA: PageAllocator + 'a,
-    PM: PageTableMapper + 'a,
-{
-    /// An implementation of `PageAllocator` used to request new, zeroed page
-    /// tables when descending the hierarchy.
-    pub allocator: &'a mut PA,
-    /// An implementation of `PageTableMapper` that provides safe, temporary CPU
-    /// access to page tables at their physical addresses.
-    pub mapper: &'a mut PM,
-    /// An object responsible for issuing TLB invalidation instructions after a
-    /// mapping is successfully changed.
-    pub invalidator: &'a dyn TLBInvalidator,
-}
-
 /// Maps a contiguous physical memory region to a virtual memory region.
 ///
 /// This function walks the page table hierarchy starting from the provided root
@@ -139,8 +123,9 @@ where
 ///     zeroed page tables.
 ///   - `mapper`: An implementation of `PageTableMapper` that provides safe,
 ///     temporary CPU access to page tables.
-///   - `invalidator`: An object responsible for issuing TLB invalidation
-///     instructions after a mapping is changed.
+///   - `invalidator`: An object responsible for synchronous TLB maintenance
+///     on descriptor changes. Newly allocated tables are ordered ahead of
+///     their link through `prepare()`; see `PagingContext`.
 ///
 /// # Returns
 ///
@@ -182,14 +167,15 @@ where
 /// 4. Memory Lifecycle: The caller is responsible for managing the lifecycle of
 ///    the physical memory described by `attrs.phys`. This function only creates
 ///    a *mapping* to the memory; it does not take ownership of it.
-pub fn map_range<PA, PM>(
+pub fn map_range<PA, PM, I>(
     l0_table: TPA<PgTableArray<L0Table>>,
     mut attrs: MapAttributes,
-    ctx: &mut MappingContext<PA, PM>,
+    ctx: &mut PagingContext<'_, PA, PM, I>,
 ) -> Result<()>
 where
     PA: PageAllocator,
     PM: PageTableMapper,
+    I: TLBInvalidator,
 {
     if attrs.phys.size() != attrs.virt.size() {
         Err(MapError::SizeMismatch)?;
@@ -234,17 +220,18 @@ where
     Ok(())
 }
 
-fn try_map_pa<L, PA, PM>(
+fn try_map_pa<L, PA, PM, I>(
     table: TPA<PgTableArray<L>>,
     va: VA,
     phys_region: PhysMemoryRegion,
     attrs: &MapAttributes,
-    ctx: &mut MappingContext<PA, PM>,
+    ctx: &mut PagingContext<'_, PA, PM, I>,
 ) -> Result<Option<usize>>
 where
     L: PgTable<Descriptor: PaMapper<MemoryType = MemoryType>>,
     PA: PageAllocator,
     PM: PageTableMapper,
+    I: TLBInvalidator,
 {
     if L::Descriptor::could_map(phys_region, va) {
         unsafe {
@@ -267,7 +254,11 @@ where
                         attrs.mem_type,
                         attrs.perms,
                     ),
-                    ctx.invalidator,
+                    // The slot is verified empty and the descriptor store is
+                    // itself single-copy atomic, so there is neither a stale
+                    // translation to invalidate nor an ordering another core
+                    // must observe.
+                    &NullTlbInvalidator {},
                 );
             })?;
         }
@@ -278,15 +269,16 @@ where
     }
 }
 
-pub(super) fn map_at_level<L, PA, PM>(
+pub(super) fn map_at_level<L, PA, PM, I>(
     table: TPA<PgTableArray<L>>,
     va: VA,
-    ctx: &mut MappingContext<PA, PM>,
+    ctx: &mut PagingContext<'_, PA, PM, I>,
 ) -> Result<TPA<PgTableArray<<L::Descriptor as TableMapper>::NextLevel>>>
 where
     L: TableMapperTable,
     PA: PageAllocator,
     PM: PageTableMapper,
+    I: TLBInvalidator,
 {
     unsafe {
         let desc = ctx
@@ -321,6 +313,11 @@ where
             L::from_ptr(pgtable).set_desc(
                 va,
                 L::Descriptor::new_next_table(new_pa),
+                // There is nothing to invalidate here (the slot was verified
+                // empty), but the invalidator's prepare() orders the zero-fill
+                // above ahead of this link. Without it, a walker on another
+                // core following a speculatively fetched link could observe the
+                // new table page before its contents.
                 ctx.invalidator,
             );
         })?;
@@ -338,7 +335,10 @@ pub mod tests {
         error::KernelError,
         memory::{
             address::{PA, VA},
-            paging::test::{MockPageAllocator, PassthroughMapper},
+            paging::{
+                test::{MockPageAllocator, MockTLBInvalidator, PassthroughMapper},
+                walk::WalkContext,
+            },
         },
     };
 
@@ -355,8 +355,8 @@ pub mod tests {
 
         pub fn create_map_ctx(
             &mut self,
-        ) -> MappingContext<'_, MockPageAllocator, PassthroughMapper> {
-            MappingContext {
+        ) -> PagingContext<'_, MockPageAllocator, PassthroughMapper, MockTLBInvalidator> {
+            PagingContext {
                 allocator: &mut self.inner.allocator,
                 mapper: &mut self.inner.mapper,
                 invalidator: &self.inner.invalidator,
@@ -398,6 +398,12 @@ pub mod tests {
             )
             .unwrap();
             assert_eq!(perms_found, Some(expected_perms));
+        }
+
+        pub fn create_walk_ctx(
+            &mut self,
+        ) -> WalkContext<'_, PassthroughMapper, MockTLBInvalidator> {
+            self.inner.create_walk_ctx()
         }
     }
 

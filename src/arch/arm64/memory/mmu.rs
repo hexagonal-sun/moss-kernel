@@ -3,14 +3,14 @@ use crate::sync::{OnceLock, SpinLock};
 use libkernel::{
     arch::arm64::memory::{
         pg_descriptors::MemoryType,
-        pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
+        pg_tables::{L0Table, MapAttributes, map_range},
         pg_walk::get_pte,
     },
     error::Result,
     memory::{
         address::{PA, TPA, VA},
         address_space::KernAddressSpace,
-        paging::{PaMapper, PgTableArray, permissions::PtePermissions},
+        paging::{PaMapper, PagingContext, PgTableArray, permissions::PtePermissions},
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
 };
@@ -30,7 +30,7 @@ pub struct Arm64KernelAddressSpace {
 
 impl Arm64KernelAddressSpace {
     fn do_map(&self, map_attrs: MapAttributes) -> Result<()> {
-        let mut ctx = MappingContext {
+        let mut ctx = PagingContext {
             allocator: &mut PageTableAllocator::new(),
             mapper: &mut PageOffsetPgTableMapper {},
             invalidator: &AllEl1TlbInvalidator::new(),

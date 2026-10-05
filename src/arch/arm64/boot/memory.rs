@@ -1,20 +1,19 @@
 use crate::arch::arm64::memory::{
     mmu::{page_mapper::PageOffsetPgTableMapper, smalloc_page_allocator::SmallocPageAlloc},
     set_kimage_start,
-    tlb::AllEl1TlbInvalidator,
 };
 use crate::memory::INITAL_ALLOCATOR;
 use core::ptr::NonNull;
 use libkernel::{
     arch::arm64::memory::{
         pg_descriptors::MemoryType,
-        pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
+        pg_tables::{L0Table, MapAttributes, map_range},
     },
     error::{KernelError, Result},
     memory::{
         PAGE_SIZE,
         address::{PA, TPA, VA},
-        paging::{PgTableArray, permissions::PtePermissions},
+        paging::{NullTlbInvalidator, PagingContext, PgTableArray, permissions::PtePermissions},
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
 };
@@ -132,10 +131,12 @@ pub fn setup_stack_and_heap(pgtbl_base: TPA<PgTableArray<L0Table>>) -> Result<VA
     let stack_virt_region = allocate_kstack_region();
 
     let mut pg_alloc = SmallocPageAlloc::new(alloc);
-    let mut ctx = MappingContext {
+    // Boot is single-core and this address space is not yet live to any
+    // page-table walker; see PagingContext::invalidator.
+    let mut ctx = PagingContext {
         allocator: &mut pg_alloc,
         mapper: &mut PageOffsetPgTableMapper {},
-        invalidator: &AllEl1TlbInvalidator::new(),
+        invalidator: &NullTlbInvalidator {},
     };
 
     // Map the stack.

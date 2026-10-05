@@ -4,8 +4,8 @@ use crate::memory::{
     PAGE_SIZE,
     address::{PA, TPA, VA},
     paging::{
-        PaMapper, PageTableEntry, PageTableMapper, PgTable, PgTableArray, TableMapper,
-        TableMapperTable, walk::WalkContext,
+        PaMapper, PageTableEntry, PageTableMapper, PgTable, PgTableArray, TLBInvalidator,
+        TableMapper, TableMapperTable, walk::WalkContext,
     },
     region::{PhysMemoryRegion, VirtMemoryRegion},
 };
@@ -52,9 +52,8 @@ pub enum TeardownAction {
     /// `deallocator`.
     Free,
     /// Like [`TeardownAction::Free`], but also zero the page table entry in the
-    /// parent table *before* calling `deallocator`. The zeroing uses
-    /// `write_volatile` and happens before the frame is released to the
-    /// allocator, closing the stale-PTE window.
+    /// parent table *before* calling `deallocator`. The clearing completes the
+    /// invalidator's synchronous TLB maintenance before the frame is released.
     FreeAndClear,
     /// Skip this entry entirely. For [`EntryKind::IntermediateTable`] entries,
     /// the subtree is not walked. `deallocator` is not called.
@@ -81,9 +80,9 @@ pub trait RecursiveTeardownWalker: PgTable + Sized {
     ///   free physical memory — use `deallocator` for that.
     /// - `deallocator`: called by the walker (never inside a live
     ///   `with_page_table` window) to physically release a frame.
-    fn tear_down<Control, Dealloc, PM>(
+    fn tear_down<Control, Dealloc, PM, I>(
         table_pa: TPA<PgTableArray<Self>>,
-        ctx: &mut WalkContext<PM>,
+        ctx: &mut WalkContext<PM, I>,
         base_va: VA,
         depth: u8,
         control: &mut Control,
@@ -91,6 +90,7 @@ pub trait RecursiveTeardownWalker: PgTable + Sized {
     ) -> crate::error::Result<()>
     where
         PM: PageTableMapper,
+        I: TLBInvalidator,
         Control: FnMut(&TeardownEntry) -> TeardownAction,
         Dealloc: FnMut(PhysMemoryRegion);
 }
@@ -107,9 +107,9 @@ where
     T::Descriptor: PaMapper,
     <T::Descriptor as TableMapper>::NextLevel: RecursiveTeardownWalker,
 {
-    fn tear_down<Control, Dealloc, PM>(
+    fn tear_down<Control, Dealloc, PM, I>(
         table_pa: TPA<PgTableArray<Self>>,
-        ctx: &mut WalkContext<PM>,
+        ctx: &mut WalkContext<PM, I>,
         base_va: VA,
         depth: u8,
         control: &mut Control,
@@ -117,6 +117,7 @@ where
     ) -> crate::error::Result<()>
     where
         PM: PageTableMapper,
+        I: TLBInvalidator,
         Control: FnMut(&TeardownEntry) -> TeardownAction,
         Dealloc: FnMut(PhysMemoryRegion),
     {
@@ -169,10 +170,11 @@ where
                         if matches!(action, TeardownAction::FreeAndClear) {
                             unsafe {
                                 ctx.mapper.with_page_table(table_pa, |pgtable| {
-                                    Self::from_ptr(pgtable)
-                                        .to_raw_ptr()
-                                        .add(found_idx)
-                                        .write_volatile(0u64);
+                                    Self::from_ptr(pgtable).set_desc(
+                                        entry_va,
+                                        Self::Descriptor::invalid(),
+                                        ctx.invalidator,
+                                    );
                                 })?;
                             }
                         }
@@ -199,10 +201,11 @@ where
                         if matches!(action, TeardownAction::FreeAndClear) {
                             unsafe {
                                 ctx.mapper.with_page_table(table_pa, |pgtable| {
-                                    Self::from_ptr(pgtable)
-                                        .to_raw_ptr()
-                                        .add(found_idx)
-                                        .write_volatile(0u64);
+                                    Self::from_ptr(pgtable).set_desc(
+                                        entry_va,
+                                        Self::Descriptor::invalid(),
+                                        ctx.invalidator,
+                                    );
                                 })?;
                             }
                         }

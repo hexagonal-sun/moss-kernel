@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use libkernel::{
     arch::arm64::memory::{
         pg_descriptors::{L3Descriptor, MemoryType},
-        pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
+        pg_tables::{L0Table, MapAttributes, map_range},
         pg_tear_down::tear_down_address_space,
         pg_walk::{get_pte, walk_and_modify_region},
     },
@@ -23,8 +23,8 @@ use libkernel::{
         address_space::{PageInfo, UserAddressSpace},
         page::PageFrame,
         paging::{
-            PaMapper, PageAllocator, PageTableEntry, PgTableArray, permissions::PtePermissions,
-            tear_down::TeardownAction, walk::WalkContext,
+            PaMapper, PageAllocator, PageTableEntry, PagingContext, PgTableArray,
+            permissions::PtePermissions, tear_down::TeardownAction, walk::WalkContext,
         },
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
@@ -63,7 +63,7 @@ impl UserAddressSpace for Arm64ProcessAddressSpace {
     }
 
     fn map_page(&mut self, page: PageFrame, va: VA, perms: PtePermissions) -> Result<()> {
-        let mut ctx = MappingContext {
+        let mut ctx = PagingContext {
             allocator: &mut PageTableAllocator::new(),
             mapper: &mut PageOffsetPgTableMapper {},
             invalidator: &AllEl0TlbInvalidator::new(),
@@ -159,9 +159,10 @@ impl UserAddressSpace for Arm64ProcessAddressSpace {
     where
         Self: Sized,
     {
+        let invalidator = AllEl0TlbInvalidator::new();
         let mut walk_ctx = WalkContext {
             mapper: &mut PageOffsetPgTableMapper {},
-            invalidator: &AllEl0TlbInvalidator::new(),
+            invalidator: &invalidator,
         };
 
         walk_and_modify_region(self.l0_table, region, &mut walk_ctx, |va, pgd| {
@@ -176,10 +177,10 @@ impl UserAddressSpace for Arm64ProcessAddressSpace {
                 alloc1.clone().leak();
                 alloc1.leak();
 
-                let mut ctx = MappingContext {
+                let mut ctx = PagingContext {
                     allocator: &mut PageTableAllocator::new(),
                     mapper: &mut PageOffsetPgTableMapper {},
-                    invalidator: &AllEl0TlbInvalidator::new(),
+                    invalidator: &invalidator,
                 };
 
                 map_range(

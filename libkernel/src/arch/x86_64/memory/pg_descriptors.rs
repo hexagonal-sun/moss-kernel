@@ -25,6 +25,14 @@ pub enum MemoryType {
     WB,
 }
 
+/// Level-independent x86 mapping attributes. PAT is stored separately because
+/// its descriptor bit position depends on the mapping size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MappingAttributes {
+    flags: u64,
+    pat: bool,
+}
+
 macro_rules! define_descriptor {
     (
         $(#[$outer:meta])*
@@ -111,10 +119,6 @@ macro_rules! define_descriptor {
 
                     Self(reg.get())
                 }
-
-                fn address(self) -> PA {
-                    PA::from_value((self.0 & ADDR_MASK) as usize)
-                }
             }
         }
     }
@@ -149,8 +153,38 @@ macro_rules! impl_pa_mapper {
     ($($name:ident),+ ; marker: $marker:expr) => {
         $(
             paste! {
+            impl $name {
+                /// The physical address mapped by a block/page descriptor. Bits
+                /// below MAP_SHIFT are attributes; not part of the address.
+                fn address(self) -> PA {
+                    PA::from_value(
+                        (self.0 & ADDR_MASK) as usize & !((1usize << Self::MAP_SHIFT) - 1)
+                    )
+                }
+            }
+
             impl PaMapper for $name {
                 type MemoryType = MemoryType;
+                type Attributes = MappingAttributes;
+
+                fn mapping_attributes(self) -> Option<Self::Attributes> {
+                    if self.0 & $marker != $marker {
+                        return None;
+                    }
+                    let pat_bit = if Self::MAP_SHIFT == 12 { 7 } else { 12 };
+                    Some(MappingAttributes {
+                        flags: self.0 & !(ADDR_MASK | 1 | (1 << 7)),
+                        pat: self.0 & (1 << pat_bit) != 0,
+                    })
+                }
+
+                fn new_mapping(pa: PA, attributes: Self::Attributes) -> Self {
+                    assert_eq!(pa.value() & ((1 << Self::MAP_SHIFT) - 1), 0,
+                        "Cannot map non-aligned physical address");
+                    let pat_bit = if Self::MAP_SHIFT == 12 { 7 } else { 12 };
+                    Self((pa.value() as u64 & ADDR_MASK) | attributes.flags
+                        | ((attributes.pat as u64) << pat_bit) | $marker)
+                }
 
                 fn could_map(region: PhysMemoryRegion, va: VA) -> bool {
                     let is_aligned = |addr: usize| (addr & ((1 << Self::MAP_SHIFT) - 1)) == 0;
@@ -227,7 +261,7 @@ macro_rules! impl_table_mapper {
                     let reg = InMemoryRegister::new(self.0);
 
                     if reg.matches_all(BlockPageFields::P::Present + BlockPageFields::PS::MapTable) {
-                        Some(self.address().cast())
+                        Some(TPA::from_value((self.0 & ADDR_MASK) as usize))
                     } else {
                         None
                     }
@@ -271,6 +305,47 @@ mod tests {
 
     const KERNEL_PERMS: bool = false;
     const USER_PERMS: bool = true;
+
+    #[test]
+    fn splitting_preserves_pat_and_mapping_attributes() {
+        let pa = PA::from_value(0x8000_0000);
+        let attrs = (1 << 12) | (1 << 5) | (1 << 6) | (1 << 8) | (1 << 9) | (1 << 59);
+        let block = PDPE::from_raw(
+            PDPE::new_map_pa(pa, MemoryType::WT, PtePermissions::ro(true)).as_raw() | attrs,
+        );
+        let small = PDE::new_mapping(pa.add_bytes(3 << 21), block.mapping_attributes().unwrap());
+        let page = PTE::new_mapping(
+            pa.add_bytes((3 << 21) + (5 << 12)),
+            small.mapping_attributes().unwrap(),
+        );
+        assert_eq!(small.mapped_address(), Some(pa.add_bytes(3 << 21)));
+        assert_eq!(
+            page.mapped_address(),
+            Some(pa.add_bytes((3 << 21) + (5 << 12)))
+        );
+        assert_eq!(page.permissions(), block.permissions());
+        let common =
+            (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 8) | (1 << 9) | (1 << 59) | (1 << 63);
+        assert_eq!(page.as_raw() & common, block.as_raw() & common);
+        assert_ne!(small.as_raw() & (1 << 12), 0);
+        assert_ne!(page.as_raw() & (1 << 7), 0);
+        let no_pat = PDE::new_map_pa(pa, MemoryType::WB, PtePermissions::rw(false));
+        assert_eq!(
+            PTE::new_mapping(pa, no_pat.mapping_attributes().unwrap()).as_raw() & (1 << 7),
+            0
+        );
+        assert_eq!(page.mapping_attributes(), block.mapping_attributes());
+        assert_eq!(
+            PDPE::new_mapping(pa, page.mapping_attributes().unwrap()),
+            block
+        );
+        assert!(PDE::invalid().mapping_attributes().is_none());
+        assert!(
+            PDE::new_next_table(TPA::from_value(0x1000))
+                .mapping_attributes()
+                .is_none()
+        );
+    }
 
     #[test]
     fn test_invalid_descriptor() {

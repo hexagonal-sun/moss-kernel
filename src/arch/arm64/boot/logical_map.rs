@@ -3,17 +3,19 @@ use crate::memory::{INITAL_ALLOCATOR, PageOffsetTranslator};
 use super::super::memory::{
     fixmap::{FIXMAPS, Fixmap},
     mmu::smalloc_page_allocator::SmallocPageAlloc,
-    tlb::AllEl1TlbInvalidator,
 };
 use libkernel::{
     arch::arm64::memory::{
         pg_descriptors::MemoryType,
-        pg_tables::{L0Table, MapAttributes, MappingContext, map_range},
+        pg_tables::{L0Table, MapAttributes, map_range},
     },
     error::Result,
     memory::{
         address::{TPA, TVA},
-        paging::{PageTableMapper, PgTable, PgTableArray, permissions::PtePermissions},
+        paging::{
+            NullTlbInvalidator, PageTableMapper, PagingContext, PgTable, PgTableArray,
+            permissions::PtePermissions,
+        },
     },
 };
 
@@ -44,10 +46,14 @@ pub fn setup_logical_map(pgtbl_base: TPA<PgTableArray<L0Table>>) -> Result<()> {
     };
     let mut pg_alloc = SmallocPageAlloc::new(alloc);
 
-    let mut ctx = MappingContext {
+    // Boot is single-core and this address space is not yet live to any
+    // page-table walker, so no ordering or invalidation service is needed. If
+    // multicore boot ever overlaps with page-table construction, these sites
+    // need a real invalidator.
+    let mut ctx = PagingContext {
         allocator: &mut pg_alloc,
         mapper: &mut mapper,
-        invalidator: &AllEl1TlbInvalidator::new(),
+        invalidator: &NullTlbInvalidator {},
     };
 
     for mem_region in mem_list.iter() {

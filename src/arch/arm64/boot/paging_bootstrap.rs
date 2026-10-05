@@ -3,14 +3,12 @@ use core::ptr;
 use aarch64_cpu::asm::barrier;
 use aarch64_cpu::registers::{MAIR_EL1, SCTLR_EL1, TCR_EL1, TTBR0_EL1, TTBR1_EL1};
 use libkernel::arch::arm64::memory::pg_descriptors::MemoryType;
-use libkernel::arch::arm64::memory::pg_tables::{
-    L0Table, MapAttributes, MappingContext, map_range,
-};
+use libkernel::arch::arm64::memory::pg_tables::{L0Table, MapAttributes, map_range};
 use libkernel::error::{KernelError, Result};
 use libkernel::memory::address::{AddressTranslator, IdentityTranslator, PA, TPA, TVA};
 use libkernel::memory::paging::permissions::PtePermissions;
 use libkernel::memory::paging::{
-    NullTlbInvalidator, PageAllocator, PageTableMapper, PgTable, PgTableArray,
+    NullTlbInvalidator, PageAllocator, PageTableMapper, PagingContext, PgTable, PgTableArray,
 };
 use libkernel::memory::region::PhysMemoryRegion;
 use libkernel::memory::{PAGE_MASK, PAGE_SIZE};
@@ -106,14 +104,15 @@ fn do_paging_bootstrap(static_pages: PA, image_addr: PA, fdt_addr: PA) -> Result
     let kernel_range = PhysMemoryRegion::new(image_addr, image_size);
 
     let mut translator = IdmapTranslator {};
-    let invalidator = NullTlbInvalidator {};
 
     let highmem_l0 = bump_alloc.allocate_page_table::<L0Table>()?;
 
-    let mut bootstrap_ctx = MappingContext {
+    // The MMU is disabled and boot is single-core, so no ordering or
+    // invalidation service is needed; see PagingContext::invalidator.
+    let mut bootstrap_ctx = PagingContext {
         allocator: &mut bump_alloc,
         mapper: &mut translator,
-        invalidator: &invalidator,
+        invalidator: &NullTlbInvalidator {},
     };
 
     map_range(
