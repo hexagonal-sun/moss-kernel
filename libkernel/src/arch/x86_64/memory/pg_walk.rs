@@ -1,15 +1,18 @@
 //! Page table walking and per-entry modification.
-
 use crate::{
+    arch::x86_64::memory::pg_tables::ModifyContext,
     error::{MapError, Result},
     memory::{
         PAGE_SIZE,
         address::{Address, TPA, VA},
         paging::{
-            NullTlbInvalidator, PaMapper, PageTableEntry, PageTableMapper, PgTable, PgTableArray,
-            TableMapper,
+            NullTlbInvalidator, PaMapper, PageAllocator, PageTableEntry, PageTableMapper, PgTable,
+            PgTableArray, TLBInvalidator, TableMapper,
             permissions::PtePermissions,
-            walk::{RecursiveWalker, Translatable, Translator, WalkContext},
+            walk::{
+                RecursiveWalker, Translatable, Translator, WalkContext, WalkOperation,
+                validate_allocating_region, walk_table_level,
+            },
         },
         region::{MemoryRegion, VirtMemoryRegion},
     },
@@ -20,15 +23,38 @@ use super::{
     pg_tables::{PDPTable, PML4Table, PTable},
 };
 
-impl RecursiveWalker<PTE> for PTable {
-    fn walk<F, PM>(
+impl RecursiveWalker<PTE> for PML4Table {
+    fn walk_with_allocator<F, PM, A, I>(
         table_pa: TPA<PgTableArray<Self>>,
         region: VirtMemoryRegion,
-        ctx: &mut WalkContext<PM>,
-        modifier: &mut F,
+        ctx: &mut WalkContext<PM, I>,
+        allocator: &mut A,
+        operation: &mut WalkOperation<F>,
     ) -> Result<()>
     where
         PM: PageTableMapper,
+        I: TLBInvalidator,
+        A: PageAllocator,
+        F: FnMut(VA, PTE) -> PTE,
+    {
+        walk_table_level(table_pa, region, ctx, allocator, operation, |_| {
+            Err(MapError::InvalidDescriptor.into())
+        })
+    }
+}
+
+impl RecursiveWalker<PTE> for PTable {
+    fn walk_with_allocator<F, PM, A, I>(
+        table_pa: TPA<PgTableArray<Self>>,
+        region: VirtMemoryRegion,
+        ctx: &mut WalkContext<PM, I>,
+        _allocator: &mut A,
+        operation: &mut WalkOperation<F>,
+    ) -> Result<()>
+    where
+        PM: PageTableMapper,
+        I: TLBInvalidator,
+        A: PageAllocator,
         F: FnMut(VA, PTE) -> PTE,
     {
         unsafe {
@@ -37,7 +63,7 @@ impl RecursiveWalker<PTE> for PTable {
                 for va in region.iter_pages() {
                     let desc = table.get_desc(va);
                     if desc.is_valid() {
-                        table.set_desc(va, modifier(va, desc), ctx.invalidator);
+                        table.set_desc(va, operation.apply(va, desc), ctx.invalidator);
                     }
                 }
             })
@@ -62,18 +88,17 @@ impl RecursiveWalker<PTE> for PTable {
 ///
 /// # Errors
 /// - `MapError::VirtNotAligned`: The provided `region` is not page-aligned.
-/// - `MapError::NotMapped`: Part of the `region` is not mapped down to the L3
-///   level.
-/// - `MapError::NotAnL3Mapping`: Part of the `region` is covered by a larger
+/// - `MapError::NotL3Mapped`: Part of the `region` is covered by a larger
 ///   block mapping (1GiB or 2MiB), which cannot be modified at the L3 level.
-pub fn walk_and_modify_region<F, PM>(
+pub fn walk_and_modify_region<F, PM, I>(
     pml4_table: TPA<PgTableArray<PML4Table>>,
     region: VirtMemoryRegion,
-    ctx: &mut WalkContext<PM>,
+    ctx: &mut WalkContext<PM, I>,
     mut modifier: F, // Pass closure as a mutable ref to be used across recursive calls
 ) -> Result<()>
 where
     PM: PageTableMapper,
+    I: TLBInvalidator,
     F: FnMut(VA, PTE) -> PTE,
 {
     if !region.is_page_aligned() {
@@ -85,6 +110,39 @@ where
     }
 
     PML4Table::walk(pml4_table, region, ctx, &mut modifier)
+}
+
+/// Removes mappings in a page-aligned region, leaving surrounding mappings intact.
+///
+/// Fully covered pages and blocks are cleared directly. Partially covered
+/// blocks are demoted using `ctx.allocator`; unmapped entries are skipped.
+/// Physical data frames and empty page tables are not freed.
+///
+/// Allocation and mapper errors propagate; earlier changes are not rolled back.
+/// The caller must serialize access to the page tables and supply synchronous
+/// TLB maintenance for active mappings through `ctx.invalidator`.
+///
+/// Returns `MapError::VirtNotAligned` for an unaligned start or length, and
+/// `KernelError::InvalidValue` if the exclusive end overflows.
+pub fn punch_hole<A: PageAllocator, PM: PageTableMapper, I: TLBInvalidator>(
+    pml4_table: TPA<PgTableArray<PML4Table>>,
+    region: VirtMemoryRegion,
+    ctx: &mut ModifyContext<A, PM, I>,
+) -> Result<()> {
+    validate_allocating_region(region)?;
+    if region.size() == 0 {
+        return Ok(());
+    }
+    PML4Table::walk_with_allocator(
+        pml4_table,
+        region,
+        &mut WalkContext {
+            mapper: ctx.mapper,
+            invalidator: ctx.invalidator,
+        },
+        ctx.allocator,
+        &mut WalkOperation::<fn(VA, PTE) -> PTE>::PunchHole,
+    )
 }
 
 /// Obtain the PTE that mapps the VA into the current address space.
@@ -115,10 +173,10 @@ pub fn get_pte<PM: PageTableMapper>(
 }
 
 impl Translator for PML4Table {
-    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>, I: TLBInvalidator>(
         table_pa: Address<M::Phys, PgTableArray<PML4Table>>,
         va: Address<M, ()>,
-        ctx: &mut WalkContext<PM>,
+        ctx: &mut WalkContext<PM, I>,
     ) -> crate::error::Result<Option<(Address<M::Phys, ()>, usize, PtePermissions)>> {
         let desc = unsafe {
             ctx.mapper.with_page_table(table_pa, |pgtable| {
@@ -137,10 +195,10 @@ impl Translator for PML4Table {
 }
 
 impl Translator for PTable {
-    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>>(
+    fn translate<M: Translatable, PM: PageTableMapper<M::Phys>, I: TLBInvalidator>(
         table_pa: Address<M::Phys, PgTableArray<PTable>>,
         va: Address<M, ()>,
-        ctx: &mut WalkContext<PM>,
+        ctx: &mut WalkContext<PM, I>,
     ) -> crate::error::Result<Option<(Address<M::Phys, ()>, usize, PtePermissions)>> {
         let desc = unsafe {
             ctx.mapper.with_page_table(table_pa, |pgtable| {
@@ -206,6 +264,16 @@ mod tests {
         },
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    crate::memory::paging::test::block_split_tests!(
+        PDPTable,
+        PDTable,
+        PTable,
+        crate::arch::x86_64::memory::pg_descriptors::PDPE,
+        PDE,
+        PTE,
+        MemoryType::WT
+    );
 
     #[test]
     fn walk_modify_single_page() {

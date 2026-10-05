@@ -3,7 +3,7 @@
 use super::pg_descriptors::PML4E;
 use super::pg_tables::{PDPTable, PML4Table, PTable};
 use crate::error::Result;
-use crate::memory::paging::TableMapper;
+use crate::memory::paging::{TLBInvalidator, TableMapper};
 use crate::memory::region::{PhysMemoryRegion, VirtMemoryRegion};
 use crate::memory::{
     PAGE_SIZE,
@@ -17,9 +17,9 @@ use crate::memory::{
 
 // Implementation for PTable (Leaf Table)
 impl RecursiveTeardownWalker for PTable {
-    fn tear_down<Control, Dealloc, PM>(
+    fn tear_down<Control, Dealloc, PM, I>(
         table_pa: TPA<PgTableArray<Self>>,
-        ctx: &mut WalkContext<PM>,
+        ctx: &mut WalkContext<PM, I>,
         base_va: VA,
         depth: u8,
         control: &mut Control,
@@ -27,6 +27,7 @@ impl RecursiveTeardownWalker for PTable {
     ) -> Result<()>
     where
         PM: PageTableMapper,
+        I: TLBInvalidator,
         Control: FnMut(&TeardownEntry) -> TeardownAction,
         Dealloc: FnMut(PhysMemoryRegion),
     {
@@ -61,10 +62,11 @@ impl RecursiveTeardownWalker for PTable {
                         if matches!(action, TeardownAction::FreeAndClear) {
                             unsafe {
                                 ctx.mapper.with_page_table(table_pa, |pgtable| {
-                                    PTable::from_ptr(pgtable)
-                                        .to_raw_ptr()
-                                        .add(found_idx)
-                                        .write_volatile(0u64);
+                                    PTable::from_ptr(pgtable).set_desc(
+                                        entry_va,
+                                        Self::Descriptor::invalid(),
+                                        ctx.invalidator,
+                                    );
                                 })?;
                             }
                         }
@@ -107,14 +109,15 @@ impl RecursiveTeardownWalker for PTable {
 ///
 /// Block mappings (2 MiB / 1 GiB) are reported as
 /// [`EntryKind::Mapping`] with the appropriate region size.
-pub fn tear_down_address_space<Control, Dealloc, PM>(
+pub fn tear_down_address_space<Control, Dealloc, PM, I>(
     pml4_table: TPA<PgTableArray<PML4Table>>,
-    ctx: &mut WalkContext<PM>,
+    ctx: &mut WalkContext<PM, I>,
     mut control: Control,
     mut deallocator: Dealloc,
 ) -> Result<()>
 where
     PM: PageTableMapper,
+    I: TLBInvalidator,
     Control: FnMut(&TeardownEntry) -> TeardownAction,
     Dealloc: FnMut(PhysMemoryRegion),
 {
@@ -156,10 +159,11 @@ where
                     if matches!(action, TeardownAction::FreeAndClear) {
                         unsafe {
                             ctx.mapper.with_page_table(pml4_table, |pml4_tbl| {
-                                PML4Table::from_ptr(pml4_tbl)
-                                    .to_raw_ptr()
-                                    .add(idx)
-                                    .write_volatile(0u64);
+                                PML4Table::from_ptr(pml4_tbl).set_desc(
+                                    entry_va,
+                                    PML4E::invalid(),
+                                    ctx.invalidator,
+                                );
                             })?;
                         }
                     }
@@ -202,21 +206,22 @@ mod tests {
     use std::collections::HashMap;
 
     /// Tear down `root_table` freeing every frame the walker visits.
-    fn capture_freed_pages<PM: PageTableMapper>(
+    fn capture_freed_pages<PM: PageTableMapper, I: TLBInvalidator>(
         root_table: TPA<PgTableArray<PML4Table>>,
-        ctx: &mut WalkContext<PM>,
+        ctx: &mut WalkContext<PM, I>,
     ) -> HashMap<usize, usize> {
         capture_freed_pages_filtered(root_table, ctx, |_| TeardownAction::Free)
     }
 
     /// Tear down `root_table` using a custom `control` closure.
-    fn capture_freed_pages_filtered<PM, Control>(
+    fn capture_freed_pages_filtered<PM, Control, I>(
         root_table: TPA<PgTableArray<PML4Table>>,
-        ctx: &mut WalkContext<PM>,
+        ctx: &mut WalkContext<PM, I>,
         control: Control,
     ) -> HashMap<usize, usize>
     where
         PM: PageTableMapper,
+        I: TLBInvalidator,
         Control: FnMut(&TeardownEntry) -> TeardownAction,
     {
         let mut freed_map = HashMap::new();

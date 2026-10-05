@@ -34,6 +34,10 @@ pub enum MemoryType {
     Normal,
 }
 
+/// Level-independent ARM64 mapping attributes, excluding the contiguous hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MappingAttributes(u64);
+
 macro_rules! define_descriptor {
     (
         $(#[$outer:meta])*
@@ -172,6 +176,24 @@ macro_rules! define_descriptor {
 
             impl PaMapper for $name {
                 type MemoryType = MemoryType;
+                type Attributes = MappingAttributes;
+
+                fn mapping_attributes(self) -> Option<Self::Attributes> {
+                    if self.0 & 0b11 != $map_bits {
+                        return None;
+                    }
+                    // Bits [47:12] encode addresses (or are reserved at block
+                    // levels). Contiguous describes a group, not one mapping.
+                    let address_mask = ((1u64 << 48) - 1) & !0xfff;
+                    Some(MappingAttributes(self.0 & !(address_mask | 0b11 | (1 << 52))))
+                }
+
+                fn new_mapping(pa: PA, attributes: Self::Attributes) -> Self {
+                    assert_eq!(pa.value() & ((1 << Self::MAP_SHIFT) - 1), 0,
+                        "Cannot map non-aligned physical address");
+                    let address_mask = ((1u64 << 48) - 1) & !((1 << Self::MAP_SHIFT) - 1);
+                    Self((pa.value() as u64 & address_mask) | attributes.0 | $map_bits)
+                }
 
                 fn could_map(region: PhysMemoryRegion, va: VA) -> bool {
                     let is_aligned = |addr: usize| (addr & ((1 << Self::MAP_SHIFT) - 1)) == 0;
@@ -277,6 +299,47 @@ define_descriptor!(
         oa_len: 36,    // Output address length for 48-bit PA
     },
 );
+
+#[cfg(test)]
+mod attribute_tests {
+    use super::*;
+
+    #[test]
+    fn splitting_preserves_attributes_and_clears_contiguous_hint() {
+        let pa = PA::from_value(0x8000_0000);
+        let block = L1Descriptor::from_raw(
+            L1Descriptor::new_map_pa(pa, MemoryType::Device, PtePermissions::ro(true)).as_raw()
+                | (1 << 11)
+                | (1 << 52)
+                | (1 << 55),
+        );
+        let small =
+            L2Descriptor::new_mapping(pa.add_bytes(3 << 21), block.mapping_attributes().unwrap());
+        let page = L3Descriptor::new_mapping(
+            pa.add_bytes((3 << 21) + (5 << 12)),
+            small.mapping_attributes().unwrap(),
+        );
+        assert_eq!(small.mapped_address(), Some(pa.add_bytes(3 << 21)));
+        assert_eq!(
+            page.mapped_address(),
+            Some(pa.add_bytes((3 << 21) + (5 << 12)))
+        );
+        assert_eq!(page.permissions(), block.permissions());
+        let attrs = ((1 << 12) - 1) & !0b11 | (1 << 53) | (1 << 54) | (1 << 55);
+        assert_eq!(page.as_raw() & attrs, block.as_raw() & attrs);
+        assert_eq!(small.as_raw() & (1 << 52), 0);
+        assert_eq!(page.as_raw() & (1 << 52), 0);
+        assert_eq!(page.as_raw() & 0b11, 0b11);
+        assert_eq!(page.mapping_attributes(), block.mapping_attributes());
+        assert!(L2Descriptor::invalid().mapping_attributes().is_none());
+        assert!(page.mark_as_swapped().mapping_attributes().is_none());
+        assert!(
+            L2Descriptor::new_next_table(TPA::from_value(0x1000))
+                .mapping_attributes()
+                .is_none()
+        );
+    }
+}
 
 /// The decoded state of an L3 page descriptor.
 pub enum L3DescriptorState {

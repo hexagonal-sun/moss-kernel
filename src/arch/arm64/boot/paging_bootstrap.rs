@@ -9,9 +9,7 @@ use libkernel::arch::arm64::memory::pg_tables::{
 use libkernel::error::{KernelError, Result};
 use libkernel::memory::address::{AddressTranslator, IdentityTranslator, PA, TPA, TVA};
 use libkernel::memory::paging::permissions::PtePermissions;
-use libkernel::memory::paging::{
-    NullTlbInvalidator, PageAllocator, PageTableMapper, PgTable, PgTableArray,
-};
+use libkernel::memory::paging::{PageAllocator, PageTableMapper, PgTable, PgTableArray};
 use libkernel::memory::region::PhysMemoryRegion;
 use libkernel::memory::{PAGE_MASK, PAGE_SIZE};
 use tock_registers::interfaces::{ReadWriteable, Writeable};
@@ -106,14 +104,12 @@ fn do_paging_bootstrap(static_pages: PA, image_addr: PA, fdt_addr: PA) -> Result
     let kernel_range = PhysMemoryRegion::new(image_addr, image_size);
 
     let mut translator = IdmapTranslator {};
-    let invalidator = NullTlbInvalidator {};
 
     let highmem_l0 = bump_alloc.allocate_page_table::<L0Table>()?;
 
     let mut bootstrap_ctx = MappingContext {
         allocator: &mut bump_alloc,
         mapper: &mut translator,
-        invalidator: &invalidator,
     };
 
     map_range(

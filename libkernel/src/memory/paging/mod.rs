@@ -60,6 +60,21 @@ pub trait PaMapper: PageTableEntry {
     /// The memory attribute type for this descriptor's architecture.
     type MemoryType: Copy;
 
+    /// Level-independent mapping attributes for this architecture, including
+    /// permissions, cache policy, hardware state and software-defined bits.
+    /// Does not include the output address, descriptor type or grouping hints.
+    type Attributes: Copy;
+
+    /// Extracts attributes from a valid physical mapping, or returns `None`
+    /// for table and non-present descriptors.
+    fn mapping_attributes(self) -> Option<Self::Attributes>;
+
+    /// Constructs a valid mapping with attributes obtained from any mapping
+    /// level of the same architecture. Encodes level-specific bits as needed.
+    ///
+    /// Panics if `pa` is not aligned to this descriptor's mapping size.
+    fn new_mapping(pa: PA, attributes: Self::Attributes) -> Self;
+
     /// Constructs a new valid page descriptor that maps a physical address.
     fn new_map_pa(page_address: PA, memory_type: Self::MemoryType, perms: PtePermissions) -> Self;
 
@@ -130,7 +145,7 @@ pub trait PgTable: Clone + Copy {
     fn get_idx(self, idx: usize) -> Self::Descriptor;
 
     /// Set the value of the descriptor for a particular VA.
-    fn set_desc(self, va: VA, desc: Self::Descriptor, invalidator: &dyn TLBInvalidator);
+    fn set_desc(self, va: VA, desc: Self::Descriptor, invalidator: &impl TLBInvalidator);
 }
 
 /// A page-aligned array of raw page table entries for a given table level.
@@ -218,10 +233,74 @@ pub trait PageAllocator {
     fn allocate_page_table<T: PgTable>(&mut self) -> crate::error::Result<TPA<PgTableArray<T>>>;
 }
 
-/// Trait for invalidating TLB entries after page table modifications.
-pub trait TLBInvalidator {}
+/// Describes a descriptor update, including the entire old mapping's coverage.
+#[derive(Debug, Clone, Copy)]
+pub struct TranslationChange {
+    /// Virtual base of the affected entry, aligned to `size`.
+    pub va: VA,
+    /// Entry coverage in bytes (4 KiB, 2 MiB, 1 GiB, or 512 GiB).
+    pub size: usize,
+    /// Architecture-specific bits of the original descriptor.
+    pub old_descriptor: u64,
+    /// Architecture-specific bits of the replacement descriptor.
+    pub new_descriptor: u64,
+}
+
+/// Synchronous architecture-specific maintenance for descriptor updates.
+///
+/// Implementations carry any address-space/ASID context and must complete
+/// required cross-CPU shootdowns before returning. These hooks are ran inside
+/// the mapper's table access window; they must not re-enter that mapper.
+pub trait TLBInvalidator {
+    /// Called before changing the entry. Order prior stores to newly populated
+    /// child tables so they are visible before a table descriptor is installed.
+    fn prepare(&self, change: &TranslationChange);
+
+    /// Called after a valid old descriptor has been cleared, before the
+    /// replacement is written (break-before-make).
+    ///
+    /// Order the clearing store, invalidate translations and walk caches for
+    /// the entire old entry's coverage, and wait for completion. A table entry
+    /// requires invalidation of its subtree, not just a single leaf.
+    fn invalidate(&self, change: &TranslationChange);
+
+    /// Called after the replacement has been written, including invalid
+    /// replacements. Order descriptor/table stores and synchronize instruction
+    /// execution as required before the updated mapping is used.
+    fn publish(&self, change: &TranslationChange);
+}
+
+pub(crate) unsafe fn update_descriptor<D: PageTableEntry<RawDescriptor = u64>>(
+    slot: *mut u64,
+    va: VA,
+    new_desc: D,
+    invalidator: &impl TLBInvalidator,
+) {
+    let old = D::from_raw(unsafe { slot.read_volatile() });
+    if old.as_raw() == new_desc.as_raw() {
+        return;
+    }
+    let size = 1 << D::MAP_SHIFT;
+    let change = TranslationChange {
+        va: va.align(size),
+        size,
+        old_descriptor: old.as_raw(),
+        new_descriptor: new_desc.as_raw(),
+    };
+    invalidator.prepare(&change);
+    if old.is_valid() {
+        unsafe { slot.write_volatile(D::INVALID) };
+        invalidator.invalidate(&change);
+    }
+    unsafe { slot.write_volatile(new_desc.as_raw()) };
+    invalidator.publish(&change);
+}
 
 /// A no-op TLB invalidator used when invalidation is unnecessary.
 pub struct NullTlbInvalidator {}
 
-impl TLBInvalidator for NullTlbInvalidator {}
+impl TLBInvalidator for NullTlbInvalidator {
+    fn prepare(&self, _change: &TranslationChange) {}
+    fn invalidate(&self, _change: &TranslationChange) {}
+    fn publish(&self, _change: &TranslationChange) {}
+}

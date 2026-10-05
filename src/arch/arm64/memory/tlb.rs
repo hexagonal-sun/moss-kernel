@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use libkernel::memory::paging::TLBInvalidator;
+use libkernel::memory::paging::{TLBInvalidator, TranslationChange};
 
 pub struct AllEl1TlbInvalidator;
 
@@ -12,24 +12,23 @@ impl AllEl1TlbInvalidator {
 
 impl Drop for AllEl1TlbInvalidator {
     fn drop(&mut self) {
-        unsafe {
-            asm!(
-                // Data Synchronization Barrier, Inner Shareable, write to
-                // read/write.
-                "dsb ishst",
-                // Invalidate TLB by VA, for EL1, Inner Shareable
-                "tlbi vmalle1is",
-                // Data Synchronization Barrier, Inner Shareable.
-                "dsb ish",
-                // Instruction Synchronization Barrier.
-                "isb",
-                options(nostack, preserves_flags)
-            );
-        }
+        invalidate_all();
     }
 }
 
-impl TLBInvalidator for AllEl1TlbInvalidator {}
+impl TLBInvalidator for AllEl1TlbInvalidator {
+    fn prepare(&self, _change: &TranslationChange) {
+        order_table_stores();
+    }
+
+    fn invalidate(&self, _change: &TranslationChange) {
+        invalidate_all();
+    }
+
+    fn publish(&self, _change: &TranslationChange) {
+        publish_tables();
+    }
+}
 
 pub struct AllEl0TlbInvalidator;
 
@@ -41,21 +40,46 @@ impl AllEl0TlbInvalidator {
 
 impl Drop for AllEl0TlbInvalidator {
     fn drop(&mut self) {
-        unsafe {
-            asm!(
-                // Data Synchronization Barrier, Inner Shareable, write to
-                // read/write.
-                "dsb ishst",
-                // Invalidate TLB by VA, for EL1, Inner Shareable
-                "tlbi vmalle1is",
-                // Data Synchronization Barrier, Inner Shareable.
-                "dsb ish",
-                // Instruction Synchronization Barrier.
-                "isb",
-                options(nostack, preserves_flags)
-            );
-        }
+        invalidate_all();
     }
 }
 
-impl TLBInvalidator for AllEl0TlbInvalidator {}
+impl TLBInvalidator for AllEl0TlbInvalidator {
+    fn prepare(&self, _change: &TranslationChange) {
+        order_table_stores();
+    }
+
+    fn invalidate(&self, _change: &TranslationChange) {
+        invalidate_all();
+    }
+
+    fn publish(&self, _change: &TranslationChange) {
+        publish_tables();
+    }
+}
+
+fn invalidate_all() {
+    // Conservatively invalidate all levels and ASIDs, including cached blocks
+    // and table walks. Range-aware implementations can use TranslationChange.
+    unsafe {
+        asm!(
+            "dsb ishst",
+            "tlbi vmalle1is",
+            "dsb ish",
+            "isb",
+            options(nostack, preserves_flags)
+        );
+    }
+}
+
+fn publish_tables() {
+    unsafe {
+        asm!("dsb ishst", "isb", options(nostack, preserves_flags));
+    }
+}
+
+fn order_table_stores() {
+    unsafe {
+        asm!("dsb ishst", options(nostack, preserves_flags));
+    }
+}
