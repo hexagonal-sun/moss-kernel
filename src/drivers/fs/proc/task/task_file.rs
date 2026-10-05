@@ -7,7 +7,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use async_trait::async_trait;
-use core::sync::atomic::Ordering;
+use core::{str::FromStr, sync::atomic::Ordering};
 use libkernel::error::{FsError, KernelError};
 use libkernel::fs::attr::{FileAttr, FilePermissions};
 use libkernel::fs::pathbuf::PathBuf;
@@ -25,11 +25,11 @@ pub enum TaskFileType {
     Cgroup,
 }
 
-impl TryFrom<&str> for TaskFileType {
-    type Error = ();
+impl FromStr for TaskFileType {
+    type Err = ();
 
-    fn try_from(value: &str) -> Result<TaskFileType, Self::Error> {
-        match value {
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
             "status" => Ok(TaskFileType::Status),
             "comm" => Ok(TaskFileType::Comm),
             "state" => Ok(TaskFileType::State),
