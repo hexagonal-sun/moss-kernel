@@ -403,9 +403,8 @@ impl<T: MemKind> MemoryRegion<T> {
         let pages_count = self.size >> PAGE_SHIFT;
 
         core::iter::from_fn(move || {
-            let addr = self.start_address().add_pages(count);
-
             if count < pages_count {
+                let addr = self.start_address().add_pages(count);
                 count += 1;
                 Some(addr)
             } else {
@@ -631,6 +630,14 @@ mod tests {
         let region = VirtMemoryRegion::new(start_va, num_pages * PAGE_SIZE);
 
         assert_eq!(region.iter_pages().count(), num_pages);
+    }
+
+    #[test]
+    fn iter_pages_top_of_address_space() {
+        let top = VA::from_value(usize::MAX - (PAGE_SIZE * 3)).align_up(PAGE_SIZE);
+        let rgn = VirtMemoryRegion::new(top, PAGE_SIZE * 3);
+
+        assert_eq!(rgn.iter_pages().count(), 3);
     }
 
     #[test]
