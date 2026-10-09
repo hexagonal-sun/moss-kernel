@@ -253,7 +253,7 @@ impl<T: MemKind> MemoryRegion<T> {
     /// Returns `true` if this region fully contains `other`.
     pub fn contains(self, other: Self) -> bool {
         self.start_address().value() <= other.start_address().value()
-            && self.end_address().value() >= other.end_address().value()
+            && self.end_address_inclusive().value() >= other.end_address_inclusive().value()
     }
 
     /// Returns `true` if this region contains the given address.
