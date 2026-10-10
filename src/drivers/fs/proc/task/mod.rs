@@ -13,6 +13,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use async_trait::async_trait;
 use core::any::Any;
+use core::str::FromStr;
 use libkernel::error::FsError;
 use libkernel::fs::attr::{FileAttr, FilePermissions};
 use libkernel::fs::{
@@ -60,7 +61,7 @@ impl Inode for ProcTaskInode {
         } else if name == "task" && !self.is_task_dir {
             return Ok(Arc::new(task::ProcTaskDirInode::new(self.tid, inode_id)));
         }
-        if let Ok(file_type) = TaskFileType::try_from(name) {
+        if let Ok(file_type) = TaskFileType::from_str(name) {
             Ok(Arc::new(ProcTaskFileInode::new(
                 self.tid,
                 file_type,

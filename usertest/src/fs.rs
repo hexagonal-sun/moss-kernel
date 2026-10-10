@@ -957,3 +957,29 @@ fn test_ext4_truncate_boundaries() {
 }
 
 register_test!(test_ext4_truncate_boundaries);
+fn test_o_append() {
+    use std::io::{Seek, SeekFrom, Write};
+    let path = "/tmp/o_append_test";
+    fs::write(path, "first\n").unwrap();
+    let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+    file.write_all(b"second\n").unwrap();
+    // O_APPEND writes always go to the end, even after seeking elsewhere.
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write_all(b"third\n").unwrap();
+    assert_eq!(fs::read_to_string(path).unwrap(), "first\nsecond\nthird\n");
+    fs::remove_file(path).unwrap();
+}
+
+register_test!(test_o_append);
+
+fn test_getcwd_buffer_too_small() {
+    let mut buf = [0 as libc::c_char; 1];
+    let ret = unsafe { libc::getcwd(buf.as_mut_ptr(), buf.len()) };
+    assert!(ret.is_null());
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ERANGE)
+    );
+}
+
+register_test!(test_getcwd_buffer_too_small);
