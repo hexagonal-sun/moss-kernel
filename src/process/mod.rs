@@ -19,14 +19,14 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use core::time::Duration;
 use creds::Credentials;
 use fd_table::FileDescriptorTable;
-use libkernel::memory::proc_vm::address_space::{UserAddressSpace, VirtualMemory};
+use libkernel::memory::address_space::{AccessKind, UserAddressSpace, VirtualMemory};
 use libkernel::{
     error::{KernelError, Result},
     fs::{Inode, pathbuf::PathBuf},
     memory::{
         address::{UA, VA},
         allocators::phys::PageAllocation,
-        proc_vm::{ProcessVM, vmarea::AccessKind},
+        proc_vm::ProcessVM,
     },
     sync::waker_set::WakerSet,
 };

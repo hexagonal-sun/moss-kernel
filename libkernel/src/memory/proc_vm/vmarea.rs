@@ -13,7 +13,10 @@ use core::cmp;
 
 use crate::{
     fs::{Inode, InodeId},
-    memory::{PAGE_MASK, PAGE_SIZE, address::VA, region::VirtMemoryRegion},
+    memory::{
+        PAGE_MASK, PAGE_SIZE, address::VA, address_space::AccessKind,
+        paging::permissions::PtePermissions, region::VirtMemoryRegion,
+    },
 };
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
@@ -63,15 +66,11 @@ impl VMAPermissions {
     }
 }
 
-/// Describes the kind of access that occurred during a page fault.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum AccessKind {
-    /// The CPU attempted to read the faulting address.
-    Read,
-    /// The CPU attempted to write to the faulting address.
-    Write,
-    /// The CPU attempted to execute the instruction at the faulting address.
-    Execute,
+impl From<VMAPermissions> for PtePermissions {
+    fn from(value: VMAPermissions) -> Self {
+        // VMAs describe user mappings; CoW is applied separately when cloning.
+        Self::from_raw_bits(value.read, value.write, value.execute, true, false)
+    }
 }
 
 /// The result of checking a memory access against a `VMArea`.

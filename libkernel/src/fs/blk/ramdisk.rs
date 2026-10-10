@@ -6,8 +6,8 @@ use crate::{
     memory::{
         PAGE_SIZE,
         address::{TVA, VA},
+        address_space::KernAddressSpace,
         paging::permissions::PtePermissions,
-        proc_vm::address_space::KernAddressSpace,
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
 };

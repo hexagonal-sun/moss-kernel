@@ -19,7 +19,7 @@ use libkernel::{
     error::{KernelError, Result},
     memory::{
         address::{PA, VA},
-        proc_vm::address_space::{KernAddressSpace, VirtualMemory},
+        address_space::{KernAddressSpace, VirtualMemory},
         region::PhysMemoryRegion,
     },
 };

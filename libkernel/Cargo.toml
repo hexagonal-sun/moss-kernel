@@ -15,10 +15,11 @@ sync = []
 alloc = ["sync", "dep:intrusive-collections"]
 paging = ["alloc", "dep:tock-registers", "dep:paste"]
 proc = []
+address_space = ["paging"]
 fs = ["proc", "sync", "dep:async-trait", "dep:ext4plus"]
-proc_vm = ["paging", "fs", "dep:object"]
+proc_vm = ["address_space", "fs", "dep:object"]
 kbuf = ["sync", "dep:ringbuf"]
-all = ["paging", "fs", "proc_vm", "kbuf"]
+all = ["paging", "address_space", "fs", "proc_vm", "kbuf"]
 
 [dependencies]
 # Always-on dependencies

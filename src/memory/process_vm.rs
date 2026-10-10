@@ -8,7 +8,7 @@ use crate::process::{Tid, find_task_by_tid};
 use crate::{fs::syscalls::iov::IoVec, process::thread_group::pid::PidT};
 use libkernel::{
     error::{KernelError, Result},
-    memory::{PAGE_SIZE, address::TUA, proc_vm::vmarea::AccessKind},
+    memory::{PAGE_SIZE, address::TUA, address_space::AccessKind},
 };
 
 pub async fn sys_process_vm_readv(

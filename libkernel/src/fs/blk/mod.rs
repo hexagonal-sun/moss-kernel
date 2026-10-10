@@ -1,5 +1,5 @@
 //! Block device layer.
 
 pub mod buffer;
-#[cfg(feature = "paging")]
+#[cfg(feature = "address_space")]
 pub mod ramdisk;

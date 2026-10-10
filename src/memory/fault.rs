@@ -5,11 +5,8 @@ use libkernel::{
     error::{KernelError, MapError, Result},
     memory::{
         address::VA,
+        address_space::{AccessKind, PageInfo, UserAddressSpace},
         paging::permissions::PtePermissions,
-        proc_vm::{
-            address_space::{PageInfo, UserAddressSpace},
-            vmarea::AccessKind,
-        },
     },
 };
 

@@ -1,14 +1,11 @@
 //! Memory map management for a process address space.
 
-use super::{
-    address_space::UserAddressSpace,
-    vmarea::{VMAPermissions, VMArea, VMAreaKind},
-};
+use super::vmarea::{VMAPermissions, VMArea, VMAreaKind};
 use crate::{
     error::{KernelError, Result},
     memory::{
-        PAGE_MASK, PAGE_SIZE, address::VA, page::PageFrame, paging::permissions::PtePermissions,
-        region::VirtMemoryRegion,
+        PAGE_MASK, PAGE_SIZE, address::VA, address_space::UserAddressSpace, page::PageFrame,
+        paging::permissions::PtePermissions, region::VirtMemoryRegion,
     },
 };
 use alloc::{collections::BTreeMap, string::String, vec::Vec};

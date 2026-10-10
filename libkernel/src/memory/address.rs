@@ -371,6 +371,20 @@ impl<T> AddressTranslator<T> for IdentityTranslator {
     }
 }
 
+/// Translates between physical and virtual addresses using a fixed page-offset
+/// mapping.
+pub struct PageOffsetTranslator<const OFFSET: usize>;
+
+impl<T, const OFFSET: usize> AddressTranslator<T> for PageOffsetTranslator<OFFSET> {
+    fn virt_to_phys(va: TVA<T>) -> TPA<T> {
+        TPA::from_value(va.value() - OFFSET)
+    }
+
+    fn phys_to_virt(pa: TPA<T>) -> TVA<T> {
+        TVA::from_value(pa.value() + OFFSET)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,6 +447,17 @@ mod tests {
         let pa = PA::from_value(TEST_ADDR);
         let va = pa.to_va::<IdentityTranslator>();
         assert_eq!(va.value(), TEST_ADDR);
+    }
+
+    #[test]
+    fn test_page_offset_translation() {
+        const OFFSET: usize = usize::MAX & !0xffff;
+        for value in [0, NON_ALIGNED_ADDR, 0xffff] {
+            let pa = TPA::<u8>::from_value(value);
+            let va: TVA<u8> = pa.to_va::<PageOffsetTranslator<OFFSET>>();
+            assert_eq!(va.value(), OFFSET + value);
+            assert_eq!(va.to_pa::<PageOffsetTranslator<OFFSET>>(), pa);
+        }
     }
 
     #[test]

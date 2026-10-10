@@ -2,9 +2,6 @@
 
 use core::fmt;
 
-#[cfg(feature = "proc_vm")]
-use crate::memory::proc_vm::vmarea::VMAPermissions;
-
 /// Represents the memory permissions for a virtual memory mapping.
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct PtePermissions {
@@ -13,19 +10,6 @@ pub struct PtePermissions {
     execute: bool,
     user: bool,
     cow: bool,
-}
-
-#[cfg(feature = "proc_vm")]
-impl From<VMAPermissions> for PtePermissions {
-    fn from(value: VMAPermissions) -> Self {
-        Self {
-            read: value.read,
-            write: value.write,
-            execute: value.execute,
-            user: true, // VMAs only represent user address spaces.
-            cow: false, // a VMA will only be COW when it's cloned.
-        }
-    }
 }
 
 impl PtePermissions {

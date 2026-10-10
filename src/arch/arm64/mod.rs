@@ -12,8 +12,8 @@ use libkernel::{
     error::Result,
     memory::{
         address::{UA, VA},
+        address_space::VirtualMemory,
         paging::PgTableArray,
-        proc_vm::address_space::VirtualMemory,
     },
 };
 use memory::{
