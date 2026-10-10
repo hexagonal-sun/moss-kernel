@@ -11,10 +11,10 @@ categories = ["no-std", "os", "embedded"]
 
 [features]
 default = []
-sync = []
+sync = ["dep:log"]
 alloc = ["sync", "dep:intrusive-collections"]
 paging = ["alloc", "dep:tock-registers", "dep:paste"]
-proc = []
+proc = ["dep:bitflags"]
 address_space = ["paging"]
 fs = ["proc", "sync", "dep:async-trait", "dep:ext4plus"]
 proc_vm = ["address_space", "fs", "dep:object"]
@@ -23,9 +23,13 @@ all = ["paging", "address_space", "fs", "proc_vm", "kbuf"]
 
 [dependencies]
 # Always-on dependencies
-bitflags = { workspace = true }
-log = { workspace = true }
 thiserror = { version = "2.0.12", default-features = false }
+
+# sync
+log = { workspace = true, optional = true }
+
+# proc
+bitflags = { workspace = true, optional = true }
 
 # alloc
 intrusive-collections = { version = "0.10.0", default-features = false, optional = true }
