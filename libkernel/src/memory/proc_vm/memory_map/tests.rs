@@ -5,10 +5,10 @@ use crate::{
     memory::{
         PAGE_SIZE,
         address::VA,
+        address_space::{PageInfo, UserAddressSpace},
         page::PageFrame,
         paging::permissions::PtePermissions,
         proc_vm::{
-            address_space::{PageInfo, UserAddressSpace},
             memory_map::{AddressRequest, MMAP_BASE},
             vmarea::{VMAPermissions, VMArea, VMAreaKind, VMFileMapping, tests::DummyTestInode},
         },
@@ -160,8 +160,7 @@ fn assert_vma_perms(pvm: &MemoryMap<MockAddressSpace>, start: usize, perms: VMAP
     assert_eq!(
         vma.permissions(),
         perms,
-        "VMA permissions mismatch at {:#x}",
-        start
+        "VMA permissions mismatch at {start:#x}"
     );
 }
 
@@ -179,8 +178,7 @@ fn assert_ops_log_protect(
     });
     assert!(
         found,
-        "Did not find ProtectRange op for {:?} with {:?}",
-        expected_region, expected_perms
+        "Did not find ProtectRange op for {expected_region:?} with {expected_perms:?}"
     );
 }
 
@@ -613,7 +611,7 @@ fn test_munmap_full_vma() {
     assert!(pvm.vmas.is_empty());
     assert_eq!(
         *pvm.address_space.ops_log.lock().unwrap(),
-        &[MockPageTableOp::UnmapRange { region: region }]
+        &[MockPageTableOp::UnmapRange { region }]
     );
 }
 
@@ -635,7 +633,7 @@ fn test_munmap_truncate_start() {
     assert_vma_exists(&pvm, new_start, new_size);
     assert_eq!(
         *pvm.address_space.ops_log.lock().unwrap(),
-        &[MockPageTableOp::UnmapRange { region: region }]
+        &[MockPageTableOp::UnmapRange { region }]
     );
 }
 
@@ -656,7 +654,7 @@ fn test_munmap_truncate_end() {
     assert_vma_exists(&pvm, addr, new_size);
     assert_eq!(
         *pvm.address_space.ops_log.lock().unwrap(),
-        &[MockPageTableOp::UnmapRange { region: region }]
+        &[MockPageTableOp::UnmapRange { region }]
     );
 }
 
@@ -682,7 +680,7 @@ fn test_munmap_punch_hole() {
     assert_vma_exists(&pvm, right_start, right_size);
     assert_eq!(
         *pvm.address_space.ops_log.lock().unwrap(),
-        &[MockPageTableOp::UnmapRange { region: region }]
+        &[MockPageTableOp::UnmapRange { region }]
     );
 }
 

@@ -225,7 +225,7 @@ mod tests {
     }
 
     thread_local! {
-        static TLS_CACHE: RefCell<Option<*mut SlabCache>> = RefCell::new(None);
+        static TLS_CACHE: RefCell<Option<*mut SlabCache>> = const { RefCell::new(None) };
     }
 
     struct ThreadLocalCacheStorage;
@@ -254,7 +254,7 @@ mod tests {
             });
         }
 
-        fn get() -> impl Deref<Target = SlabCache> + DerefMut {
+        fn get() -> impl DerefMut<Target = SlabCache> {
             let ptr = TLS_CACHE.with(|c| {
                 c.borrow()
                     .expect("Thread cache not initialized for this thread")
@@ -283,7 +283,7 @@ mod tests {
 
             // Track allocated memory usage to verify leak detection later
             let initial_free_pages = get_fixture().allocator.free_pages();
-            println!("Initial Free Pages: {}", initial_free_pages);
+            println!("Initial Free Pages: {initial_free_pages}");
 
             let mut handles = vec![];
 
@@ -338,8 +338,7 @@ mod tests {
                                 for (i, &byte) in slice.iter().enumerate() {
                                     assert_eq!(
                                         byte, pattern,
-                                        "Memory Corruption detected in thread {} at byte {}",
-                                        t_idx, i
+                                        "Memory Corruption detected in thread {t_idx} at byte {i}"
                                     );
                                 }
 
@@ -361,7 +360,7 @@ mod tests {
 
                     // Purge the per-cpu caches.
                     let slab = SLAB_ALLOCATOR.get().unwrap();
-                    ThreadLocalCacheStorage::get().purge_into(&slab);
+                    ThreadLocalCacheStorage::get().purge_into(slab);
 
                     let addr = ThreadLocalCacheStorage::get().deref() as *const SlabCache;
 
@@ -376,7 +375,7 @@ mod tests {
                                 PAGE_SIZE,
                             ));
                     }
-                }))
+                }));
             }
 
             // Wait for all threads

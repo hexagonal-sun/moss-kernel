@@ -535,8 +535,7 @@ mod tests {
             assert_eq!(
                 d.as_raw() & (1 << 7),
                 0,
-                "PAT bit (7) must be clear on PTE for {:?}",
-                mt
+                "PAT bit (7) must be clear on PTE for {mt:?}"
             );
         }
     }

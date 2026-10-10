@@ -225,10 +225,7 @@ mod tests {
                 .insert(region.start_address().value(), region.size())
                 .is_some()
             {
-                panic!(
-                    "Double free detected! Physical Address {:?} was freed twice.",
-                    region
-                );
+                panic!("Double free detected! Physical Address {region:?} was freed twice.");
             }
         })
         .expect("Teardown failed");
@@ -392,10 +389,10 @@ mod tests {
             harness.inner.root_table,
             &mut harness.inner.create_walk_ctx(),
             |entry| {
-                if let EntryKind::Mapping(virt) = &entry.kind {
-                    if virt.start_address().value() >= (1usize << 47) {
-                        return TeardownAction::Skip;
-                    }
+                if let EntryKind::Mapping(virt) = &entry.kind
+                    && virt.start_address().value() >= (1usize << 47)
+                {
+                    return TeardownAction::Skip;
                 }
                 TeardownAction::Free
             },
@@ -534,8 +531,7 @@ mod tests {
                 let slot = unsafe { (table_pa as *const u64).add(idx).read_volatile() };
                 assert_eq!(
                     slot, 0,
-                    "table frame {:#x} slot {idx} should be zeroed after FreeAndClear",
-                    table_pa
+                    "table frame {table_pa:#x} slot {idx} should be zeroed after FreeAndClear"
                 );
             }
         }

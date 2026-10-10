@@ -493,7 +493,7 @@ mod test {
             utf16_chars.push(0x0000); // Null terminator
 
             // Pad to a multiple of 13 characters
-            while utf16_chars.len() % 13 != 0 {
+            while !utf16_chars.len().is_multiple_of(13) {
                 utf16_chars.push(0xFFFF);
             }
 
@@ -526,7 +526,7 @@ mod test {
                     ptr::write_unaligned(&raw mut lfn.name3, chunk[11..13].try_into().unwrap());
                 }
 
-                lfn_entries.push(unsafe { core::mem::transmute(lfn) });
+                lfn_entries.push(unsafe { core::mem::transmute::<LfnEntry, [u8; 32]>(lfn) });
             }
             lfn_entries
         }

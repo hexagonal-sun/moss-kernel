@@ -615,14 +615,13 @@ pub mod tests {
 
         /// Checks that the number of blocks in each free list matches the expected counts.
         fn assert_free_list_counts(&self, expected_counts: &[usize; MAX_ORDER + 1]) {
-            for order in 0..=MAX_ORDER {
+            for (order, expected) in expected_counts.iter().enumerate() {
                 let count = self.allocator.inner.lock_save_irq().free_lists[order]
                     .iter()
                     .count();
                 assert_eq!(
-                    count, expected_counts[order],
-                    "Mismatch in free list count for order {}",
-                    order
+                    count, *expected,
+                    "Mismatch in free list count for order {order}"
                 );
             }
         }
@@ -828,9 +827,7 @@ pub mod tests {
         // Splitting a MAX_ORDER block to get an order 0 page should leave
         // one free block at each intermediate order.
         let mut expected_counts = [0; MAX_ORDER + 1];
-        for i in 0..MAX_ORDER {
-            expected_counts[i] = 1;
-        }
+        expected_counts[..MAX_ORDER].fill(1);
         fixture.assert_free_list_counts(&expected_counts);
     }
 
@@ -845,7 +842,7 @@ pub mod tests {
 
         // Check head page
         match fixture.frame_state(head_region.region.iter_pfns().next().unwrap()) {
-            FrameState::AllocatedHead(info) => assert_eq!(info.order, order as u8),
+            FrameState::AllocatedHead(info) => assert_eq!(info.order, order),
             _ => panic!("Head page has incorrect state"),
         }
 
@@ -853,9 +850,9 @@ pub mod tests {
         for (i, pfn) in head_region.region.iter_pfns().skip(1).enumerate() {
             match fixture.frame_state(pfn) {
                 FrameState::AllocatedTail(info) => {
-                    assert_eq!(info.head, head_region.region.start_address().to_pfn())
+                    assert_eq!(info.head, head_region.region.start_address().to_pfn());
                 }
-                _ => panic!("Tail page {} has incorrect state", i),
+                _ => panic!("Tail page {i} has incorrect state"),
             }
         }
     }
@@ -888,7 +885,7 @@ pub mod tests {
         for _ in 0..total_pages {
             match fixture.allocator.alloc_frames(0) {
                 Ok(pfn) => allocs.push(pfn),
-                Err(e) => panic!("Allocation failed prematurely: {:?}", e),
+                Err(e) => panic!("Allocation failed prematurely: {e:?}"),
             }
         }
 

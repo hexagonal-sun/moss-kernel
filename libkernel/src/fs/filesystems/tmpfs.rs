@@ -869,6 +869,12 @@ mod tests {
         }
     }
 
+    /// The `TmpFs` instantiation used throughout these tests.
+    type TestTmpFs = TmpFs<MockCpuOps, TmpFsPgAllocGetter, IdentityTranslator>;
+
+    /// The regular-file inode type matching [`TestTmpFs`].
+    type TestTmpFsReg = TmpFsReg<MockCpuOps, TmpFsPgAllocGetter, IdentityTranslator>;
+
     /// Initializes the global allocator for the test suite.
     fn init_allocator() {
         PG_ALLOC.get_or_init(|| {
@@ -878,10 +884,7 @@ mod tests {
     }
 
     /// Creates a fresh Filesystem and a detached regular file for isolated file testing.
-    fn setup_env() -> (
-        Arc<TmpFs<MockCpuOps, TmpFsPgAllocGetter, IdentityTranslator>>,
-        TmpFsReg<MockCpuOps, TmpFsPgAllocGetter, IdentityTranslator>,
-    ) {
+    fn setup_env() -> (Arc<TestTmpFs>, TestTmpFsReg) {
         init_allocator();
         let fs = TmpFs::new(0);
         let reg = TmpFsReg::new(
@@ -893,7 +896,7 @@ mod tests {
     }
 
     /// Creates just the Filesystem to test directory hierarchies.
-    fn setup_fs() -> Arc<TmpFs<MockCpuOps, TmpFsPgAllocGetter, IdentityTranslator>> {
+    fn setup_fs() -> Arc<TestTmpFs> {
         init_allocator();
         TmpFs::new(1)
     }

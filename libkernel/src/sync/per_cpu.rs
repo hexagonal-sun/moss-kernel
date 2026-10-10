@@ -310,7 +310,7 @@ mod tests {
     use std::thread;
 
     thread_local! {
-        static MOCK_CPU_ID: Cell<usize> = Cell::new(0);
+        static MOCK_CPU_ID: Cell<usize> = const { Cell::new(0) };
     }
 
     struct MockArch;
@@ -446,8 +446,7 @@ mod tests {
                 let expected_final_val = initial_val + ITERATIONS_PER_THREAD;
                 assert_eq!(
                     final_val, expected_final_val,
-                    "Incorrect final value on CPU {}",
-                    i
+                    "Incorrect final value on CPU {i}"
                 );
             });
             handles.push(handle);
@@ -461,7 +460,7 @@ mod tests {
         // Optional: Final sanity check from the main thread (acting as CPU 0)
         // to ensure its value was not corrupted by the other threads.
         MOCK_CPU_ID.with(|id| id.set(0));
-        let expected_val_for_cpu0 = 0 * 100_000 + ITERATIONS_PER_THREAD;
+        let expected_val_for_cpu0 = ITERATIONS_PER_THREAD;
         assert_eq!(*per_cpu_data.borrow(), expected_val_for_cpu0);
     }
 }

@@ -310,9 +310,9 @@ mod tests {
         ptrs.retain(|(i, ptr)| {
             if i % 2 == 0 {
                 slab.put_object(*ptr);
-                return false;
+                false
             } else {
-                return true;
+                true
             }
         });
 

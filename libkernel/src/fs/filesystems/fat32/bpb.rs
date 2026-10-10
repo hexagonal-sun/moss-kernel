@@ -250,7 +250,7 @@ pub mod test {
         let bpb = create_test_bpb();
 
         // Clusters 0 and 1 are reserved and should not be converted to sectors.
-        assert!(matches!(bpb.cluster_to_sectors(Cluster(0)), Err(_)));
-        assert!(matches!(bpb.cluster_to_sectors(Cluster(1)), Err(_)));
+        assert!(bpb.cluster_to_sectors(Cluster(0)).is_err());
+        assert!(bpb.cluster_to_sectors(Cluster(1)).is_err());
     }
 }
