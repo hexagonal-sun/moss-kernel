@@ -18,6 +18,7 @@ pub mod blk;
 pub mod filesystems;
 pub mod path;
 pub mod pathbuf;
+pub mod stats;
 
 use core::any::Any;
 
@@ -48,6 +49,11 @@ mod _open_flags {
             const O_DIRECTORY = 0o200000;
             const O_APPEND    = 0o2000;
             const O_NONBLOCK  = 0o4000;
+            // AArch64 overrides the asm-generic value (compat with AArch32).
+            #[cfg(target_arch = "aarch64")]
+            const O_LARGEFILE = 0o400000;
+            #[cfg(not(target_arch = "aarch64"))]
+            const O_LARGEFILE = 0o100000;
             const O_CLOEXEC   = 0o2000000;
         }
     }
@@ -63,6 +69,8 @@ pub const PROCFS_ID: u64 = 2;
 pub const SYSFS_ID: u64 = 3;
 /// Filesystem instance ID for the cgroup filesystem.
 pub const CGROUPFS_ID: u64 = 4;
+/// Filesystem instance ID for the internal pidfd filesystem.
+pub const PIDFS_ID: u64 = 5;
 /// Starting ID for user-mounted filesystem instances.
 pub const FS_ID_START: u64 = 10;
 
@@ -78,6 +86,15 @@ pub trait Filesystem: Send + Sync {
 
     /// Get magic
     fn magic(&self) -> u64;
+
+    /// Queries filesystem-wide statistics, independently of any open file.
+    async fn statfs(&self) -> Result<stats::FilesystemStats> {
+        Ok(stats::FilesystemStats {
+            magic: self.magic(),
+            id: self.id(),
+            ..Default::default()
+        })
+    }
 
     /// Flushes all pending data to the underlying storage device(s).
     ///
@@ -335,6 +352,12 @@ pub trait Inode: Send + Sync + Any {
         Err(KernelError::NotSupported)
     }
 
+    /// Resolves a magic link directly to an inode, without interpreting its
+    /// display name as a pathname. Ordinary symlinks return `None`.
+    async fn follow_link(&self) -> Result<Option<Arc<dyn Inode>>> {
+        Ok(None)
+    }
+
     /// Flushes all modified data, including metadata, to the disk device containing the inode.
     ///
     /// The default implementation is a no-op so that read-only filesystems do
@@ -368,6 +391,11 @@ pub trait SimpleFile {
     /// Reads the target of a symbolic link, if applicable.
     async fn readlink(&self) -> Result<PathBuf> {
         Err(KernelError::NotSupported)
+    }
+
+    /// Resolves a magic link; see [`Inode::follow_link`].
+    async fn follow_link(&self) -> Result<Option<Arc<dyn Inode>>> {
+        Ok(None)
     }
 }
 
@@ -406,6 +434,10 @@ where
 
     async fn readlink(&self) -> Result<PathBuf> {
         self.readlink().await
+    }
+
+    async fn follow_link(&self) -> Result<Option<Arc<dyn Inode>>> {
+        self.follow_link().await
     }
 
     fn as_any(&self) -> &dyn Any {

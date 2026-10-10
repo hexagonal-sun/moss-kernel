@@ -46,7 +46,7 @@ pub(super) mod memory;
 mod paging_bootstrap;
 pub(super) mod secondary;
 
-global_asm!(include_str!("start.s"));
+global_asm!(include_str!("start.s"), frame_size = const size_of::<ExceptionState>());
 
 /// Stage 1 Initialize of the system architecture.
 ///

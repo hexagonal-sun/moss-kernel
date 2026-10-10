@@ -6,6 +6,7 @@ use crate::{
                 arch_init_secondary,
                 memory::{KERNEL_STACK_PG_ORDER, allocate_kstack_region},
             },
+            exceptions::ExceptionState,
             memory::flush_to_ram,
             psci::{PSCIEntry, PSCIMethod, boot_secondary_psci},
         },
@@ -65,12 +66,13 @@ extern "C" fn do_secondary_start(boot_info: *const SecondaryBootInfo) {
         "ldr x1, [x19, #0x20]",     // Load `start_fn`
         "ldr x2, [x19, #0x8]",      // Load kstack addr
         "mov sp, x2",               // Set final stack addr
-        "sub sp, sp, #(0x10 * 18)", // Allocate a context switch frame
+        "sub sp, sp, #{frame_size}", // Allocate a context switch frame
         "mov x0, sp",               // ctx switch frame ptr
         "ldr x2, [x19, #0x28]",     // return to exception_ret.
         "mov lr, x2",
         "br  x1", // branch to Rust entry point
-        "b    ."  // Just in case!
+        "b    .", // Just in case!
+        frame_size = const size_of::<ExceptionState>(),
     )
 }
 

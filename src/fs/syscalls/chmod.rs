@@ -16,7 +16,7 @@ pub async fn sys_fchmod(ctx: &ProcessCtx, fd: Fd, mode: u16) -> Result<usize> {
         .lock_save_irq()
         .get(fd)
         .ok_or(KernelError::BadFd)?;
-    let permissions = FilePermissions::from_bits_retain(mode);
+    let permissions = FilePermissions::from_bits_truncate(mode);
 
     let inode = file.inode().ok_or(KernelError::BadFd)?;
     let mut attr = inode.getattr().await?;

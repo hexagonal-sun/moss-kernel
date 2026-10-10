@@ -41,6 +41,11 @@ impl OpenFile {
         self.path = Some(path);
     }
 
+    /// Attaches an inode for a kernel-created file with no pathname.
+    pub fn set_inode(&mut self, inode: Arc<dyn Inode>) {
+        self.inode = Some(inode);
+    }
+
     pub fn inode(&self) -> Option<Arc<dyn Inode>> {
         self.inode.clone()
     }
@@ -53,8 +58,13 @@ impl OpenFile {
         self.state.lock().await.1.flags
     }
 
-    pub async fn set_flags(&self, flags: OpenFlags) {
-        self.state.lock().await.1.flags = flags;
+    pub async fn set_status_flags(&self, flags: OpenFlags) {
+        // F_SETFL changes supported mutable status bits only. In particular,
+        // retain the access mode and PIDFD_THREAD (O_EXCL); O_LARGEFILE added
+        // by musl is an immutable open flag, not an invalid status request.
+        let mutable = OpenFlags::O_APPEND | OpenFlags::O_NONBLOCK;
+        let mut state = self.state.lock().await;
+        state.1.flags = (state.1.flags & !mutable) | (flags & mutable);
     }
 
     pub async fn lock(&self) -> AsyncMutexGuard<'_, (Box<dyn FileOps>, FileCtx)> {
