@@ -62,4 +62,3 @@ codegen-units = 1
 
 [lints]
 workspace = true
-
