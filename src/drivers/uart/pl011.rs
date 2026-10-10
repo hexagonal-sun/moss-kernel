@@ -16,7 +16,7 @@ use libkernel::{
     error::{ProbeError, Result},
     memory::{
         address::{PA, VA},
-        proc_vm::address_space::{KernAddressSpace, VirtualMemory},
+        address_space::{KernAddressSpace, VirtualMemory},
         region::PhysMemoryRegion,
     },
 };

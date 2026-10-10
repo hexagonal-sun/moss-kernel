@@ -12,7 +12,7 @@ use crate::{
 };
 use alloc::{boxed::Box, sync::Arc};
 use core::ptr::NonNull;
-use libkernel::memory::proc_vm::address_space::{KernAddressSpace, VirtualMemory};
+use libkernel::memory::address_space::{KernAddressSpace, VirtualMemory};
 use libkernel::{
     error::{KernelError, ProbeError, Result},
     memory::{

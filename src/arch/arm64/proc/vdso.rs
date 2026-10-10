@@ -3,8 +3,8 @@ use libkernel::{
     error::Result,
     memory::{
         address::VA,
+        address_space::{KernAddressSpace, VirtualMemory},
         paging::permissions::PtePermissions,
-        proc_vm::address_space::{KernAddressSpace, VirtualMemory},
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
 };

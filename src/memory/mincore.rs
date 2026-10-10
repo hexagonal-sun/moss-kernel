@@ -1,6 +1,6 @@
 use alloc::vec;
 use alloc::vec::Vec;
-use libkernel::memory::proc_vm::address_space::UserAddressSpace;
+use libkernel::memory::address_space::UserAddressSpace;
 
 use crate::memory::uaccess::copy_to_user_slice;
 use crate::sched::syscall_ctx::ProcessCtx;

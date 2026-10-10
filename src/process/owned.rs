@@ -23,7 +23,8 @@ use libkernel::{
     fs::pathbuf::PathBuf,
     memory::{
         address::{TUA, VA},
-        proc_vm::{ProcessVM, address_space::VirtualMemory, vmarea::VMArea},
+        address_space::VirtualMemory,
+        proc_vm::{ProcessVM, vmarea::VMArea},
     },
     sync::waker_set::WakerSet,
 };

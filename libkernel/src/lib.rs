@@ -14,16 +14,17 @@
 //! Most of the crate is hidden behind Cargo features so that consumers only pay
 //! for the subsystems they need:
 //!
-//! | Feature   | Enables                                               | Implies          |
-//! |-----------|-------------------------------------------------------|------------------|
-//! | `sync`    | Synchronisation primitives (spinlock, mutex, rwlock…) | —                |
-//! | `alloc`   | Memory allocators (buddy, slab) and collection types  | `sync`           |
-//! | `paging`  | Page tables, PTE helpers                              | `alloc`          |
-//! | `proc`    | Process identity types (UID/GID, capabilities)        | —                |
-//! | `fs`      | VFS traits, path manipulation, block I/O              | `proc`, `sync`   |
-//! | `proc_vm` | Process virtual-memory management (mmap, brk, CoW)    | `paging`, `fs`   |
-//! | `kbuf`    | Async-aware circular kernel buffers                   | `sync`           |
-//! | `all`     | Everything above                                      | all of the above |
+//! | Feature         | Enables                                               | Implies               |
+//! |-----------------|-------------------------------------------------------|-----------------------|
+//! | `sync`          | Synchronisation primitives (spinlock, mutex, rwlock…) | —                     |
+//! | `alloc`         | Memory allocators (buddy, slab) and collection types  | `sync`                |
+//! | `paging`        | Page tables, PTE helpers                              | `alloc`               |
+//! | `address_space` | Kernel/user address-space traits and access kinds     | `paging`              |
+//! | `proc`          | Process identity types (UID/GID, capabilities)        | —                     |
+//! | `fs`            | VFS traits, path manipulation, block I/O              | `proc`, `sync`        |
+//! | `proc_vm`       | Process virtual-memory management (mmap, brk, CoW)    | `address_space`, `fs` |
+//! | `kbuf`          | Async-aware circular kernel buffers                   | `sync`                |
+//! | `all`           | Everything above                                      | all of the above      |
 //!
 //! ## The `CpuOps` trait
 //!

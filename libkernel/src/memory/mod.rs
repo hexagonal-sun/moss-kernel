@@ -9,6 +9,8 @@
 //! feature flags.
 
 pub mod address;
+#[cfg(feature = "address_space")]
+pub mod address_space;
 #[cfg(feature = "alloc")]
 pub mod allocators;
 #[cfg(feature = "alloc")]

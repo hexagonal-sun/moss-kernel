@@ -1,16 +1,15 @@
 //! Manages the virtual memory address space of a process.
 
-use super::{
-    PAGE_SIZE, address::VA, proc_vm::address_space::UserAddressSpace, region::VirtMemoryRegion,
+use super::{PAGE_SIZE, address::VA, address_space::UserAddressSpace, region::VirtMemoryRegion};
+use crate::{
+    error::{KernelError, Result},
+    memory::address_space::AccessKind,
 };
-use crate::error::{KernelError, Result};
 use alloc::string::ToString;
 use memory_map::{AddressRequest, MemoryMap};
-use vmarea::{AccessKind, FaultValidation, VMAPermissions, VMArea, VMAreaKind};
+use vmarea::{FaultValidation, VMAPermissions, VMArea, VMAreaKind};
 
-pub mod address_space;
 pub mod memory_map;
-pub mod pg_offset;
 pub mod vmarea;
 
 const BRK_PERMISSIONS: VMAPermissions = VMAPermissions::rw();

@@ -31,5 +31,34 @@ jobs:
       - name: Run clippy
         run: cargo clippy -- -D warnings
 
-      - name: Run unit tests for libkernel
-        run: cargo test -p libkernel --target x86_64-unknown-linux-gnu --all-features
+      - name: Run clippy for libkernel (all features, including tests)
+        run: >
+          cargo clippy -p libkernel
+          --target x86_64-unknown-linux-gnu
+          --all-features --all-targets -- -D warnings
+
+  libkernel-features:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # Use the toolchain from rust-toolchain.toml
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+
+      - name: Check libkernel for every feature combination
+        run: >
+          cargo hack check -p libkernel
+          --target x86_64-unknown-linux-gnu
+          --feature-powerset --no-dev-deps --keep-going
+
+      - name: Test libkernel for every feature combination
+        run: >
+          cargo hack test -p libkernel
+          --target x86_64-unknown-linux-gnu
+          --feature-powerset --keep-going

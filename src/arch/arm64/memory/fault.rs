@@ -19,7 +19,7 @@ use libkernel::{
     error::Result,
     memory::{
         address::VA,
-        proc_vm::{address_space::UserAddressSpace, vmarea::AccessKind},
+        address_space::{AccessKind, UserAddressSpace},
         region::VirtMemoryRegion,
     },
 };

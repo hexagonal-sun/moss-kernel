@@ -24,7 +24,7 @@ use libkernel::{
     error::Result,
     memory::{
         address::{UA, VA},
-        proc_vm::address_space::VirtualMemory,
+        address_space::VirtualMemory,
     },
 };
 

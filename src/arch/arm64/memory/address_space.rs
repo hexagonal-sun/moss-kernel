@@ -20,12 +20,12 @@ use libkernel::{
     memory::{
         PAGE_SIZE,
         address::{TPA, VA},
+        address_space::{PageInfo, UserAddressSpace},
         page::PageFrame,
         paging::{
             PaMapper, PageAllocator, PageTableEntry, PgTableArray, permissions::PtePermissions,
             tear_down::TeardownAction, walk::WalkContext,
         },
-        proc_vm::address_space::{PageInfo, UserAddressSpace},
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
 };

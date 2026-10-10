@@ -1,4 +1,7 @@
 //! Kernel and user address-space management.
+//!
+//! Available with the `address_space` feature, independently of process VMAs
+//! and filesystems.
 
 use alloc::vec::Vec;
 
@@ -13,6 +16,17 @@ use crate::{
     },
     sync::spinlock::SpinLockIrq,
 };
+
+/// Describes the kind of access that occurred during a page fault.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AccessKind {
+    /// The CPU attempted to read the faulting address.
+    Read,
+    /// The CPU attempted to write to the faulting address.
+    Write,
+    /// The CPU attempted to execute the instruction at the faulting address.
+    Execute,
+}
 
 /// An architecture-independent representation of a page table entry (PTE).
 pub struct PageInfo {

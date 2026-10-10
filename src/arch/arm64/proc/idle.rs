@@ -6,11 +6,9 @@ use crate::{
 use core::arch::global_asm;
 use libkernel::memory::{
     address::VA,
+    address_space::{UserAddressSpace, VirtualMemory},
     paging::permissions::PtePermissions,
-    proc_vm::{
-        address_space::{UserAddressSpace, VirtualMemory},
-        vmarea::{VMAPermissions, VMArea, VMAreaKind},
-    },
+    proc_vm::vmarea::{VMAPermissions, VMArea, VMAreaKind},
     region::VirtMemoryRegion,
 };
 

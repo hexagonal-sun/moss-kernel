@@ -9,8 +9,8 @@ use libkernel::{
     error::Result,
     memory::{
         address::{PA, TPA, VA},
+        address_space::KernAddressSpace,
         paging::{PaMapper, PgTableArray, permissions::PtePermissions},
-        proc_vm::address_space::KernAddressSpace,
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
 };

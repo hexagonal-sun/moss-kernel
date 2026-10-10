@@ -29,8 +29,8 @@ use libkernel::{
     error::{KernelError, Result},
     memory::{
         address::{PA, VA},
+        address_space::{KernAddressSpace, VirtualMemory},
         paging::permissions::PtePermissions,
-        proc_vm::address_space::{KernAddressSpace, VirtualMemory},
     },
 };
 use log::{info, warn};

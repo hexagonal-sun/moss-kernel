@@ -16,7 +16,7 @@ use alloc::{string::String, vec};
 use alloc::{string::ToString, sync::Arc, vec::Vec};
 use auxv::{AT_BASE, AT_ENTRY, AT_NULL, AT_PAGESZ, AT_PHDR, AT_PHENT, AT_PHNUM, AT_RANDOM};
 use core::{ffi::c_char, mem, slice};
-use libkernel::memory::proc_vm::address_space::{UserAddressSpace, VirtualMemory};
+use libkernel::memory::address_space::{UserAddressSpace, VirtualMemory};
 use libkernel::{
     error::{ExecError, KernelError, Result},
     fs::{Inode, path::Path},

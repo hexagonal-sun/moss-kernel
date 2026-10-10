@@ -27,7 +27,7 @@ use libkernel::{
     },
     memory::{
         address::{PA, VA},
-        proc_vm::address_space::VirtualMemory,
+        address_space::VirtualMemory,
         region::PhysMemoryRegion,
     },
 };
