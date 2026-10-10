@@ -253,7 +253,7 @@ impl<T: MemKind> MemoryRegion<T> {
     /// Returns `true` if this region fully contains `other`.
     pub fn contains(self, other: Self) -> bool {
         self.start_address().value() <= other.start_address().value()
-            && self.end_address().value() >= other.end_address().value()
+            && self.end_address_inclusive().value() >= other.end_address_inclusive().value()
     }
 
     /// Returns `true` if this region contains the given address.
@@ -325,17 +325,22 @@ impl<T: MemKind> MemoryRegion<T> {
     /// assert_eq!(intersection.size(), 0x1000);
     /// ```
     pub fn intersection(self, other: Self) -> Option<Self> {
+        if self.is_empty() || other.is_empty() {
+            return None;
+        }
+
         // Determine the latest start address and the earliest end address.
         let intersection_start = core::cmp::max(self.start_address(), other.start_address());
-        let intersection_end = core::cmp::min(self.end_address(), other.end_address());
+        let intersection_end =
+            core::cmp::min(self.end_address_inclusive(), other.end_address_inclusive());
 
         // A valid, non-empty overlap exists only if the start of the
         // potential intersection is before its end.
-        if intersection_start < intersection_end {
-            Some(Self::from_start_end_address(
-                intersection_start,
-                intersection_end,
-            ))
+        if intersection_start <= intersection_end {
+            // +1 since we used `inclusive()` arithmatic above to avoid
+            // overflows.
+            let intersection_length = (intersection_end.value() - intersection_start.value()) + 1;
+            Some(Self::new(intersection_start, intersection_length))
         } else {
             None
         }
@@ -403,9 +408,8 @@ impl<T: MemKind> MemoryRegion<T> {
         let pages_count = self.size >> PAGE_SHIFT;
 
         core::iter::from_fn(move || {
-            let addr = self.start_address().add_pages(count);
-
             if count < pages_count {
+                let addr = self.start_address().add_pages(count);
                 count += 1;
                 Some(addr)
             } else {
@@ -634,6 +638,14 @@ mod tests {
     }
 
     #[test]
+    fn iter_pages_top_of_address_space() {
+        let top = VA::from_value(usize::MAX - (PAGE_SIZE * 3)).align_up(PAGE_SIZE);
+        let rgn = VirtMemoryRegion::new(top, PAGE_SIZE * 3);
+
+        assert_eq!(rgn.iter_pages().count(), 3);
+    }
+
+    #[test]
     fn test_punch_hole_middle() {
         // Region: [0x1000 ... 0x5000) (size 0x4000)
         // Hole:   [0x2000 ... 0x3000)
@@ -720,6 +732,251 @@ mod tests {
         let main = region(0x1000, 0x1000);
         let hole = region(0x2000, 0x1000);
         assert_eq!(main.punch_hole(hole), (Some(main), None));
+    }
+
+    fn assert_intersection(
+        a: PhysMemoryRegion,
+        b: PhysMemoryRegion,
+        expected: Option<PhysMemoryRegion>,
+    ) {
+        assert_eq!(a.intersection(b), expected, "a.intersection(b)");
+        assert_eq!(b.intersection(a), expected, "b.intersection(a)");
+    }
+
+    #[test]
+    fn intersection_partial_overlap() {
+        // A:     [0x1000 ... 0x3000)
+        // B:     [0x2000 ... 0x4000)
+        // Expect:[0x2000 ... 0x3000)
+        let a = region(0x1000, 0x2000);
+        let b = region(0x2000, 0x2000);
+        let i = a.intersection(b).unwrap();
+
+        assert_eq!(i.start_address().value(), 0x2000);
+        assert_eq!(i.end_address().value(), 0x3000);
+        assert_eq!(i.size(), 0x1000);
+    }
+
+    #[test]
+    fn intersection_is_commutative() {
+        let a = region(0x1000, 0x2000);
+        let b = region(0x2000, 0x2000);
+
+        assert_eq!(a.intersection(b), b.intersection(a));
+        assert_eq!(b.intersection(a), Some(region(0x2000, 0x1000)));
+    }
+
+    #[test]
+    fn intersection_identical_is_same() {
+        let a = region(0x1000, 0x1000);
+
+        assert_intersection(a, a, Some(a));
+    }
+
+    #[test]
+    fn intersection_fully_contained() {
+        let outer = region(0x1000, 0x4000);
+        let inner = region(0x2000, 0x1000);
+
+        assert_intersection(outer, inner, Some(inner));
+    }
+
+    #[test]
+    fn intersection_shared_start() {
+        let a = region(0x1000, 0x1000);
+        let b = region(0x1000, 0x3000);
+
+        assert_intersection(a, b, Some(a));
+    }
+
+    #[test]
+    fn intersection_shared_end() {
+        let a = region(0x3000, 0x1000);
+        let b = region(0x1000, 0x3000);
+
+        assert_intersection(a, b, Some(a));
+    }
+
+    #[test]
+    fn intersection_unaligned() {
+        let a = region(0x1234, 0xcc);
+        let b = region(0x12ab, 0xd56);
+
+        assert_intersection(a, b, Some(region(0x12ab, 0x55)));
+    }
+
+    #[test]
+    fn intersection_starting_at_zero() {
+        let a = region(0, 0x2000);
+        let b = region(0, 0x1000);
+
+        assert_intersection(a, b, Some(b));
+    }
+
+    #[test]
+    fn intersection_adjacent_is_none() {
+        let a = region(0x1000, 0x1000);
+        let b = region(0x2000, 0x1000);
+
+        assert_intersection(a, b, None);
+    }
+
+    #[test]
+    fn intersection_disjoint_is_none() {
+        let a = region(0x1000, 0x1000);
+        let b = region(0x5000, 0x1000);
+
+        assert_intersection(a, b, None);
+    }
+
+    #[test]
+    fn intersection_one_byte_gap_is_none() {
+        let a = region(0x1000, 0xfff);
+        let b = region(0x2000, 0x1000);
+
+        assert_intersection(a, b, None);
+    }
+
+    // --- Single-byte overlaps --------------------------------------------
+
+    #[test]
+    fn intersection_single_byte_overlap() {
+        let a = region(0x1000, 0x1000);
+        let b = region(0x1fff, 0x1001);
+
+        assert_intersection(a, b, Some(region(0x1fff, 1)));
+    }
+
+    #[test]
+    fn intersection_single_byte_region_inside_larger() {
+        let outer = region(0x1000, 0x1000);
+
+        for addr in [0x1000, 0x1800, 0x1fff] {
+            let byte = region(addr, 1);
+            assert_intersection(outer, byte, Some(byte));
+        }
+    }
+
+    #[test]
+    fn intersection_identical_single_byte_regions() {
+        let a = region(0x1000, 1);
+
+        assert_intersection(a, a, Some(a));
+    }
+
+    #[test]
+    fn intersection_single_byte_region_just_outside_is_none() {
+        let outer = region(0x1000, 0x1000);
+
+        assert_intersection(outer, region(0xfff, 1), None);
+        assert_intersection(outer, region(0x2000, 1), None);
+    }
+
+    #[test]
+    fn intersection_with_empty_region_is_none() {
+        let a = region(0x1000, 0x1000);
+
+        for addr in 0x0..=0x8000 {
+            assert_intersection(a, region(addr, 0), None);
+        }
+    }
+
+    #[test]
+    fn intersection_of_two_empty_regions_is_none() {
+        assert_intersection(region(0x1000, 0), region(0x1000, 0), None);
+        assert_intersection(region(0x1000, 0), region(0x2000, 0), None);
+        assert_intersection(PhysMemoryRegion::empty(), PhysMemoryRegion::empty(), None);
+    }
+
+    #[test]
+    fn intersection_at_top_of_address_space() {
+        // A: last page.   B: last half page.
+        let a = region(usize::MAX - 0xfff, 0x1000);
+        let b = region(usize::MAX - 0x7ff, 0x800);
+
+        let i = a.intersection(b).unwrap();
+
+        assert_eq!(i, b);
+        assert_eq!(i.end_address_inclusive().value(), usize::MAX);
+        assert_eq!(b.intersection(a), Some(b));
+    }
+
+    #[test]
+    fn intersection_partial_overlap_at_top_of_address_space() {
+        let a = region(usize::MAX - 0x1fff, 0x1800);
+        let b = region(usize::MAX - 0xfff, 0x1000);
+
+        assert_intersection(a, b, Some(region(usize::MAX - 0xfff, 0x800)));
+    }
+
+    #[test]
+    fn intersection_identical_at_top_of_address_space() {
+        let a = region(usize::MAX - 0xfff, 0x1000);
+
+        assert_intersection(a, a, Some(a));
+    }
+
+    #[test]
+    fn intersection_adjacent_at_top_of_address_space_is_none() {
+        let a = region(usize::MAX - 0x1fff, 0x1000);
+        let b = region(usize::MAX - 0xfff, 0x1000);
+
+        assert_intersection(a, b, None);
+    }
+
+    #[test]
+    fn intersection_last_byte_of_address_space() {
+        let top = region(usize::MAX - 0xfff, 0x1000);
+        let last_byte = region(usize::MAX, 1);
+
+        assert_intersection(top, last_byte, Some(last_byte));
+    }
+
+    #[test]
+    fn intersection_huge_regions() {
+        // [0 ... MAX-1] ∩ [1 ... MAX] == [1 ... MAX-1]
+        let a = region(0, usize::MAX);
+        let b = region(1, usize::MAX);
+
+        assert_intersection(a, b, Some(region(1, usize::MAX - 1)));
+        assert_intersection(a, a, Some(a));
+        assert_intersection(b, b, Some(b));
+    }
+
+    #[test]
+    fn intersection_result_is_contained_in_both_inputs() {
+        let a = region(0x1000, 0x3000);
+        let b = region(0x2800, 0x4000);
+
+        let i = a.intersection(b).unwrap();
+
+        assert!(a.contains(i));
+        assert!(b.contains(i));
+        assert!(!i.is_empty());
+    }
+
+    #[test]
+    fn intersection_is_idempotent() {
+        let a = region(0x1000, 0x3000);
+        let b = region(0x2800, 0x4000);
+
+        let i = a.intersection(b).unwrap();
+
+        assert_eq!(i.intersection(a), Some(i));
+        assert_eq!(i.intersection(b), Some(i));
+    }
+
+    #[test]
+    fn intersection_is_associative() {
+        let a = region(0x1000, 0x4000);
+        let b = region(0x2000, 0x4000);
+        let c = region(0x3000, 0x4000);
+
+        let ab_c = a.intersection(b).and_then(|ab| ab.intersection(c));
+        let a_bc = b.intersection(c).and_then(|bc| a.intersection(bc));
+
+        assert_eq!(ab_c, a_bc);
+        assert_eq!(ab_c, Some(region(0x3000, 0x2000)));
     }
 
     #[test]

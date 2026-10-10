@@ -7,8 +7,9 @@ use crate::{
         PAGE_SIZE,
         address::{TPA, TVA, VA},
         paging::{
-            PaMapper, PageAllocator, PageTableEntry, PageTableMapper, PgTable, PgTableArray,
-            TLBInvalidator, TableMapper, TableMapperTable, permissions::PtePermissions,
+            NullTlbInvalidator, PaMapper, PageAllocator, PageTableEntry, PageTableMapper, PgTable,
+            PgTableArray, TLBInvalidator, TableMapper, TableMapperTable,
+            permissions::PtePermissions,
         },
         region::{PhysMemoryRegion, VirtMemoryRegion},
     },
@@ -45,11 +46,11 @@ macro_rules! impl_pgtable {
                 self.get_idx(Self::pg_index(va))
             }
 
-            fn set_desc(self, va: VA, desc: Self::Descriptor, _invalidator: &dyn TLBInvalidator) {
+            fn set_desc(self, va: VA, desc: Self::Descriptor, invalidator: &impl TLBInvalidator) {
                 unsafe {
-                    self.base
-                        .add(Self::pg_index(va))
-                        .write_volatile(PageTableEntry::as_raw(desc))
+                    crate::memory::paging::update_descriptor(
+                        self.base.add(Self::pg_index(va)), va, desc, invalidator,
+                    )
                 };
             }
         }
@@ -92,6 +93,24 @@ pub struct MapAttributes {
     pub perms: PtePermissions,
 }
 
+/// A collection of context required to modify page tables.
+pub struct ModifyContext<'a, PA, PM, I>
+where
+    PA: PageAllocator + 'a,
+    PM: PageTableMapper + 'a,
+    I: TLBInvalidator + 'a,
+{
+    /// An implementation of `PageAllocator` used to request new, zeroed page
+    /// tables when splitting block mappings.
+    pub allocator: &'a mut PA,
+    /// An implementation of `PageTableMapper` that provides safe, temporary CPU
+    /// access to page tables at their physical addresses.
+    pub mapper: &'a mut PM,
+    /// An object responsible for issuing TLB invalidation instructions after a
+    /// mapping is successfully changed.
+    pub invalidator: &'a I,
+}
+
 /// A collection of context required to create page tables.
 pub struct MappingContext<'a, PA, PM>
 where
@@ -104,9 +123,6 @@ where
     /// An implementation of `PageTableMapper` that provides safe, temporary CPU
     /// access to page tables at their physical addresses.
     pub mapper: &'a mut PM,
-    /// An object responsible for issuing TLB invalidation instructions after a
-    /// mapping is successfully changed.
-    pub invalidator: &'a dyn TLBInvalidator,
 }
 
 /// Maps a contiguous physical memory region to a virtual memory region.
@@ -271,7 +287,10 @@ where
                         attrs.mem_type,
                         attrs.perms,
                     ),
-                    ctx.invalidator,
+                    // Usage of the null TLB invalidator is valid here. We have
+                    // established that there is no present entry at this address,
+                    // so there should be no TLB entries to flush.
+                    &NullTlbInvalidator {},
                 );
             })?;
         }
@@ -325,7 +344,10 @@ where
             L::from_ptr(pgtable).set_desc(
                 va,
                 L::Descriptor::new_next_table(new_pa),
-                ctx.invalidator,
+                // Usage of the null TLB invalidator is valid here. We have
+                // established that there is no present entry at this address,
+                // so there should be no TLB entries to flush.
+                &NullTlbInvalidator {},
             );
         })?;
 
@@ -342,7 +364,10 @@ pub mod tests {
         error::KernelError,
         memory::{
             address::{PA, VA},
-            paging::test::{MockPageAllocator, PassthroughMapper},
+            paging::{
+                test::{MockPageAllocator, MockTLBInvalidator, PassthroughMapper},
+                walk::WalkContext,
+            },
         },
     };
 
@@ -361,6 +386,15 @@ pub mod tests {
             &mut self,
         ) -> MappingContext<'_, MockPageAllocator, PassthroughMapper> {
             MappingContext {
+                allocator: &mut self.inner.allocator,
+                mapper: &mut self.inner.mapper,
+            }
+        }
+
+        pub fn create_modify_ctx(
+            &mut self,
+        ) -> ModifyContext<'_, MockPageAllocator, PassthroughMapper, MockTLBInvalidator> {
+            ModifyContext {
                 allocator: &mut self.inner.allocator,
                 mapper: &mut self.inner.mapper,
                 invalidator: &self.inner.invalidator,
@@ -402,6 +436,12 @@ pub mod tests {
             )
             .unwrap();
             assert_eq!(perms_found, Some(expected_perms));
+        }
+
+        pub fn create_walk_ctx(
+            &mut self,
+        ) -> WalkContext<'_, PassthroughMapper, MockTLBInvalidator> {
+            self.inner.create_walk_ctx()
         }
     }
 

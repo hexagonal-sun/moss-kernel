@@ -5,27 +5,55 @@ use super::{
     pg_tables::{L0Table, L3Table},
 };
 use crate::{
+    arch::arm64::memory::pg_tables::ModifyContext,
     error::{MapError, Result},
     memory::{
         PAGE_SIZE,
         address::{TPA, VA},
         paging::{
-            NullTlbInvalidator, PageTableEntry, PageTableMapper, PgTable, PgTableArray,
-            walk::{RecursiveWalker, WalkContext},
+            NullTlbInvalidator, PageAllocator, PageTableEntry, PageTableMapper, PgTable,
+            PgTableArray, TLBInvalidator,
+            walk::{
+                RecursiveWalker, WalkContext, WalkOperation, validate_allocating_region,
+                walk_table_level,
+            },
         },
         region::VirtMemoryRegion,
     },
 };
 
-impl RecursiveWalker<L3Descriptor> for L3Table {
-    fn walk<F, PM>(
+impl RecursiveWalker<L3Descriptor> for L0Table {
+    fn walk_with_allocator<F, PM, A, I>(
         table_pa: TPA<PgTableArray<Self>>,
         region: VirtMemoryRegion,
-        ctx: &mut WalkContext<PM>,
-        modifier: &mut F,
+        ctx: &mut WalkContext<PM, I>,
+        allocator: &mut A,
+        operation: &mut WalkOperation<F>,
     ) -> Result<()>
     where
         PM: PageTableMapper,
+        I: TLBInvalidator,
+        A: PageAllocator,
+        F: FnMut(VA, L3Descriptor) -> L3Descriptor,
+    {
+        walk_table_level(table_pa, region, ctx, allocator, operation, |_| {
+            Err(MapError::InvalidDescriptor.into())
+        })
+    }
+}
+
+impl RecursiveWalker<L3Descriptor> for L3Table {
+    fn walk_with_allocator<F, PM, A, I>(
+        table_pa: TPA<PgTableArray<Self>>,
+        region: VirtMemoryRegion,
+        ctx: &mut WalkContext<PM, I>,
+        _allocator: &mut A,
+        operation: &mut WalkOperation<F>,
+    ) -> Result<()>
+    where
+        PM: PageTableMapper,
+        I: TLBInvalidator,
+        A: PageAllocator,
         F: FnMut(VA, L3Descriptor) -> L3Descriptor,
     {
         unsafe {
@@ -34,7 +62,7 @@ impl RecursiveWalker<L3Descriptor> for L3Table {
                 for va in region.iter_pages() {
                     let desc = table.get_desc(va);
                     if desc.is_valid() {
-                        table.set_desc(va, modifier(va, desc), ctx.invalidator);
+                        table.set_desc(va, operation.apply(va, desc), ctx.invalidator);
                     }
                 }
             })
@@ -59,18 +87,17 @@ impl RecursiveWalker<L3Descriptor> for L3Table {
 ///
 /// # Errors
 /// - `MapError::VirtNotAligned`: The provided `region` is not page-aligned.
-/// - `MapError::NotMapped`: Part of the `region` is not mapped down to the L3
-///   level.
-/// - `MapError::NotAnL3Mapping`: Part of the `region` is covered by a larger
+/// - `MapError::NotL3Mapped`: Part of the `region` is covered by a larger
 ///   block mapping (1GiB or 2MiB), which cannot be modified at the L3 level.
-pub fn walk_and_modify_region<F, PM>(
+pub fn walk_and_modify_region<F, PM, I>(
     l0_table: TPA<PgTableArray<L0Table>>,
     region: VirtMemoryRegion,
-    ctx: &mut WalkContext<PM>,
+    ctx: &mut WalkContext<PM, I>,
     mut modifier: F, // Pass closure as a mutable ref to be used across recursive calls
 ) -> Result<()>
 where
     PM: PageTableMapper,
+    I: TLBInvalidator,
     F: FnMut(VA, L3Descriptor) -> L3Descriptor,
 {
     if !region.is_page_aligned() {
@@ -82,6 +109,39 @@ where
     }
 
     L0Table::walk(l0_table, region, ctx, &mut modifier)
+}
+
+/// Removes mappings in a page-aligned region, leaving surrounding mappings intact.
+///
+/// Fully covered pages and blocks are cleared directly. Partially covered blocks
+/// are demoted using `ctx.allocator`; unmapped entries are skipped. Physical data
+/// frames and empty page tables are not freed.
+///
+/// Allocation and mapper errors propagate; earlier changes are not rolled back.
+/// The caller must serialize access to the page tables and supply synchronous
+/// TLB maintenance for active mappings through `ctx.invalidator`.
+///
+/// Returns `MapError::VirtNotAligned` for an unaligned start or length, and
+/// `KernelError::InvalidValue` if the exclusive end overflows.
+pub fn punch_hole<A: PageAllocator, PM: PageTableMapper, I: TLBInvalidator>(
+    l0_table: TPA<PgTableArray<L0Table>>,
+    region: VirtMemoryRegion,
+    ctx: &mut ModifyContext<A, PM, I>,
+) -> Result<()> {
+    validate_allocating_region(region)?;
+    if region.size() == 0 {
+        return Ok(());
+    }
+    L0Table::walk_with_allocator(
+        l0_table,
+        region,
+        &mut WalkContext {
+            mapper: ctx.mapper,
+            invalidator: ctx.invalidator,
+        },
+        ctx.allocator,
+        &mut WalkOperation::<fn(VA, L3Descriptor) -> L3Descriptor>::PunchHole,
+    )
 }
 
 /// Obtain the PTE that mapps the VA into the current address space.
@@ -123,6 +183,16 @@ mod tests {
     use crate::memory::paging::PaMapper;
     use crate::memory::paging::permissions::PtePermissions;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    crate::memory::paging::test::block_split_tests!(
+        L1Table,
+        L2Table,
+        L3Table,
+        crate::arch::arm64::memory::pg_descriptors::L1Descriptor,
+        L2Descriptor,
+        L3Descriptor,
+        MemoryType::Device
+    );
 
     #[test]
     fn walk_modify_single_page() {

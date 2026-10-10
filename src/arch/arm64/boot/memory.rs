@@ -1,7 +1,6 @@
 use crate::arch::arm64::memory::{
     mmu::{page_mapper::PageOffsetPgTableMapper, smalloc_page_allocator::SmallocPageAlloc},
     set_kimage_start,
-    tlb::AllEl1TlbInvalidator,
 };
 use crate::memory::INITAL_ALLOCATOR;
 use core::ptr::NonNull;
@@ -135,7 +134,6 @@ pub fn setup_stack_and_heap(pgtbl_base: TPA<PgTableArray<L0Table>>) -> Result<VA
     let mut ctx = MappingContext {
         allocator: &mut pg_alloc,
         mapper: &mut PageOffsetPgTableMapper {},
-        invalidator: &AllEl1TlbInvalidator::new(),
     };
 
     // Map the stack.

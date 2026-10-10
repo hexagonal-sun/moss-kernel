@@ -1,4 +1,4 @@
-use super::{MMIO_BASE, tlb::AllEl1TlbInvalidator};
+use super::MMIO_BASE;
 use crate::sync::{OnceLock, SpinLock};
 use libkernel::{
     arch::arm64::memory::{
@@ -33,7 +33,6 @@ impl Arm64KernelAddressSpace {
         let mut ctx = MappingContext {
             allocator: &mut PageTableAllocator::new(),
             mapper: &mut PageOffsetPgTableMapper {},
-            invalidator: &AllEl1TlbInvalidator::new(),
         };
 
         map_range(self.kernel_l0, map_attrs, &mut ctx)

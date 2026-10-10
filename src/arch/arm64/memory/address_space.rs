@@ -66,7 +66,6 @@ impl UserAddressSpace for Arm64ProcessAddressSpace {
         let mut ctx = MappingContext {
             allocator: &mut PageTableAllocator::new(),
             mapper: &mut PageOffsetPgTableMapper {},
-            invalidator: &AllEl0TlbInvalidator::new(),
         };
 
         map_range(
@@ -179,7 +178,6 @@ impl UserAddressSpace for Arm64ProcessAddressSpace {
                 let mut ctx = MappingContext {
                     allocator: &mut PageTableAllocator::new(),
                     mapper: &mut PageOffsetPgTableMapper {},
-                    invalidator: &AllEl0TlbInvalidator::new(),
                 };
 
                 map_range(

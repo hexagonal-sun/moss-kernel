@@ -3,7 +3,6 @@ use crate::memory::{INITAL_ALLOCATOR, PageOffsetTranslator};
 use super::super::memory::{
     fixmap::{FIXMAPS, Fixmap},
     mmu::smalloc_page_allocator::SmallocPageAlloc,
-    tlb::AllEl1TlbInvalidator,
 };
 use libkernel::{
     arch::arm64::memory::{
@@ -47,7 +46,6 @@ pub fn setup_logical_map(pgtbl_base: TPA<PgTableArray<L0Table>>) -> Result<()> {
     let mut ctx = MappingContext {
         allocator: &mut pg_alloc,
         mapper: &mut mapper,
-        invalidator: &AllEl1TlbInvalidator::new(),
     };
 
     for mem_region in mem_list.iter() {
