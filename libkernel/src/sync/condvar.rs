@@ -207,7 +207,7 @@ mod condvar_tests {
             tokio::spawn(async move {
                 condvar
                     .wait_until(|state| if state.counter == 1 { Some(()) } else { None })
-                    .await
+                    .await;
             })
         };
 

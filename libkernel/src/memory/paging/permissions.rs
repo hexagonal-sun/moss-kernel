@@ -266,9 +266,9 @@ mod tests {
         assert_eq!(format!("{}", PtePermissions::rx(false)), "r-x k");
 
         let cow_perms = PtePermissions::rw(true).into_cow();
-        assert_eq!(format!("{}", cow_perms), "rc- u");
+        assert_eq!(format!("{cow_perms}"), "rc- u");
 
         let cow_exec_perms = PtePermissions::rwx(false).into_cow();
-        assert_eq!(format!("{}", cow_exec_perms), "rcx k");
+        assert_eq!(format!("{cow_exec_perms}"), "rcx k");
     }
 }

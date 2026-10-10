@@ -116,8 +116,7 @@ pub mod test {
 
         fn iter_clusters(&self, root: Cluster) -> impl Iterator<Item = Result<Cluster>> {
             // Assume a simple contiguous chain for testing.
-            let num_clusters =
-                (self.file_data.len() + self.sectors_per_cluster - 1) / self.sectors_per_cluster;
+            let num_clusters = self.file_data.len().div_ceil(self.sectors_per_cluster);
             (0..num_clusters).map(move |i| Ok(Cluster((root.value() + i) as u32)))
         }
     }
