@@ -30,6 +30,11 @@ pub struct Mutex<T: ?Sized, CPU: CpuOps> {
 ///
 /// When an `AsyncMutexGuard` is dropped, it automatically releases the lock and
 /// wakes up the next task.
+///
+/// The guard is `Send` when `T: Send`, and `Sync` when `T: Sync`, independently
+/// of the CPU marker type. Unlike the mutex itself, sharing a guard exposes
+/// shared references to the protected value, so a guard over `Cell` cannot be
+/// shared between threads.
 #[must_use = "if unused, the Mutex will immediately unlock"]
 pub struct AsyncMutexGuard<'a, T: ?Sized, CPU: CpuOps> {
     mutex: &'a Mutex<T, CPU>,
@@ -134,46 +139,12 @@ impl<T: ?Sized, CPU: CpuOps> DerefMut for AsyncMutexGuard<'_, T, CPU> {
 unsafe impl<T: ?Sized + Send, CPU: CpuOps> Send for Mutex<T, CPU> {}
 unsafe impl<T: ?Sized + Send, CPU: CpuOps> Sync for Mutex<T, CPU> {}
 
-impl<CPU: CpuOps> Mutex<(), CPU> {
-    /// Acquires the mutex lock without caring about the data.
-    pub(crate) fn acquire(&self) -> MutexAcquireFuture<'_, CPU> {
-        MutexAcquireFuture { mutex: self }
-    }
+// SAFETY: Moving the guard transfers exclusive access to T. The guard holds no
+// saved interrupt state; its drop acquires and releases the state spinlock on
+// the current CPU, so it is not tied to the CPU that acquired the mutex.
+unsafe impl<T: ?Sized + Send, CPU: CpuOps> Send for AsyncMutexGuard<'_, T, CPU> {}
 
-    /// Releases the mutex lock without caring about the data.
-    ///
-    /// # Safety
-    /// The caller must ensure that they have previously called [`Self::acquire()`].
-    pub(crate) unsafe fn release(&self) {
-        let mut state = self.state.lock_save_irq();
-
-        if let Some(next_waker) = state.waiters.pop_front() {
-            next_waker.wake();
-        }
-
-        state.is_locked = false;
-    }
-}
-
-/// A future that resolves to a locked mutex
-pub struct MutexAcquireFuture<'a, CPU: CpuOps> {
-    mutex: &'a Mutex<(), CPU>,
-}
-
-impl<CPU: CpuOps> Future for MutexAcquireFuture<'_, CPU> {
-    type Output = ();
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut state = self.mutex.state.lock_save_irq();
-
-        if !state.is_locked {
-            state.is_locked = true;
-            Poll::Ready(())
-        } else {
-            if state.waiters.iter().all(|w| !w.will_wake(cx.waker())) {
-                state.waiters.push_back(cx.waker().clone());
-            }
-            Poll::Pending
-        }
-    }
-}
+// SAFETY: Shared access to a guard exposes only &T, which may cross threads when
+// T is Sync. Mutable access and dropping the guard still require ownership.
+// This explicit impl prevents inheriting the mutex's weaker T: Send Sync bound.
+unsafe impl<T: ?Sized + Sync, CPU: CpuOps> Sync for AsyncMutexGuard<'_, T, CPU> {}

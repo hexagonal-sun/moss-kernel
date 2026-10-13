@@ -52,6 +52,20 @@ impl<T> WakerSet<T> {
         self.waiters.remove(&token);
     }
 
+    /// Removes and returns a registration using its token, without waking it.
+    pub fn take(&mut self, token: u64) -> Option<(Waker, T)> {
+        self.waiters.remove(&token)
+    }
+
+    /// Extracts all registrations without waking them or resetting the token
+    /// sequence. This allows callers to wake them after releasing a state lock.
+    pub fn take_all(&mut self) -> Self {
+        Self {
+            waiters: core::mem::take(&mut self.waiters),
+            next_id: self.next_id,
+        }
+    }
+
     /// Wakes one waiting task, if any.
     ///
     /// Returns `true` if a waker was awoken, `false` otherwise.
@@ -262,6 +276,22 @@ mod waker_set_tests {
         assert_eq!(set.take_first().unwrap().1, 3);
         assert!(set.take_first().is_none());
         assert!(set.is_empty());
+    }
+
+    #[test]
+    fn take_all_preserves_token_sequence() {
+        let mut set = set_with_data(&[1, 2]);
+        let mut taken = set.take_all();
+        assert!(set.is_empty());
+        assert_eq!(taken.take(0).unwrap().1, 1);
+        assert_eq!(taken.take_first().unwrap().1, 2);
+        assert!(taken.is_empty());
+
+        let token = set.insert(Waker::noop().clone(), 3);
+        assert_eq!(token, 2);
+        assert!(!set.contains_token(0));
+        assert_eq!(set.take(token).unwrap().1, 3);
+        assert!(set.take(token).is_none());
     }
 
     #[test]
