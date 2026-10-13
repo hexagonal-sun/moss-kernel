@@ -27,7 +27,7 @@ Add `libkernel` to your `Cargo.toml` with only the features you need:
 
 ```toml
 [dependencies]
-libkernel = { version = "0.1", features = ["sync", "proc"] }
+libkernel = { version = "0.2", features = ["sync", "proc"] }
 ```
 
 ## The `CpuOps` trait
