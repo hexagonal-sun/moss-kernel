@@ -302,16 +302,21 @@ mod tests {
                     let mut allocations: Vec<(*mut u8, core::alloc::Layout, u8)> = Vec::new();
 
                     for _ in 0..ops_per_thread {
-                        // Randomly decide to Alloc (70%) or Free (30%)
+                        // Randomly decide to Alloc (60%) or Free (40%)
                         // Bias towards Alloc to build up memory pressure
                         if rng.random_bool(0.6) || allocations.is_empty() {
                             // Allocation path
 
                             // Random size: biased to small (slab), occasional huge
-                            let size = 1024;
+                            let size = if rng.random_bool(0.01) {
+                                // huge alloc.
+                                rng.random_range(4096..=16536)
+                            } else {
+                                rng.random_range(1..=1024)
+                            };
 
                             // Random alignment (power of 2)
-                            let align = 1024;
+                            let align = 1 << rng.random_range(1..=8_usize);
                             let layout = core::alloc::Layout::from_size_align(size, align).unwrap();
 
                             unsafe {
